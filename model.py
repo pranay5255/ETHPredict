@@ -17,7 +17,7 @@ class TVLPredictor(nn.Module):
             nn.Linear(hidden_size, 32),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(32, input_size)
+            nn.Linear(32, 1)
         )
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
