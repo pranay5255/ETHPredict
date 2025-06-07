@@ -70,7 +70,7 @@ def main():
     np.random.seed(42)
     
     # Get processed data
-    X, y = get_data(sequence_length=7)
+    X, y = get_data(sequence_length=24)
     
     # Convert to PyTorch tensors
     X = torch.FloatTensor(X)
@@ -89,7 +89,8 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=32)
     
     # Create and train model
-    model = create_model()
+    input_size = X.shape[2]
+    model = create_model(input_size=input_size)
     train_losses, val_losses = train_model(model, train_loader, val_loader)
     
     # Plot training history
