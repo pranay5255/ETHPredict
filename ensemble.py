@@ -134,7 +134,7 @@ class EnsemblePredictor:
             'information_ratio': []
         }
         
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         for fold_idx, (train_indices, val_indices) in enumerate(splits):
             print(f"\nFold {fold_idx + 1}/{n_splits}")

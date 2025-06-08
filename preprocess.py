@@ -21,39 +21,49 @@ class DataPreprocessor:
         # Load chain TVL data
         chain_tvl = pd.read_csv(self.data_dir / "defillama_eth_chain_tvl_2025_04-05.csv")
         chain_tvl["timestamp"] = pd.to_datetime(chain_tvl["timestamp"])
+        # Remove timezone info if present
+        if chain_tvl["timestamp"].dt.tz is not None:
+            chain_tvl["timestamp"] = chain_tvl["timestamp"].dt.tz_localize(None)
         data["chain_tvl"] = chain_tvl
 
-        # Load Binance hourly price data (April & May 2025)
+        # Load Binance hourly price data
         price_frames: List[pd.DataFrame] = []
+        binance_columns = [
+            'open_time', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'number_of_trades',
+            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+        ]
+        
         for month in ["04", "05"]:
-            csv_path = self.data_dir / "processed" / f"processed_ETHUSDT-1h-2025-{month}.csv"
+            csv_path = self.data_dir / "raw" / f"ETHUSDT-1h-2025-{month}.csv"
             if csv_path.exists():
-                df = pd.read_csv(csv_path)
-                df["timestamp"] = pd.to_datetime(df["open_time"])
-                price_frames.append(df)
+                try:
+                    df = pd.read_csv(csv_path, header=None, names=binance_columns)
+                    try:
+                        df["timestamp"] = pd.to_datetime(df["open_time"], unit='ms')
+                    except (ValueError, TypeError, OSError):
+                        df["timestamp"] = pd.to_datetime(df["open_time"])
+                    # Ensure timestamp is timezone-naive
+                    if df["timestamp"].dt.tz is not None:
+                        df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+                    price_frames.append(df)
+                except Exception as e:
+                    print(f"Warning: Could not load {csv_path}: {e}")
+                    continue
+        
         if price_frames:
             price = pd.concat(price_frames, ignore_index=True)
             data["price"] = price
 
-        # Load Santiment metrics (daily)
+        # Load Santiment metrics
         santiment_path = self.data_dir / "santiment_metrics_april_may_2025.csv"
         if santiment_path.exists():
             santiment = pd.read_csv(santiment_path)
             santiment["timestamp"] = pd.to_datetime(santiment["datetime"])
+            # Ensure timestamp is timezone-naive
+            if santiment["timestamp"].dt.tz is not None:
+                santiment["timestamp"] = santiment["timestamp"].dt.tz_localize(None)
             data["santiment"] = santiment
-
-        # Load protocol TVL data
-        protocol_path = self.data_dir / "defillama_eth_top10_tvl_2025_04-05.parquet"
-        if protocol_path.exists():
-            protocol_tvl = pd.read_parquet(protocol_path)
-            protocol_tvl["timestamp"] = pd.to_datetime(protocol_tvl["timestamp"])
-            data["protocol_tvl"] = protocol_tvl
-
-        # Load protocol snapshots
-        snapshot_path = self.data_dir / "defillama_eth_top10_snapshots_2025_04-05.csv"
-        if snapshot_path.exists():
-            snapshots = pd.read_csv(snapshot_path)
-            data["snapshots"] = snapshots
 
         return data
     
@@ -342,12 +352,19 @@ class DataPreprocessor:
         if price is None or chain_tvl is None:
             raise ValueError("Price and chain TVL data are required")
 
+        # Ensure all timestamps are timezone-naive before setting as index
+        for df in [price, chain_tvl, santiment]:
+            if df is not None and df["timestamp"].dt.tz is not None:
+                df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+
+        # Set indices and resample
         chain_hourly = chain_tvl.set_index("timestamp").resample("1H").ffill()
         if santiment is not None:
             santiment_hourly = santiment.set_index("timestamp").resample("1H").ffill()
         else:
             santiment_hourly = pd.DataFrame(index=chain_hourly.index)
 
+        # Join datasets
         merged = (
             price.set_index("timestamp")
             .join(chain_hourly[["tvl_usd"]], how="left")
@@ -456,6 +473,12 @@ class DataPreprocessor:
                          targets_min: float, targets_max: float) -> np.ndarray:
         """Convert scaled predictions back to original scale."""
         return scaled_data * (targets_max - targets_min) + targets_min
+
+    def _ensure_timezone_naive(self, df: pd.DataFrame, timestamp_col: str = "timestamp") -> pd.DataFrame:
+        """Ensure timestamp column is timezone-naive."""
+        if df[timestamp_col].dt.tz is not None:
+            df[timestamp_col] = df[timestamp_col].dt.tz_localize(None)
+        return df
 
 def get_data(sequence_length: int = 24) -> Tuple[np.ndarray, np.ndarray]:
     """Helper function to get processed data ready for training."""

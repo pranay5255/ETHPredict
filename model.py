@@ -38,7 +38,7 @@ class PriceLSTM(nn.Module):
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
                 nn.init.zeros_(module.bias)
-                
+        
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
