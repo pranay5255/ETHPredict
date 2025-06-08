@@ -2,3 +2,5 @@
 data/
 advancesInFinML/
 logs/
+.venv/
+__pycache__/
