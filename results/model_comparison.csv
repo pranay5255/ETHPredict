@@ -1,0 +1,5 @@
+model_type,model_name,total_parameters,trainable_parameters,model_size_mb
+lstm,PriceLSTM,58945,58945,0.22485733032226562
+meta_mlp,MetaMLP,4289,4289,0.016361236572265625
+confidence_gru,ConfidenceGRU,6113,6113,0.023319244384765625
+hierarchical,HierarchicalPredictor,69347,69347,0.2645378112792969
