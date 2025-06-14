@@ -1,0 +1,31 @@
+experiment:
+  id: exp_default
+  seed: 42
+  trials: 1
+
+bars:
+  type: dollar
+  threshold_usd: 50000
+
+features:
+  frac_diff_order: 0.5
+  include:
+    - vol_adj_flow
+    - rsi
+
+model:
+  level0:
+    algo: xgboost
+    params:
+      max_depth: 6
+      eta: 0.05
+      tree_method: gpu_hist
+  meta_labeling: true
+
+market_maker:
+  gamma: 0.1
+  hedge: true
+
+bribe:
+  mode: percentile
+  percentile: 95

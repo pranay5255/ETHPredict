@@ -3,32 +3,37 @@ pandas>=1.5.0
 numpy>=1.21.0
 scikit-learn>=1.0.0
 matplotlib>=3.5.0
-pyarrow>=7.0.0  # for parquet support
+pyarrow>=7.0.0
 requests>=2.28.0
 python-binance>=1.0.16
 python-dotenv>=0.21.0
 tqdm>=4.64.0
 
 # Advanced quantitative finance libraries
-statsmodels>=0.14.0  # ADF tests, CUSUM, SADF, time series analysis
-scipy>=1.10.0  # Statistical functions, optimization
-seaborn>=0.12.0  # Statistical data visualization
+statsmodels>=0.14.0
+scipy>=1.10.0
+seaborn>=0.12.0
 
 # Data collection and APIs
-yfinance>=0.2.0  # Yahoo Finance data (backup data source)
-ccxt>=3.0.0  # Cryptocurrency exchange trading library
+yfinance>=0.2.0
+ccxt>=3.0.0
 
 # Technical analysis and financial indicators
-ta>=0.10.0  # Technical analysis library
+ta>=0.10.0
 
 # Time series and financial modeling
-arch>=5.3.0  # ARCH/GARCH models for volatility
+arch>=5.3.0
 
 # Additional utilities
-plotly>=5.15.0  # Interactive visualizations
-joblib>=1.3.0  # Parallel processing and model persistence
-psutil>=5.9.0  # System and process utilities
+plotly>=5.15.0
+joblib>=1.3.0
+psutil>=5.9.0
+
+# CLI and config
+typer[all]>=0.9.0
+pyyaml>=6.0
+yamale>=4.0
 
 # Development and testing
-pytest>=7.0.0  # Testing framework
-pytest-cov>=4.0.0  # Coverage reporting 
+pytest>=7.0.0
+pytest-cov>=4.0.0
