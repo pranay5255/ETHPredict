@@ -1,0 +1,50 @@
+type: object
+required:
+  - experiment
+  - bars
+  - features
+  - model
+properties:
+  experiment:
+    type: object
+    required: [id, seed, trials]
+    properties:
+      id:
+        type: string
+      seed:
+        type: integer
+      trials:
+        type: integer
+  bars:
+    type: object
+    properties:
+      type:
+        type: string
+        enum: [time, tick, volume, dollar]
+      threshold_usd:
+        type: integer
+  features:
+    type: object
+    properties:
+      frac_diff_order:
+        type: number
+      include:
+        type: array
+        items:
+          type: string
+  model:
+    type: object
+    properties:
+      level0:
+        type: object
+        properties:
+          algo:
+            type: string
+          params:
+            type: object
+      meta_labeling:
+        type: boolean
+  market_maker:
+    type: object
+  bribe:
+    type: object

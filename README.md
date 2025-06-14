@@ -27,6 +27,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 ```
+Ensure your environment has Python 3.11 and CUDA 12 support for optimal GPU training on an RTX 4090.
 
 ### 2. Data Collection (Automated)
 
@@ -82,6 +83,14 @@ python setup.py --verbose --deliverables  # Verbose logging
 python setup.py --no-train               # Skip training tests
 ```
 
+
+### New Experiment Runner
+Use the Typer CLI to launch experiments:
+```bash
+python run.py run --config configs/base.yml
+python run.py grid --config configs/base.yml --max-par 2
+python run.py report --input results/ --out summary.html
+```
 ## Data Sources
 
 The pipeline integrates data from multiple sources:
