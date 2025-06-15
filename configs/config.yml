@@ -1,0 +1,349 @@
+# =============================================================================
+# ETHPREDICT COMPREHENSIVE CONFIGURATION
+# =============================================================================
+# This single configuration file contains all parameters for the ETHPredict system:
+# - ML training and feature engineering
+# - Market making and inventory management  
+# - Backtesting and simulation
+# - Performance evaluation and optimization
+
+# EXPERIMENT METADATA
+# =============================================================================
+experiment:
+  id: exp_{{timestamp}}              # Unique experiment identifier (template variable)
+  name: "ETH Price Prediction"       # Human-readable experiment name
+  description: "Hierarchical ML model for ETH price prediction and market making"
+  seed: 42                          # Random seed for reproducibility
+  trials: 1000                      # Number of hyperparameter search trials
+  max_parallel_jobs: 4              # Maximum parallel jobs for grid search
+  save_checkpoints: true            # Whether to save model checkpoints
+  checkpoint_interval: 10           # Save checkpoint every N epochs
+
+# DATA CONFIGURATION
+# =============================================================================
+data:
+  # Data sources and collection parameters
+  sources:
+    - binance                       # ETHUSDT price/volume data
+    - defillama                     # DeFi TVL data
+    - santiment                     # Social/network metrics
+  
+  # Date range for training data
+  start_date: "2022-01-01"          # Training data start date (YYYY-MM-DD)
+  end_date: "2025-01-01"            # Training data end date (YYYY-MM-DD)
+  
+  # Data validation and preprocessing
+  min_data_points: 1000             # Minimum required data points
+  max_missing_pct: 10               # Maximum allowed missing data percentage
+  outlier_threshold: 3.0            # Z-score threshold for outlier detection
+
+# BAR SAMPLING CONFIGURATION
+# =============================================================================
+bars:
+  type: dollar                      # Bar type: [time, tick, volume, dollar]
+  threshold_usd: 50000              # Threshold for dollar bars (USD)
+  threshold_ticks: 1000             # Threshold for tick bars
+  threshold_volume: 100000          # Threshold for volume bars
+  time_interval: 1h                 # Time interval for time bars [1m, 5m, 15m, 1h, 4h, 1d]
+  
+  # Advanced bar parameters
+  ewma_span: 20                     # EWMA span for dynamic thresholds
+  min_bar_size: 0.001               # Minimum bar size (as fraction of threshold)
+  max_bar_size: 10.0                # Maximum bar size (as fraction of threshold)
+
+# FEATURE ENGINEERING
+# =============================================================================
+features:
+  # Fractional differentiation order [0.0-1.0]
+  frac_diff_order: 0.5
+  
+  # Features to include in model
+  include:
+    - vol_adj_flow                  # Volume-adjusted flow
+    - rsi                           # Relative Strength Index
+    - macd                          # MACD indicator
+    - bollinger                     # Bollinger Bands
+    - volume_profile                # Volume profile analysis
+  
+  # Feature engineering parameters
+  entropy_window: 20                # Window size for entropy calculation
+  volatility_window: 20             # Window size for volatility calculation
+  rsi_period: 14                    # RSI calculation period
+  macd_fast: 12                     # MACD fast EMA period
+  macd_slow: 26                     # MACD slow EMA period
+  macd_signal: 9                    # MACD signal line period
+  bollinger_period: 20              # Bollinger bands period
+  bollinger_std: 2.0                # Bollinger bands standard deviation multiplier
+  
+  # Feature selection and filtering
+  correlation_threshold: 0.95       # Remove features with correlation > threshold
+  importance_threshold: 0.001       # Minimum feature importance to keep
+  max_features: 50                  # Maximum number of features to use
+
+# MODEL ARCHITECTURE
+# =============================================================================
+model:
+  # Model type and architecture
+  type: hierarchical                # Model type: [hierarchical, ensemble, single]
+  
+  # Level 0: Price prediction model (PriceLSTM)
+  level0:
+    algo: xgboost                   # Algorithm: [xgboost, lightgbm, catboost, lstm]
+    params:
+      max_depth: 8                  # Maximum tree depth
+      eta: 0.1                      # Learning rate
+      subsample: 0.8                # Subsample ratio
+      colsample_bytree: 0.8         # Feature subsample ratio
+      tree_method: gpu_hist         # Tree construction method
+      objective: reg:squarederror   # Loss function
+      eval_metric: rmse             # Evaluation metric
+      early_stopping_rounds: 50     # Early stopping patience
+  
+  # Meta-labeling configuration
+  meta_labeling: true               # Whether to use meta-labeling
+  
+  # Level 1: Meta-labeling model (MetaMLP)
+  level1:
+    enabled: true                   # Whether to use meta-labeling
+    algo: mlp                       # Algorithm for meta-labeling
+    params:
+      hidden_layers: [128, 64, 32]  # Hidden layer sizes
+      activation: relu              # Activation function
+      dropout: 0.3                  # Dropout rate
+      batch_norm: true              # Whether to use batch normalization
+  
+  # Level 2: Confidence model (ConfidenceGRU)
+  level2:
+    enabled: true                   # Whether to use confidence modeling
+    algo: gru                       # Algorithm for confidence modeling
+    params:
+      hidden_size: 32               # GRU hidden size
+      num_layers: 1                 # Number of GRU layers
+      dropout: 0.1                  # Dropout rate
+      sequence_length: 10           # Input sequence length for confidence
+
+# TRAINING CONFIGURATION
+# =============================================================================
+training:
+  # Basic training parameters
+  epochs: 100                       # Maximum number of training epochs
+  batch_size: 32                    # Training batch size
+  learning_rate: 0.001              # Initial learning rate
+  weight_decay: 1e-5                # L2 regularization weight
+  
+  # Optimization parameters
+  optimizer: adam                   # Optimizer: [adam, sgd, rmsprop]
+  
+  # Early stopping
+  early_stopping:
+    enabled: true                   # Whether to use early stopping
+    patience: 20                    # Number of epochs without improvement
+    min_delta: 1e-6                 # Minimum change to qualify as improvement
+    restore_best_weights: true      # Whether to restore best weights
+  
+  # Validation configuration
+  validation:
+    cv_method: purged_kfold         # CV method: [kfold, purged_kfold, time_series]
+    cv_folds: 5                     # Number of CV folds
+    test_size: 0.2                  # Test set size (fraction)
+    validation_size: 0.2            # Validation set size (fraction)
+    purge_pct: 0.01                 # Purge percentage for time series CV
+    embargo_pct: 0.01               # Embargo percentage for time series CV
+
+# MARKET MAKING STRATEGY
+# =============================================================================
+market_maker:
+  # Core market making parameters
+  strategy: glft                    # Market making strategy: [glft, avellaneda_stoikov, simple]
+  gamma: 0.5                        # Risk aversion parameter [0.1-2.0]
+  hedge: true                       # Whether to hedge positions
+  inventory_limit: 10000            # Maximum inventory position (ETH)
+  quote_spread: 0.001               # Base bid-ask spread (0.1%)
+  
+  # Dynamic adjustments
+  volatility_adjustment: true       # Adjust spreads based on volatility
+  volatility_multiplier: 2.0        # Volatility spread multiplier
+  inventory_adjustment: true        # Adjust quotes based on inventory
+  inventory_skew_factor: 0.5        # Inventory skew adjustment factor
+  
+  # Quote parameters
+  min_spread: 0.0005                # Minimum allowed spread (0.05%)
+  max_spread: 0.01                  # Maximum allowed spread (1%)
+  base_quote_size: 1.0              # Base quote size (ETH)
+  quote_layers: 3                   # Number of price levels to quote
+
+# INVENTORY MANAGEMENT
+# =============================================================================
+inventory:
+  # Position limits and controls
+  max_long_position: 5000           # Maximum long position (ETH)
+  max_short_position: -5000         # Maximum short position (ETH)
+  position_timeout: 24h             # Maximum time to hold position
+  
+  # Risk metrics and monitoring
+  var_limit: 1000                   # Value at Risk limit (USD)
+  var_confidence: 0.95              # VaR confidence level
+  max_drawdown_pct: 0.15            # Maximum allowed drawdown (15%)
+  
+  # Portfolio management
+  capital_allocation_pct: 0.8       # Percentage of capital to allocate
+  leverage_limit: 2.0               # Maximum leverage allowed
+  rebalance_frequency: 1h           # Portfolio rebalancing frequency
+
+# BRIBE OPTIMIZATION
+# =============================================================================
+bribe:
+  # Bribe strategy and mode
+  mode: percentile                  # Bribe mode: [percentile, fixed, adaptive, optimal]
+  enabled: true                     # Whether to use bribe optimization
+  
+  # Percentile-based bribe parameters
+  percentile: 95                    # Percentile for competitive bidding
+  lookback_window: 100              # Number of blocks to look back
+  min_percentile: 50                # Minimum percentile to use
+  max_percentile: 99                # Maximum percentile to use
+  
+  # Fixed bribe parameters (if mode is 'fixed')
+  fixed_amount: 0.01                # Fixed bribe amount (ETH)
+  min_bribe: 0.001                  # Minimum bribe amount (ETH)
+  max_bribe: 0.1                    # Maximum bribe amount (ETH)
+  
+  # MEV protection
+  mev_protection: true              # Enable MEV protection strategies
+  front_run_protection: true        # Protection against front-running
+  sandwich_protection: true         # Protection against sandwich attacks
+
+# BACKTESTING CONFIGURATION
+# =============================================================================
+backtest:
+  # Time period for backtesting
+  start: 2024-01-01                 # Backtest start date (YYYY-MM-DD)
+  end: 2025-01-01                   # Backtest end date (YYYY-MM-DD)
+  timezone: UTC                     # Timezone for backtest
+  
+  # Capital and position sizing
+  initial_capital: 100000           # Starting capital (USD)
+  max_position_size: 10000          # Maximum position size (USD)
+  position_sizing: fixed            # Position sizing method: [fixed, pct_equity, volatility_target]
+  leverage: 1.0                     # Maximum leverage allowed
+  
+  # Transaction costs and fees
+  commission_pct: 0.001             # Commission rate (0.1%)
+  slippage_model: linear            # Slippage model: [linear, sqrt, constant]
+  slippage_bps: 5                   # Slippage in basis points
+  spread_cost: true                 # Include bid-ask spread costs
+
+# DEX SIMULATION PARAMETERS
+# =============================================================================
+sim:
+  # Simulation mode and environment
+  mode: amm                         # Simulation mode: [amm, lob, hybrid]
+  seed: 123                         # Random seed for DEX simulation
+  
+  # AMM (Automated Market Maker) parameters
+  amm:
+    protocol: uniswap_v3            # AMM protocol: [uniswap_v2, uniswap_v3, curve, balancer]
+    fee_bps: 30                     # Trading fee in basis points (0.3%)
+    pool_liquidity: 1000000         # Total pool liquidity (USD)
+    inventory: 10000                # Starting inventory (ETH)
+    slippage_tolerance: 0.005       # Maximum acceptable slippage (0.5%)
+    
+    # MEV simulation
+    mev_enabled: true               # Enable MEV simulation
+    front_run_probability: 0.1      # Probability of front-running
+    sandwich_probability: 0.05      # Probability of sandwich attacks
+  
+  # LOB (Limit Order Book) parameters
+  lob:
+    tick_size: 0.01                 # Price tick size
+    depth_levels: 20                # Number of depth levels to simulate
+    max_spread_bps: 100             # Maximum spread in basis points
+    order_arrival_rate: 10          # Orders per second
+    market_order_ratio: 0.3         # Ratio of market vs limit orders
+
+# PERFORMANCE EVALUATION
+# =============================================================================
+performance:
+  # Metrics to track
+  metrics:
+    - sharpe_ratio                  # Risk-adjusted returns
+    - max_drawdown                  # Maximum drawdown
+    - total_return                  # Total return over period
+    - win_rate                      # Percentage of winning trades
+    - information_coefficient       # Information coefficient
+    - hit_rate                      # Hit rate
+  
+  # Performance thresholds
+  min_sharpe_ratio: 0.5             # Minimum acceptable Sharpe ratio
+  max_drawdown_limit: 0.2           # Maximum acceptable drawdown
+  min_win_rate: 0.45                # Minimum required win rate
+
+# REPORTING AND OUTPUT
+# =============================================================================
+reporting:
+  # Output formats
+  formats:
+    - html                          # HTML report
+    - json                          # JSON data export
+  
+  # Report sections to include
+  include_sections:
+    - executive_summary             # High-level summary
+    - performance_metrics           # Detailed performance metrics
+    - risk_analysis                 # Risk analysis
+    - trade_analysis                # Individual trade analysis
+  
+  # Export settings
+  export:
+    save_trades: true               # Save individual trades
+    save_positions: true            # Save position history
+    save_pnl: true                  # Save P&L history
+    compression: gzip               # Compression format
+
+# PARAMETER OPTIMIZATION
+# =============================================================================
+optimization:
+  # Objective functions
+  objective: sharpe_ratio           # Primary optimization objective
+  
+  # Parameter ranges for optimization
+  parameter_ranges:
+    # Model parameters
+    gamma: [0.1, 2.0]               # Risk aversion range
+    inventory_limit: [1000, 50000]  # Inventory limit range
+    quote_spread: [0.0005, 0.01]    # Quote spread range
+    
+    # Feature parameters
+    frac_diff_order: [0.1, 0.9]     # Fractional diff order range
+    volatility_window: [10, 50]     # Volatility window range
+    
+    # Training parameters
+    learning_rate: [0.0001, 0.1]    # Learning rate range
+    batch_size: [16, 128]           # Batch size range
+    max_depth: [4, 12]              # XGBoost max depth range
+    eta: [0.01, 0.3]                # XGBoost learning rate range
+  
+  # Optimization settings
+  method: bayesian                  # Optimization method: [grid, random, bayesian]
+  n_trials: 1000                    # Number of optimization trials
+  n_jobs: 4                         # Parallel jobs
+  timeout_minutes: 1440             # Optimization timeout (24 hours)
+  
+  # Constraints
+  constraints:
+    max_drawdown: 0.15              # Maximum allowed drawdown
+    min_trades: 100                 # Minimum number of trades
+    min_win_rate: 0.4               # Minimum win rate
+
+# HARDWARE CONFIGURATION
+# =============================================================================
+hardware:
+  # GPU settings
+  use_gpu: true                     # Whether to use GPU acceleration
+  gpu_ids: [0]                      # List of GPU IDs to use
+  mixed_precision: true             # Whether to use mixed precision training
+  
+  # Memory management
+  max_memory_gb: 24                 # Maximum memory usage (GB)
+  dataloader_workers: 4             # Number of dataloader workers
+  pin_memory: true                  # Whether to pin memory for faster transfer 
