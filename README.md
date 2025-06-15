@@ -11,6 +11,30 @@ This repository implements a sophisticated ETH price prediction system that comb
 - **Robust validation**: Purged time-series CV with embargo periods
 - **Production-ready pipeline**: Comprehensive validation and deliverables generation
 
+## Project Structure
+
+```
+src/
+├── data/              # Data loading and preprocessing
+│   ├── loader.py      # Data source integration
+│   └── validator.py   # Data validation
+├── features/          # Feature engineering
+│   ├── base.py        # Base feature computation
+│   └── advanced.py    # Advanced feature computation
+├── models/            # Model architectures
+│   ├── hierarchical.py # Hierarchical model components
+│   └── ensemble.py    # Ensemble methods
+├── training/          # Training pipeline
+│   ├── trainer.py     # Training orchestration
+│   └── validator.py   # Model validation
+├── utils/             # Shared utilities
+│   ├── logging.py     # Logging utilities
+│   └── metrics.py     # Performance metrics
+└── config/            # Configuration management
+    ├── loader.py      # Config loading
+    └── validator.py   # Config validation
+```
+
 ## Quick Start
 
 ### 1. Environment Setup
@@ -27,73 +51,56 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 ```
-Ensure your environment has Python 3.11 and CUDA 12 support for optimal GPU training on an RTX 4090.
 
-### 2. Data Collection (Automated)
+### 2. Configuration
 
-Use the automated data setup script to collect all required data:
+The system uses a single comprehensive configuration file:
 
+- **`configs/config.yml`** - Complete system configuration including ML training, market making, and backtesting
+- **`configs/schema.yaml`** - JSON schema for configuration validation
+
+### 3. Running Experiments
+
+#### Single Experiment Run
 ```bash
-# Setup all data sources automatically
-python scripts/data_setup.py
+# Run with default config
+python runner.py run
 
-# Setup specific data source only
-python scripts/data_setup.py --source binance
-python scripts/data_setup.py --source defillama
-python scripts/data_setup.py --source santiment
+# Run with specific config file
+python runner.py run --config configs/config.yml
 
-# Validate existing data without downloading
-python scripts/data_setup.py --validate
-
-# Force re-download all data
-python scripts/data_setup.py --force
+# Run with custom experiment ID and GPU
+python runner.py run --id my_experiment --gpu 0
 ```
 
-### 3. Data Preparation (Manual Alternative)
-
-If automated setup fails, manually place data files in the `data/` directory:
-```
-data/
-├── defillama_eth_chain_tvl_2025_04-05.csv
-├── santiment_metrics_april_may_2025.csv
-└── raw/
-    ├── ETHUSDT-1h-2025-04.csv
-    └── ETHUSDT-1h-2025-05.csv
-```
-
-### 4. Pipeline Execution
-
-Choose your execution method based on needs:
-
+#### Parameter Sweep (Hyperparameter Optimization)
 ```bash
-# OPTION A: Full pipeline validation and testing
-python setup.py
+# Run Bayesian optimization (default)
+python runner.py grid --trials 100
 
-# OPTION B: Quick validation only (faster)
-python setup.py --quick
+# Run grid search
+python runner.py grid --mode grid --trials 50
 
-# OPTION C: Generate deliverables and documentation
-python setup.py --deliverables
-
-# OPTION D: Run prototype analysis with visualizations
-python results/prototype.py
-
-# Advanced options
-python setup.py --verbose --deliverables  # Verbose logging
-python setup.py --no-train               # Skip training tests
+# Run random search with multiple GPUs
+python runner.py grid --mode random --trials 200 --gpus "0,1" --workers 8
 ```
 
-
-### New Experiment Runner
-Use the Typer CLI to launch experiments:
+#### Generate Reports
 ```bash
-python run.py run --config configs/base.yml
-python run.py grid --config configs/base.yml --max-par 2
-python run.py report --input results/ --out summary.html
+# Generate HTML report
+python runner.py report results/
+
+# Generate JSON report
+python runner.py report results/ --format json --output analysis.json
 ```
+
+#### System Information
+```bash
+# Check system status and configuration
+python runner.py info
+```
+
 ## Data Sources
-
-The pipeline integrates data from multiple sources:
 
 | Source | Data Type | Granularity | Update Frequency |
 |--------|-----------|-------------|------------------|
@@ -104,13 +111,11 @@ The pipeline integrates data from multiple sources:
 
 ## Feature Engineering
 
-### Base Features (5)
+### Base Features
 - Price (close), volume, TVL, network activity, social metrics
-
-### Derived Features (10) 
 - Returns, volatility, ratios, growth rates, change metrics
 
-### Advanced Features (9)
+### Advanced Features
 - **Fractional differentiation**: Preserve memory while achieving stationarity
 - **Information entropy**: Measure uncertainty in returns  
 - **Structural breaks**: CUSUM and SADF detection
@@ -130,344 +135,152 @@ The pipeline integrates data from multiple sources:
 - Purged time-series cross-validation
 - Embargo periods to prevent look-ahead bias
 
-## Key Scripts
+## Performance Metrics
 
-### 1. `scripts/data_setup.py` - Automated Data Collection
-**Purpose**: Orchestrates collection of all required data sources for the ETH prediction pipeline.
+### Financial
+- Sharpe ratio: >0.5 (risk-adjusted returns)
+- Max drawdown: <20%
+- Hit rate: >45% (vs 33% random baseline)
 
-**Key Features**:
-- Automated download from Binance, DeFiLlama, and Santiment APIs
-- Data validation and integrity checks
-- Proper directory structure creation
-- Error handling and retry mechanisms
+### Statistical
+- Information coefficient: >0.05
+- Rank IC: >0.03
+- Brier score: <0.4
 
-**Usage Examples**:
+## Configuration System
+
+The system uses a single comprehensive configuration file (`configs/config.yml`) that contains all parameters:
+
+### Complete Configuration Structure
+
+```yaml
+# Experiment setup
+experiment:
+  id: exp_{{timestamp}}
+  seed: 42
+  trials: 1000
+
+# Data sources and preprocessing
+data:
+  sources: [binance, defillama, santiment]
+  start_date: "2022-01-01"
+  end_date: "2025-01-01"
+
+# Feature engineering
+features:
+  frac_diff_order: 0.5
+  include: [vol_adj_flow, rsi, macd, bollinger, volume_profile]
+
+# Model architecture (hierarchical ML)
+model:
+  type: hierarchical
+  level0:
+    algo: xgboost
+    params:
+      max_depth: 8
+      eta: 0.1
+      tree_method: gpu_hist
+  level1:
+    enabled: true
+    algo: mlp
+  level2:
+    enabled: true
+    algo: gru
+
+# Training parameters
+training:
+  epochs: 100
+  learning_rate: 0.001
+  batch_size: 32
+
+# Market making strategy
+market_maker:
+  strategy: glft
+  gamma: 0.5              # Risk aversion
+  inventory_limit: 10000  # Max position size
+  quote_spread: 0.001     # Base spread
+
+# Inventory management
+inventory:
+  max_long_position: 5000
+  var_limit: 1000
+  max_drawdown_pct: 0.15
+
+# Bribe optimization
+bribe:
+  mode: percentile
+  percentile: 95
+  mev_protection: true
+
+# Backtesting
+backtest:
+  start: 2024-01-01
+  end: 2025-01-01
+  initial_capital: 100000
+
+# DEX simulation
+sim:
+  mode: amm
+  amm:
+    fee_bps: 30
+    inventory: 10000
+    mev_enabled: true
+
+# Parameter optimization
+optimization:
+  parameter_ranges:
+    gamma: [0.1, 2.0]
+    inventory_limit: [1000, 50000]
+    learning_rate: [0.0001, 0.1]
+    max_depth: [4, 12]
+  
+  method: bayesian
+  n_trials: 1000
+```
+
+### Key Configuration Sections
+
+- **experiment**: Metadata and experiment settings
+- **data**: Data sources and preprocessing
+- **bars**: Bar sampling configuration
+- **features**: Feature engineering parameters
+- **model**: Hierarchical ML model architecture
+- **training**: Training and validation parameters
+- **market_maker**: Market making strategy
+- **inventory**: Risk and inventory management
+- **bribe**: MEV and bribe optimization
+- **backtest**: Backtesting configuration
+- **sim**: DEX simulation parameters
+- **performance**: Performance evaluation
+- **optimization**: Parameter optimization ranges
+- **hardware**: GPU and hardware settings
+
+## Development
+
+### Running Tests
+
 ```bash
-python scripts/data_setup.py                    # Setup all data sources
-python scripts/data_setup.py --source binance   # Setup specific source
-python scripts/data_setup.py --validate         # Validate existing data
-python scripts/data_setup.py --force            # Force re-download
+# Run all tests
+pytest
+
+# Run specific test file
+pytest tests/test_models.py
+
+# Run with coverage
+pytest --cov=src
 ```
 
-**Output**: Populates `data/` directory with all required CSV files organized by source.
+### Code Style
 
-### 2. `setup.py` - Pipeline Validation & Testing
-**Purpose**: Comprehensive validation of the entire pipeline with detailed testing and deliverable generation.
-
-**Key Features**:
-- Environment validation (Python version, dependencies, GPU)
-- Data structure and integrity validation
-- Feature engineering and model architecture testing
-- Training pipeline validation with minimal data
-- Deliverable generation (datasource matrix, signal design, prototype)
-
-**Usage Examples**:
 ```bash
-python setup.py                    # Full validation (recommended)
-python setup.py --quick           # Quick validation (faster)
-python setup.py --deliverables    # Generate all deliverables
-python setup.py --verbose         # Detailed logging
-python setup.py --no-train        # Skip training tests
-```
+# Format code
+black src/
 
-**Output**: 
-- Validation logs in `logs/` directory
-- Generated deliverables in `results/` directory
-- Comprehensive test reports
+# Lint code
+ruff check src/
 
-### 3. `results/prototype.py` - Pipeline Execution & Visualization
-**Purpose**: Runs the complete pipeline end-to-end and generates comprehensive visualizations and analysis.
-
-**Key Features**:
-- Full data preprocessing and feature engineering
-- Triple-barrier label creation and analysis
-- Model training (hierarchical + ensemble + baseline)
-- Performance visualization and comparison
-- Statistical analysis and metrics computation
-
-**Usage**:
-```bash
-cd results
-python prototype.py
-```
-
-**Output**: Generates 15+ visualization files and analysis reports in `results/` directory.
-
-## Pipeline Components
-
-### Core Modules
-- `preprocess.py` - Data loading and feature engineering
-- `label.py` - Triple-barrier labeling system
-- `model.py` - Neural network architectures
-- `train.py` - Training pipeline with validation
-- `ensemble.py` - Complete ensemble system
-
-## Deliverables
-
-Run `python setup.py --deliverables` to generate:
-
-### 1. datasource_matrix.csv
-Data source metadata including providers, granularity, rate limits, and gotchas.
-
-### 2. signal_design.md  
-Comprehensive documentation of:
-- Data integration strategy (value vs effort vs cost)
-- Ground truth label design and rationale
-- Feature engineering methodology
-- Model architecture and bias prevention
-- Evaluation metrics and benchmarks
-
-### 3. prototype.py
-Complete pipeline execution with visualization outputs:
-- Data overview plots
-- Feature correlation analysis  
-- Label distribution analysis
-- Model performance visualization
-
-### 4. README.md (this file)
-Updated setup instructions and pipeline documentation.
-
-## Key Features
-
-### Advanced Labeling
-- **Triple-barrier method**: Dynamic stop-loss/take-profit based on volatility
-- **Meta-labeling**: Secondary model for bet sizing and confidence
-- **Sample weights**: Based on label uniqueness to prevent overfitting
-
-### Robust Validation  
-- **Purged CV**: Removes overlapping samples between train/test
-- **Embargo period**: Additional gap to prevent information leakage
-- **Walk-forward analysis**: Mimics real-world deployment conditions
-
-### Performance Metrics
-- **Financial**: Sharpe ratio, max drawdown, hit rate
-- **Statistical**: Information coefficient, rank IC
-- **Calibration**: Brier score, reliability diagrams
-
-## Usage Examples
-
-### Complete Workflow (Recommended)
-```bash
-# 1. Setup data sources automatically
-python scripts/data_setup.py
-
-# 2. Validate pipeline and generate deliverables  
-python setup.py --deliverables
-
-# 3. Run full pipeline with visualizations
-cd results && python prototype.py
-```
-
-### Data Collection Scenarios
-```bash
-# Setup all data sources
-python scripts/data_setup.py
-
-# Setup only specific sources
-python scripts/data_setup.py --source binance
-python scripts/data_setup.py --source defillama
-
-# Validate existing data without downloading
-python scripts/data_setup.py --validate
-
-# Force re-download (if data appears corrupted)
-python scripts/data_setup.py --force
-```
-
-### Pipeline Validation Scenarios
-```bash
-# Quick validation (recommended for testing)
-python setup.py --quick
-
-# Full validation with training tests
-python setup.py --verbose
-
-# Generate documentation only
-python setup.py --deliverables
-
-# Skip training (faster validation)
-python setup.py --no-train
-```
-
-### Analysis and Visualization
-```bash
-# Run complete pipeline analysis (generates 15+ files)
-cd results && python prototype.py
-
-# Alternative: Use setup.py to generate core deliverables
-python setup.py --deliverables
-```
-
-### Custom Configurations
-```bash
-# Custom data directory
-python scripts/data_setup.py --data-dir /path/to/data
-python setup.py --data-dir /path/to/data --deliverables
-```
-
-## Results Folder Deep Dive
-
-The `results/` folder contains all outputs from pipeline execution, analysis, and deliverables. Files are generated by running `setup.py --deliverables` or `results/prototype.py`.
-
-### Generated Files Overview
-
-**Core Deliverables**:
-- `datasource_matrix.csv` - Metadata matrix of all data sources with providers, granularity, rate limits, and gotchas
-- `signal_design.md` - Comprehensive technical documentation of feature engineering, labeling methodology, and model architecture
-- `prototype.py` - Executable script that runs the complete pipeline and generates all visualizations
-- `README.md` - Updated project documentation with setup instructions (this file)
-
-**Data Analysis & Visualization**:
-- `data_overview.png` - Multi-panel overview of all raw data sources (price, TVL, volume, network activity)
-- `feature_correlation.png` - Heatmap showing correlations between all engineered features
-- `feature_distributions.png` - Histograms showing the distribution of the first 24 features
-- `key_features_timeseries.png` - Time series plots of critical features (price, returns, volatility, TVL)
-- `feature_statistics.csv` - Statistical summary (mean, std, min, max, quartiles) for all features
-
-**Label Analysis**:
-- `label_analysis.png` - Multi-panel analysis of triple-barrier labels including distribution, hit times, and temporal patterns
-- `label_statistics.csv` - Summary statistics of label distribution (up/down/neutral percentages and counts)
-
-**Model Analysis**:
-- `model_architecture_analysis.png` - Comparison of model architectures showing parameter counts, model sizes, and efficiency
-- `model_comparison.csv` - Tabular comparison of different model architectures with parameter counts and sizes
-- `hierarchical_performance.png` - Training loss curves and performance metrics for each hierarchical level
-- `performance_comparison.png` - Comparative analysis between hierarchical and ensemble modeling approaches
-
-**Baseline Analysis**:
-- `baseline_model_analysis.png` - Performance analysis of simple logistic regression baseline including confusion matrix and feature importance
-- `baseline_performance.csv` - Baseline model metrics (accuracy, precision, recall, F1-score)
-- `model_analysis.png` - General model performance visualization with predictions, confidence, and rolling accuracy
-
-### Results Folder Structure
-
-```
-results/
-├── Core Deliverables
-│   ├── datasource_matrix.csv           # Data source metadata and specifications
-│   ├── signal_design.md                # Complete technical documentation
-│   ├── prototype.py                    # Pipeline execution script
-│   └── README.md                       # Project documentation (updated)
-├── Data Analysis
-│   ├── data_overview.png               # Raw data visualization across all sources
-│   ├── feature_correlation.png         # Feature correlation heatmap
-│   ├── feature_distributions.png       # Feature distribution histograms
-│   ├── key_features_timeseries.png     # Time series of critical features
-│   └── feature_statistics.csv          # Feature statistical summaries
-├── Label Analysis  
-│   ├── label_analysis.png              # Triple-barrier label analysis
-│   └── label_statistics.csv            # Label distribution statistics
-└── Model Analysis
-    ├── model_architecture_analysis.png # Model comparison analysis
-    ├── model_comparison.csv            # Model architecture specifications
-    ├── hierarchical_performance.png    # Hierarchical model training results
-    ├── performance_comparison.png      # Cross-model performance comparison
-    ├── baseline_model_analysis.png     # Baseline logistic regression analysis
-    ├── baseline_performance.csv        # Baseline model metrics
-    └── model_analysis.png              # General model performance visualization
-```
-
-### How to Generate Results
-
-**Option 1: Generate Specific Deliverables**
-```bash
-python setup.py --deliverables  # Creates core deliverables only
-```
-
-**Option 2: Full Pipeline with Visualizations**
-```bash
-cd results && python prototype.py  # Generates all 15+ files
-```
-
-**Option 3: Validation + Deliverables**
-```bash
-python setup.py --verbose --deliverables  # Complete pipeline + outputs
-```
-
-## Model Performance
-
-**Target Metrics**:
-- Accuracy: >45% (vs 33% random baseline)
-- Sharpe Ratio: >0.5 (risk-adjusted returns)
-- Information Coefficient: >0.05 (predictive power)
-
-## Key Assumptions
-
-1. **Market Microstructure**: Hourly granularity captures sufficient signal
-2. **Feature Stationarity**: Fractional differentiation maintains predictive power
-3. **Label Quality**: Triple-barrier method reduces noise in directional labels
-4. **Regime Stability**: 30-day volatility window captures regime changes
-5. **Data Quality**: Missing values can be forward-filled without bias
-
-## Next Steps (if hired)
-
-### Phase 1: Enhanced Data (Weeks 1-2)
-- Integrate additional data sources (Glassnode, funding rates)
-- Add derivatives data (options flow, perpetual OI)
-- Implement real-time data pipeline
-
-### Phase 2: Advanced Models (Weeks 3-4)  
-- Transformer-based architectures
-- Graph neural networks for cross-asset correlations
-- Reinforcement learning for position sizing
-
-### Phase 3: Production Deployment (Weeks 5-6)
-- Model serving infrastructure
-- Risk management integration  
-- Performance monitoring and retraining
-
-### Phase 4: Research Extensions (Ongoing)
-- Causal inference for feature selection
-- Adversarial training for robustness
-- Multi-timeframe ensemble methods
-
-## Troubleshooting
-
-### Data Issues
-```bash
-# Check data structure
-python setup.py --verbose
-
-# Validate specific data sources  
-python -c "from preprocess import DataPreprocessor; dp = DataPreprocessor(); print(dp.load_data().keys())"
-```
-
-### Memory Issues
-- Reduce sequence length in `get_data(sequence_length=12)`
-- Use CPU training: `device=torch.device('cpu')`
-- Limit data size: `features_df.iloc[:1000]`
-
-### Performance Issues
-- Enable GPU: Install CUDA-compatible PyTorch
-- Reduce model size: `hidden_size=32, num_layers=1`
-- Use quick validation: `python setup.py --quick`
-
-## Quick Reference
-
-### Three-Step Execution
-1. **Data Collection**: `python scripts/data_setup.py`
-2. **Pipeline Validation**: `python setup.py --deliverables` 
-3. **Full Analysis**: `cd results && python prototype.py`
-
-### Key Output Locations
-- **Logs**: `logs/` directory (pipeline execution logs)
-- **Data**: `data/` directory (raw and processed data files)
-- **Results**: `results/` directory (15+ analysis files and visualizations)
-- **Models**: `results/ensemble_models/` (trained model weights)
-
-### Troubleshooting Quick Fixes
-```bash
-# Data issues
-python scripts/data_setup.py --validate
-
-# Environment issues  
-python setup.py --verbose
-
-# Memory issues
-python setup.py --quick
-
-# Missing visualizations
-cd results && python prototype.py
+# Type check
+mypy src/
 ```
 
 ## License

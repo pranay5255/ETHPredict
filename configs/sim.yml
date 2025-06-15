@@ -1,6 +1,0 @@
-sim:
-  mode: amm
-  seed: 123
-  amm:
-    fee_bps: 30
-    inventory: 10000

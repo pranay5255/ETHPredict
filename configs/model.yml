@@ -1,8 +1,0 @@
-model:
-  level0:
-    algo: xgboost
-    params:
-      max_depth: 8
-      eta: 0.1
-      tree_method: gpu_hist
-  meta_labeling: true
