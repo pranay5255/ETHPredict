@@ -1,6 +1,0 @@
-layer,provider,feed_name,granularity,update_latency,historical_depth,cost_tier,rate_limit,major_gotchas
-L1-Chain,DeFiLlama,Ethereum Chain TVL,Daily,1-2 hours,2+ years,Free,1 req/sec,"Daily updates only, TVL calculation varies by protocol"
-L1-Price,Binance,ETHUSDT OHLCV,1 hour,Real-time,2+ years,Free,1200 req/min,"Rate limits strict, need to handle large files"
-L2-Social,Santiment,Social Volume/Sentiment,1 hour,1-6 hours,3+ years,Freemium/Paid,100 req/hour,"Limited free tier, sentiment quality varies"
-L2-Network,Santiment,"Network Activity (DAA, Dev Activity)",1 hour,2-12 hours,3+ years,Freemium/Paid,100 req/hour,"Dev activity has delays, DAA subject to wash trading"
-L2-Financial,Santiment,"Market Cap, Network Growth",1 hour,1-2 hours,3+ years,Freemium/Paid,100 req/hour,"Market cap uses circulating supply, may differ from exchanges"
