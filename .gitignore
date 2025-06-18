@@ -3,3 +3,7 @@ advancesInFinML/
 logs/
 .venv/
 __pycache__/
+build/
+artifacts/
+logs/
+results/
