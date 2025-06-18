@@ -10,7 +10,7 @@
 # EXPERIMENT METADATA
 # =============================================================================
 experiment:
-  id: exp_{{timestamp}}              # Unique experiment identifier (template variable)
+  id: exp_1              # Unique experiment identifier (template variable)
   name: "ETH Price Prediction"       # Human-readable experiment name
   description: "Hierarchical ML model for ETH price prediction and market making"
   seed: 42                          # Random seed for reproducibility
