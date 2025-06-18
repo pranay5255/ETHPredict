@@ -65,8 +65,8 @@ class Config:
     bribe_value: float
     
     # Backtest settings
-    start_date: datetime
-    end_date: datetime
+    start_date: str
+    end_date: str
     initial_capital: float
     
     # Simulation settings

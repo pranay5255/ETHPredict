@@ -34,7 +34,7 @@ def setup_logging(
     
     # Add file handler if specified
     if log_file:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
