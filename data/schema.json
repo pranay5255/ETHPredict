@@ -1,0 +1,8 @@
+{
+  "timestamp": "int64",
+  "open": "float64",
+  "high": "float64",
+  "low": "float64",
+  "close": "float64",
+  "volume": "float64"
+}

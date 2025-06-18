@@ -42,3 +42,5 @@ pytest-cov>=4.0.0
 
 # Experiment orchestration
 optuna>=3.0.0
+pydantic>=2.0
+loguru>=0.7.0
