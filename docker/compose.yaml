@@ -2,7 +2,7 @@ version: '3'
 services:
   ethpredict-core:
     build: ..
-    command: python -m src.runner configs/config.yml
+    command: python runner.py configs/config.yml
   foundry:
     image: ghcr.io/foundry-rs/foundry:latest
     command: anvil
