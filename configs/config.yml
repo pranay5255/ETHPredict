@@ -26,7 +26,6 @@ data:
   sources:
     - binance                       # ETHUSDT price/volume data
     - defillama                     # DeFi TVL data
-    - santiment                     # Social/network metrics
   
   # Date range for training data
   start_date: "2022-01-01"          # Training data start date (YYYY-MM-DD)
