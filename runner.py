@@ -217,7 +217,12 @@ class ETHPredictPipeline:
         logger.info("Building bars and features...")
         
         # Initialize data preprocessor
-        self.data_preprocessor = DataPreprocessor(data_dir=str(self.data_dir))
+        data_sources = self.config.get("data", {}).get("sources", [])
+        include_santiment = "santiment" in data_sources
+        self.data_preprocessor = DataPreprocessor(
+            data_dir=str(self.data_dir),
+            include_santiment=include_santiment
+        )
         
         # Get bar configuration
         bar_config = self.config.get("bars", {})
@@ -421,25 +426,42 @@ class ETHPredictPipeline:
         })
         
         # Generate predictions using trained model
+        predicted_prices = targets_df["close"].shift(1).fillna(targets_df["close"])
         try:
-            # Convert features to tensor format expected by model
-            sequence_length = self.config.get("model", {}).get("level2", {}).get("params", {}).get("sequence_length", 24)
-            
-            # Simple prediction fallback
-            predicted_prices = targets_df["close"].shift(1).fillna(targets_df["close"])
-            
-            # Try to get real predictions if model is available
-            if self.ensemble_model and hasattr(self.ensemble_model, 'predict'):
-                try:
-                    # This would need proper tensor conversion
-                    logger.info("Using ensemble model predictions")
-                    # For now, use simple prediction
-                except Exception as e:
-                    logger.warning(f"Model prediction failed: {e}")
-            
+            sequence_length = (
+                self.config.get("model", {})
+                .get("level2", {})
+                .get("params", {})
+                .get("sequence_length", 24)
+            )
+
+            if self.ensemble_model and hasattr(self.ensemble_model, "predict"):
+                features_tensor = torch.tensor(features_df.values, dtype=torch.float32)
+                features_mean = features_tensor.mean(dim=0)
+                features_std = features_tensor.std(dim=0) + 1e-8
+                scaled_features = (features_tensor - features_mean) / features_std
+
+                sequences = [
+                    scaled_features[i:i + sequence_length]
+                    for i in range(len(scaled_features) - sequence_length)
+                ]
+                if not sequences:
+                    raise ValueError("Insufficient samples for sequence prediction")
+
+                X_seq = torch.stack(sequences)
+                pred_returns, _ = self.ensemble_model.predict(X_seq, return_confidence=False)
+                pred_returns = pred_returns.squeeze(1).numpy()
+
+                pred_index = features_df.index[sequence_length:]
+                pred_return_series = pd.Series(pred_returns, index=pred_index)
+
+                predicted_prices = market_data["price"].copy()
+                predicted_prices.loc[pred_index] = (
+                    predicted_prices.loc[pred_index] * np.exp(pred_return_series)
+                )
+                logger.info("Using ensemble model predictions for backtest")
         except Exception as e:
-            logger.warning(f"Prediction generation failed: {e}")
-            predicted_prices = targets_df["close"].shift(1).fillna(targets_df["close"])
+            logger.warning(f"Model prediction failed: {e}. Falling back to shifted prices.")
         
         # Backtest parameters
         backtest_params = BacktestParams(
