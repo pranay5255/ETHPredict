@@ -53,9 +53,10 @@ def save_features(asset: str, bar_type: str, df: pd.DataFrame) -> Path:
 
 # --- Full Feature Engineering and Preprocessing ---
 class DataPreprocessor:
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data", include_santiment: bool = True):
         self.data_dir = Path(data_dir)
         self.granularities = ["30s", "1m", "5m", "1h"]
+        self.include_santiment = include_santiment
 
     def load_price_data(self) -> Dict[str, pd.DataFrame]:
         data = {}
@@ -180,7 +181,7 @@ class DataPreprocessor:
     def prepare_features(self, granularity: str, sequence_length: int = 24) -> Tuple[np.ndarray, np.ndarray]:
         price_data = self.load_price_data().get(granularity)
         chain_tvl = self.load_chain_tvl()
-        santiment = self.load_santiment()
+        santiment = self.load_santiment() if self.include_santiment else None
 
         if price_data is None or chain_tvl is None:
             raise ValueError(f"Price and chain TVL data required for {granularity}")
