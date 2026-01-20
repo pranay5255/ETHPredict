@@ -1,0 +1,8 @@
+version: "3"
+services:
+  ethpredict-core:
+    build: .
+    command: python runner.py configs/config.yml
+    volumes:
+      - .:/app
+
