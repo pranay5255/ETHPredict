@@ -1,177 +1,166 @@
-# ETH Price Prediction Pipeline
+# ETHPredict
 
-A complete machine learning pipeline for Ethereum price prediction using hierarchical models, advanced feature engineering, and multiple data sources.
+ETHPredict is currently scoped to public Lighter ETH perpetual market data. The active pipeline collects Lighter OHLCV candles, builds OHLCV-only features, and keeps legacy non-Lighter work recoverable under `archive/legacy_data_sources`.
 
-## Overview
+The current experiment path uses `uv` for dependency management and a CUDA 12.8 PyTorch environment on `cuda:0` for neural training. ARIMA and SARIMAX baselines remain CPU-bound.
 
-This repository implements a sophisticated ETH price prediction system that combines:
-- **Multi-source data integration**: Price, TVL, social, and network metrics  
-- **Advanced feature engineering**: Fractional differentiation, entropy, structural breaks
-- **Hierarchical model architecture**: Multi-level ensemble with confidence estimation
-- **Robust validation**: Purged time-series CV with embargo periods
-- **Production-ready pipeline**: Comprehensive validation and deliverables generation
+## Active Scope
 
-## Project Structure
+- **Data source**: Lighter public ETH perp candles, `market_id: 0`.
+- **Feature source**: OHLCV only from `data/raw/*-lighter-*.csv`.
+- **Experiment runner**: `src.experiments.lighter_compare` for Lighter-only neural trials, ARIMA/SARIMAX baselines, and GLFT metric ranking.
+- **GPU policy**: neural smoke tests and training default to `cuda:0`; CPU neural runs require explicit `--allow-cpu`.
+- **Side data**: Lighter funding, mark price, order book, and recent trades are collected under `data/lighter/` but are not joined into features yet.
+- **Archived**: Binance, DeFiLlama, Santiment, DEX simulation, bribe optimization, and parameter-optimization config/code are archived under `archive/legacy_data_sources`.
 
-```
+## Project Layout
+
+```text
+configs/
+  config.yml                  # Active Lighter-only pipeline config
+  lighter_experiments.yml     # Lighter compare experiment config
+  schema.yaml                 # Active config validation schema
+scripts/
+  lighter_collect_data.py     # Public Lighter data collector
 src/
-├── data/              # Data loading and preprocessing
-│   ├── loader.py      # Data source integration
-│   └── validator.py   # Data validation
-├── features/          # Feature engineering
-│   ├── base.py        # Base feature computation
-│   └── advanced.py    # Advanced feature computation
-├── models/            # Model architectures
-│   ├── hierarchical.py # Hierarchical model components
-│   └── ensemble.py    # Ensemble methods
-├── training/          # Training pipeline
-│   ├── trainer.py     # Training orchestration
-│   └── validator.py   # Model validation
-├── utils/             # Shared utilities
-│   ├── logging.py     # Logging utilities
-│   └── metrics.py     # Performance metrics
-└── config/            # Configuration management
-    ├── loader.py      # Config loading
-    └── validator.py   # Config validation
+  experiments/lighter_compare.py # Lighter neural/baseline experiment runner
+  data/features_all.py        # Lighter-only OHLCV feature generation
+  data/lighter_client.py      # Public Lighter REST client
+  config/loader.py            # Active config loader
+  csv_loader.py               # CSV schema validation helper
+  models/                     # Existing model definitions
+  training/                   # Device policy and training utilities
+  market_maker/               # GLFT quote and inventory logic
+  simulator/                  # Price-data backtest framework
+archive/legacy_data_sources/  # Recoverable legacy source/config/code archive
+data/raw/                     # Active model OHLCV exports
+data/lighter/                 # Lighter side-data exports
 ```
 
-## Quick Start
+## Setup
 
-### 1. Environment Setup
+Use `uv` for the active GPU experiment path. `pyproject.toml` and `uv.lock` are the source of truth for current experiments, including the official PyTorch CUDA 12.8 wheel index.
 
 ```bash
-# Clone repository
-git clone <repository-url>
-cd ETHPredict
+uv sync
+uv run python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+```
 
-# Create virtual environment
+Expected GPU validation on the 4090 machine:
+
+```text
+2.11.0+cu128
+True
+NVIDIA GeForce RTX 4090
+```
+
+The legacy `requirements.txt` flow remains available for older setup work, but it is no longer the active dependency source for GPU experiments:
+
+```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-# Install dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
+## Collect Lighter Data
 
-The system uses a single comprehensive configuration file:
+Use the defaults in `configs/config.yml`:
 
-- **`configs/config.yml`** - Complete system configuration including ML training, market making, and backtesting
-- **`configs/schema.yaml`** - JSON schema for configuration validation
-
-### 3. Running Experiments
-
-#### Single Experiment Run
 ```bash
-# Run with default config
-python runner.py run
-
-# Run with specific config file
-python runner.py run --config configs/config.yml
-
-# Run with custom experiment ID and GPU
-python runner.py run --id my_experiment --gpu 0
+python scripts/lighter_collect_data.py --config configs/config.yml
 ```
 
-#### Parameter Sweep (Hyperparameter Optimization)
-```bash
-# Run Bayesian optimization (default)
-python runner.py grid --trials 100
+Expected active raw output:
 
-# Run grid search
-python runner.py grid --mode grid --trials 50
-
-# Run random search with multiple GPUs
-python runner.py grid --mode random --trials 200 --gpus "0,1" --workers 8
+```text
+data/raw/ETHUSDT-1h-lighter-20260328-20260628.csv
 ```
 
-#### Generate Reports
-```bash
-# Generate HTML report
-python runner.py report results/
+The collector also writes Lighter-native side data under `data/lighter/`.
 
-# Generate JSON report
-python runner.py report results/ --format json --output analysis.json
+## Build Features
+
+Build sequence features from the active Lighter raw CSV:
+
+```bash
+python -m src.data.features_all full_features --data-dir data --sequence-length 24 --out-dir /tmp/ethpredict-lighter-features
 ```
 
-#### System Information
-```bash
-# Check system status and configuration
-python runner.py info
+`DataPreprocessor` intentionally loads only files matching:
+
+```text
+data/raw/ETHUSDT-<resolution>-lighter-*.csv
 ```
 
-## Data Sources
+Legacy-looking files such as `ETHUSDT-1h-2025-04.csv` are ignored by active loaders.
 
-| Source | Data Type | Granularity | Update Frequency |
-|--------|-----------|-------------|------------------|
-| **Binance** | ETHUSDT OHLCV | 1 hour | Real-time |
-| **DeFiLlama** | Chain TVL | Daily | 1-2 hours |
-| **Santiment** | Social metrics | 1 hour | 1-6 hours |
-| **Santiment** | Network activity | 1 hour | 2-12 hours |
+## Run Pipeline
 
-## Feature Engineering
+The top-level runner takes a config path:
 
-### Base Features
-- Price (close), volume, TVL, network activity, social metrics
-- Returns, volatility, ratios, growth rates, change metrics
+```bash
+python runner.py configs/config.yml
+```
 
-### Advanced Features
-- **Fractional differentiation**: Preserve memory while achieving stationarity
-- **Information entropy**: Measure uncertainty in returns  
-- **Structural breaks**: CUSUM and SADF detection
-- **Volatility regimes**: Discrete market state classification
-- **Parkinson volatility**: High-low range estimator
+The runner currently uses the Lighter-only feature stack, existing model/training components, GLFT market-making setup, and price-data backtesting. Full model-prediction integration in backtesting remains a follow-up item.
 
-## Model Architecture
+## Run Lighter Experiments
 
-### Hierarchical Design
-- **Level 0**: PriceLSTM - Pure price/volume predictions
-- **Level 1**: MetaMLP - Fundamental feature integration  
-- **Level 2**: ConfidenceGRU - Temporal confidence modeling
+The uv-managed experiment runner compares the three-model neural stack against CPU ARIMA/SARIMAX baselines for both active targets:
 
-### Training Features
-- Triple-barrier labeling with meta-labeling
-- Sample uniqueness weighting
-- Purged time-series cross-validation
-- Embargo periods to prevent look-ahead bias
+- `triple_barrier`
+- `next_hour_return`
 
-## Performance Metrics
+Smoke run:
 
-### Financial
-- Sharpe ratio: >0.5 (risk-adjusted returns)
-- Max drawdown: <20%
-- Hit rate: >45% (vs 33% random baseline)
+```bash
+uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml --smoke
+```
 
-### Statistical
-- Information coefficient: >0.05
-- Rank IC: >0.03
-- Brier score: <0.4
+Full configured run:
 
-## Configuration System
+```bash
+uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml
+```
 
-The system uses a single comprehensive configuration file (`configs/config.yml`) that contains all parameters:
+Neural training defaults to `cuda:0` and fails fast if CUDA is unavailable. CPU neural runs require an explicit override:
 
-### Complete Configuration Structure
+```bash
+uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml --smoke --device cpu --allow-cpu
+```
+
+ARIMA and SARIMAX baselines remain CPU-bound.
+
+## Configuration
+
+The active pipeline config keeps only the sections needed for this phase:
 
 ```yaml
-# Experiment setup
 experiment:
-  id: exp_{{timestamp}}
+  id: exp_1
   seed: 42
   trials: 1000
 
-# Data sources and preprocessing
 data:
-  sources: [binance, defillama, santiment]
-  start_date: "2022-01-01"
-  end_date: "2025-01-01"
+  sources:
+    - lighter
+  lighter:
+    base_url: "https://mainnet.zklighter.elliot.ai"
+    symbol: "ETH"
+    market_type: "perp"
+    market_id: 0
+    pipeline_symbol: "ETHUSDT"
+    resolution: "1h"
+    funding_resolution: "1h"
+    start_date: "2026-03-28"
+    end_date: "2026-06-28"
+    count_back: 500
+    request_pause_seconds: 0.1
 
-# Feature engineering
 features:
   frac_diff_order: 0.5
   include: [vol_adj_flow, rsi, macd, bollinger, volume_profile]
 
-# Model architecture (hierarchical ML)
 model:
   type: hierarchical
   level0:
@@ -180,109 +169,65 @@ model:
       max_depth: 8
       eta: 0.1
       tree_method: gpu_hist
-  level1:
-    enabled: true
-    algo: mlp
-  level2:
-    enabled: true
-    algo: gru
 
-# Training parameters
-training:
-  epochs: 100
-  learning_rate: 0.001
-  batch_size: 32
-
-# Market making strategy
 market_maker:
   strategy: glft
-  gamma: 0.5              # Risk aversion
-  inventory_limit: 10000  # Max position size
-  quote_spread: 0.001     # Base spread
+  gamma: 0.5
+  inventory_limit: 10000
+  quote_spread: 0.001
 
-# Inventory management
-inventory:
-  max_long_position: 5000
-  var_limit: 1000
-  max_drawdown_pct: 0.15
-
-# Bribe optimization
-bribe:
-  mode: percentile
-  percentile: 95
-  mev_protection: true
-
-# Backtesting
 backtest:
-  start: 2024-01-01
-  end: 2025-01-01
+  start: "2024-01-01"
+  end: "2025-01-01"
   initial_capital: 100000
-
-# DEX simulation
-sim:
-  mode: amm
-  amm:
-    fee_bps: 30
-    inventory: 10000
-    mev_enabled: true
-
-# Parameter optimization
-optimization:
-  parameter_ranges:
-    gamma: [0.1, 2.0]
-    inventory_limit: [1000, 50000]
-    learning_rate: [0.0001, 0.1]
-    max_depth: [4, 12]
-  
-  method: bayesian
-  n_trials: 1000
 ```
 
-### Key Configuration Sections
+DEX simulation, bribe/MEV optimization, and parameter sweep config were removed from the active config and archived.
 
-- **experiment**: Metadata and experiment settings
-- **data**: Data sources and preprocessing
-- **bars**: Bar sampling configuration
-- **features**: Feature engineering parameters
-- **model**: Hierarchical ML model architecture
-- **training**: Training and validation parameters
-- **market_maker**: Market making strategy
-- **inventory**: Risk and inventory management
-- **bribe**: MEV and bribe optimization
-- **backtest**: Backtesting configuration
-- **sim**: DEX simulation parameters
-- **performance**: Performance evaluation
-- **optimization**: Parameter optimization ranges
-- **hardware**: GPU and hardware settings
+The active experiment config is separate:
 
-## Development
+```yaml
+targets:
+  - triple_barrier
+  - next_hour_return
 
-### Running Tests
+training:
+  sequence_length: 24
+  hidden_size: 16
+  num_layers: 1
+  batch_size: 16
+  epochs: 3
+  neural_trials_per_target: 2
+
+smoke:
+  max_rows: 128
+  neural_trials_per_target: 1
+  epochs: 1
+```
+
+## Verification
+
+Current uv/GPU checks:
 
 ```bash
-# Run all tests
-pytest
-
-# Run specific test file
-pytest tests/test_models.py
-
-# Run with coverage
-pytest --cov=src
+uv run python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+uv run pytest
+uv run pytest tests/test_lighter_experiments.py
+uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml --smoke
+uv lock --check
 ```
 
-### Code Style
+Focused checks from the Lighter-only refactor remain useful:
 
 ```bash
-# Format code
-black src/
-
-# Lint code
-ruff check src/
-
-# Type check
-mypy src/
+python -m pytest tests/test_lighter_client.py tests/test_lighter_preprocessor.py tests/test_config.py tests/test_runner.py
+python -m py_compile src/data/features_all.py src/data/lighter_client.py scripts/lighter_collect_data.py src/config/loader.py src/config/__init__.py src/main.py runner.py
+python -m src.data.features_all full_features --data-dir data --sequence-length 24 --out-dir /tmp/ethpredict-lighter-features
 ```
 
-## License
+## Notes
 
-MIT License - see LICENSE file for details.
+- The active raw Lighter file collected for this pass has 2,208 hourly rows from `2026-03-28 00:00:00 UTC` through `2026-06-27 23:00:00 UTC`.
+- Optional Lighter `exchangeMetrics` outputs are best-effort and may be skipped when the API rejects the period/filter combination.
+- `requirements.txt` is preserved for legacy setup until a later cleanup; uv metadata is the active experiment dependency source.
+- `archive/legacy_data_sources/README.md` lists archived files and why they are no longer active.
