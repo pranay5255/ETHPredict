@@ -11,6 +11,7 @@ import pandas as pd
 import itertools
 
 from src.models.model import build_ensemble, EnsemblePredictor, PriceLSTM, MetaMLP, ConfidenceGRU, create_model
+from src.training.devices import resolve_training_device
 
 
 class HierarchicalPredictor(nn.Module):
@@ -237,7 +238,8 @@ def hierarchical_training_pipeline(
     batch_size: int = 32,
     num_epochs: int = 50,
     learning_rate: float = 0.001,
-    device: Optional[torch.device] = None
+    device: Optional[torch.device] = None,
+    allow_cpu: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Complete hierarchical training pipeline for the three-level model.
@@ -259,8 +261,7 @@ def hierarchical_training_pipeline(
     Returns:
         Dictionary containing trained models and training history
     """
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_training_device(device, allow_cpu=allow_cpu)
     
     # Move data to device
     X = X.to(device)
