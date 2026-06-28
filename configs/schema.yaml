@@ -1,13 +1,16 @@
 type: object
 required:
-  - experiment
-  - bars
-  - features
-  - model
+- experiment
+- bars
+- features
+- model
 properties:
   experiment:
     type: object
-    required: [id, seed, trials]
+    required:
+    - id
+    - seed
+    - trials
     properties:
       id:
         type: string
@@ -17,11 +20,16 @@ properties:
         type: integer
   bars:
     type: object
-    required: [type]
+    required:
+    - type
     properties:
       type:
         type: string
-        enum: [time, tick, volume, dollar]
+        enum:
+        - time
+        - tick
+        - volume
+        - dollar
       threshold_usd:
         type: number
       threshold_ticks:
@@ -30,10 +38,12 @@ properties:
         type: number
       time_interval:
         type: string
-        pattern: '^[0-9]+[mhd]$'
+        pattern: ^[0-9]+[mhd]$
   features:
     type: object
-    required: [frac_diff_order, include]
+    required:
+    - frac_diff_order
+    - include
     properties:
       frac_diff_order:
         type: number
@@ -43,18 +53,29 @@ properties:
         type: array
         items:
           type: string
-          enum: [vol_adj_flow, rsi, macd, bollinger, volume_profile]
+          enum:
+          - vol_adj_flow
+          - rsi
+          - macd
+          - bollinger
+          - volume_profile
   model:
     type: object
-    required: [level0]
+    required:
+    - level0
     properties:
       level0:
         type: object
-        required: [algo, params]
+        required:
+        - algo
+        - params
         properties:
           algo:
             type: string
-            enum: [xgboost, lightgbm, catboost]
+            enum:
+            - xgboost
+            - lightgbm
+            - catboost
           params:
             type: object
             properties:
@@ -66,7 +87,10 @@ properties:
                 minimum: 0
               tree_method:
                 type: string
-                enum: [gpu_hist, hist, exact]
+                enum:
+                - gpu_hist
+                - hist
+                - exact
       meta_labeling:
         type: boolean
   market_maker:
@@ -82,23 +106,12 @@ properties:
       quote_spread:
         type: number
         minimum: 0
-  bribe:
-    type: object
-    required: [mode]
-    properties:
-      mode:
-        type: string
-        enum: [percentile, fixed, adaptive]
-      percentile:
-        type: number
-        minimum: 0
-        maximum: 100
-      fixed_amount:
-        type: number
-        minimum: 0
   backtest:
     type: object
-    required: [start, end, initial_capital]
+    required:
+    - start
+    - end
+    - initial_capital
     properties:
       start:
         type: string
@@ -109,30 +122,3 @@ properties:
       initial_capital:
         type: number
         minimum: 0
-  sim:
-    type: object
-    required: [mode]
-    properties:
-      mode:
-        type: string
-        enum: [amm, lob]
-      seed:
-        type: integer
-      amm:
-        type: object
-        properties:
-          fee_bps:
-            type: integer
-            minimum: 0
-            maximum: 10000
-          inventory:
-            type: number
-      lob:
-        type: object
-        properties:
-          tick_size:
-            type: number
-            minimum: 0
-          depth_levels:
-            type: integer
-            minimum: 1
