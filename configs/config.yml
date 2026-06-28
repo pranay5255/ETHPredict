@@ -24,12 +24,26 @@ experiment:
 data:
   # Data sources and collection parameters
   sources:
-    - binance                       # ETHUSDT price/volume data
-    - defillama                     # DeFi TVL data
+    - lighter                       # Lighter ETH perp/spot market data
   
   # Date range for training data
   start_date: "2022-01-01"          # Training data start date (YYYY-MM-DD)
   end_date: "2025-01-01"            # Training data end date (YYYY-MM-DD)
+
+  # Lighter public market data collection.
+  # Lighter ETH perp mainnet market_id is 0.
+  lighter:
+    base_url: "https://mainnet.zklighter.elliot.ai"
+    symbol: "ETH"
+    market_type: "perp"
+    market_id: 0
+    pipeline_symbol: "ETHUSDT"      # Preserve current DataPreprocessor filename pattern
+    resolution: "1h"
+    funding_resolution: "1h"
+    start_date: "2026-03-28"
+    end_date: "2026-06-28"
+    count_back: 500                 # Lighter candles endpoint max per request
+    request_pause_seconds: 0.1      # Keep standard account rate limits safe
   
   # Data validation and preprocessing
   min_data_points: 1000             # Minimum required data points
@@ -189,35 +203,12 @@ inventory:
   leverage_limit: 2.0               # Maximum leverage allowed
   rebalance_frequency: 1h           # Portfolio rebalancing frequency
 
-# BRIBE OPTIMIZATION
-# =============================================================================
-bribe:
-  # Bribe strategy and mode
-  mode: percentile                  # Bribe mode: [percentile, fixed, adaptive, optimal]
-  enabled: true                     # Whether to use bribe optimization
-  
-  # Percentile-based bribe parameters
-  percentile: 95                    # Percentile for competitive bidding
-  lookback_window: 100              # Number of blocks to look back
-  min_percentile: 50                # Minimum percentile to use
-  max_percentile: 99                # Maximum percentile to use
-  
-  # Fixed bribe parameters (if mode is 'fixed')
-  fixed_amount: 0.01                # Fixed bribe amount (ETH)
-  min_bribe: 0.001                  # Minimum bribe amount (ETH)
-  max_bribe: 0.1                    # Maximum bribe amount (ETH)
-  
-  # MEV protection
-  mev_protection: true              # Enable MEV protection strategies
-  front_run_protection: true        # Protection against front-running
-  sandwich_protection: true         # Protection against sandwich attacks
-
 # BACKTESTING CONFIGURATION
 # =============================================================================
 backtest:
   # Time period for backtesting
-  start: 2024-01-01                 # Backtest start date (YYYY-MM-DD)
-  end: 2025-01-01                   # Backtest end date (YYYY-MM-DD)
+  start: "2024-01-01"               # Backtest start date (YYYY-MM-DD)
+  end: "2025-01-01"                 # Backtest end date (YYYY-MM-DD)
   timezone: UTC                     # Timezone for backtest
   
   # Capital and position sizing
@@ -231,34 +222,6 @@ backtest:
   slippage_model: linear            # Slippage model: [linear, sqrt, constant]
   slippage_bps: 5                   # Slippage in basis points
   spread_cost: true                 # Include bid-ask spread costs
-
-# DEX SIMULATION PARAMETERS
-# =============================================================================
-sim:
-  # Simulation mode and environment
-  mode: amm                         # Simulation mode: [amm, lob, hybrid]
-  seed: 123                         # Random seed for DEX simulation
-  
-  # AMM (Automated Market Maker) parameters
-  amm:
-    protocol: uniswap_v3            # AMM protocol: [uniswap_v2, uniswap_v3, curve, balancer]
-    fee_bps: 30                     # Trading fee in basis points (0.3%)
-    pool_liquidity: 1000000         # Total pool liquidity (USD)
-    inventory: 10000                # Starting inventory (ETH)
-    slippage_tolerance: 0.005       # Maximum acceptable slippage (0.5%)
-    
-    # MEV simulation
-    mev_enabled: true               # Enable MEV simulation
-    front_run_probability: 0.1      # Probability of front-running
-    sandwich_probability: 0.05      # Probability of sandwich attacks
-  
-  # LOB (Limit Order Book) parameters
-  lob:
-    tick_size: 0.01                 # Price tick size
-    depth_levels: 20                # Number of depth levels to simulate
-    max_spread_bps: 100             # Maximum spread in basis points
-    order_arrival_rate: 10          # Orders per second
-    market_order_ratio: 0.3         # Ratio of market vs limit orders
 
 # PERFORMANCE EVALUATION
 # =============================================================================
@@ -298,41 +261,6 @@ reporting:
     save_positions: true            # Save position history
     save_pnl: true                  # Save P&L history
     compression: gzip               # Compression format
-
-# PARAMETER OPTIMIZATION
-# =============================================================================
-optimization:
-  # Objective functions
-  objective: sharpe_ratio           # Primary optimization objective
-  
-  # Parameter ranges for optimization
-  parameter_ranges:
-    # Model parameters
-    gamma: [0.1, 2.0]               # Risk aversion range
-    inventory_limit: [1000, 50000]  # Inventory limit range
-    quote_spread: [0.0005, 0.01]    # Quote spread range
-    
-    # Feature parameters
-    frac_diff_order: [0.1, 0.9]     # Fractional diff order range
-    volatility_window: [10, 50]     # Volatility window range
-    
-    # Training parameters
-    learning_rate: [0.0001, 0.1]    # Learning rate range
-    batch_size: [16, 128]           # Batch size range
-    max_depth: [4, 12]              # XGBoost max depth range
-    eta: [0.01, 0.3]                # XGBoost learning rate range
-  
-  # Optimization settings
-  method: bayesian                  # Optimization method: [grid, random, bayesian]
-  n_trials: 1000                    # Number of optimization trials
-  n_jobs: 4                         # Parallel jobs
-  timeout_minutes: 1440             # Optimization timeout (24 hours)
-  
-  # Constraints
-  constraints:
-    max_drawdown: 0.15              # Maximum allowed drawdown
-    min_trades: 100                 # Minimum number of trades
-    min_win_rate: 0.4               # Minimum win rate
 
 # HARDWARE CONFIGURATION
 # =============================================================================
