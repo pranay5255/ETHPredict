@@ -1,26 +1,88 @@
+"""Lighter-only OHLCV feature engineering.
+
+The active data path intentionally reads only public Lighter candle exports from
+``data/raw/*-lighter-*.csv``. Multi-source TVL, Santiment, and Binance-specific
+feature code is archived under ``archive/legacy_data_sources``.
+"""
+
+from __future__ import annotations
+
 import argparse
-import os
 import pickle
 from pathlib import Path
-from typing import Tuple, Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 import warnings
 
 import numpy as np
 import pandas as pd
-import torch
 from statsmodels.tsa.stattools import adfuller
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
-# --- Bar Sampling Logic ---
+OHLCV_COLUMNS = [
+    "open_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "close_time",
+    "quote_asset_volume",
+    "number_of_trades",
+    "taker_buy_base_asset_volume",
+    "taker_buy_quote_asset_volume",
+    "ignore",
+]
+
+LIGHTER_FEATURE_COLUMNS = [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "quote_asset_volume",
+    "price_return",
+    "log_return",
+    "volume_change",
+    "quote_volume_change",
+    "dollar_volume",
+    "high_low_range",
+    "close_open_return",
+    "return_vol_1",
+    "return_vol_24",
+    "return_vol_168",
+    "volume_zscore_24",
+    "fracdiff_close",
+    "return_entropy_24",
+    "return_entropy_168",
+    "cusum_flag",
+    "sadf_flag",
+    "vol_regime",
+    "parkinson_vol",
+]
+
+
+def _clean_numeric(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+def _safe_pct_change(series: pd.Series) -> pd.Series:
+    return series.pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+def _safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
+    denominator = denominator.replace(0, np.nan)
+    return (numerator / denominator).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
 def sample_bars(df: pd.DataFrame, bar_type: str) -> pd.DataFrame:
     if bar_type == "tick":
         threshold = 1000
-        metric = pd.Series(range(len(df))) + 1
+        metric = pd.Series(range(len(df)), index=df.index) + 1
     elif bar_type == "volume":
         threshold = 10000
         metric = df["volume"].cumsum()
-    else:  # dollar
+    else:
         threshold = 10_000_000
         metric = (df["close"] * df["volume"]).cumsum()
 
@@ -35,14 +97,14 @@ def sample_bars(df: pd.DataFrame, bar_type: str) -> pd.DataFrame:
     )
     return bars.reset_index(drop=True)
 
-# --- Simple Feature Generation ---
+
 def generate_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.sort_values("timestamp")
+    df = df.sort_values("timestamp").copy()
     df["return"] = df["close"].pct_change().fillna(0)
     df["rolling_vol"] = df["return"].rolling(24).std().fillna(0)
     return df
 
-# --- Feature Saving Utility ---
+
 def save_features(asset: str, bar_type: str, df: pd.DataFrame) -> Path:
     date = pd.to_datetime(df["timestamp"].iloc[0], unit="ms").strftime("%Y%m%d")
     out_dir = Path("build/features") / asset / bar_type
@@ -51,61 +113,43 @@ def save_features(asset: str, bar_type: str, df: pd.DataFrame) -> Path:
     df.to_parquet(out_path)
     return out_path
 
-# --- Full Feature Engineering and Preprocessing ---
+
 class DataPreprocessor:
-    def __init__(self, data_dir: str = "data", include_santiment: bool = True):
+    """Build model inputs from Lighter OHLCV CSV exports only."""
+
+    def __init__(
+        self,
+        data_dir: str = "data",
+        include_santiment: bool = False,
+        granularities: Optional[Sequence[str]] = None,
+    ):
         self.data_dir = Path(data_dir)
-        self.granularities = ["30s", "1m", "5m", "1h"]
+        self.granularities = list(granularities or ["1h"])
         self.include_santiment = include_santiment
 
     def load_price_data(self) -> Dict[str, pd.DataFrame]:
-        data = {}
-        for gran in self.granularities:
-            candidates = list(self.data_dir.glob(f"ETHUSDT-{gran}-*.csv")) + \
-                         list((self.data_dir / "raw").glob(f"ETHUSDT-{gran}-*.csv"))
+        data: Dict[str, pd.DataFrame] = {}
+        raw_dir = self.data_dir / "raw"
+        for granularity in self.granularities:
+            candidates = sorted(raw_dir.glob(f"ETHUSDT-{granularity}-lighter-*.csv"))
             frames = []
-            binance_columns = [
-                'open_time', 'open', 'high', 'low', 'close', 'volume',
-                'close_time', 'quote_asset_volume', 'number_of_trades',
-                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-            ]
             for csv_path in candidates:
                 try:
-                    df = pd.read_csv(csv_path, header=None, names=binance_columns)
-                    df["timestamp"] = pd.to_datetime(df["open_time"], unit='ms', errors='coerce')
-                    if df["timestamp"].dt.tz is not None:
-                        df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+                    df = pd.read_csv(csv_path, header=None, names=OHLCV_COLUMNS)
+                    df["open_time"] = pd.to_numeric(df["open_time"], errors="coerce")
+                    df = df.dropna(subset=["open_time"])
+                    df["open_time"] = df["open_time"].astype("int64")
+                    df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.tz_convert(None)
+                    for column in OHLCV_COLUMNS:
+                        df[column] = _clean_numeric(df[column])
                     frames.append(df)
-                except Exception as e:
-                    print(f"Warning: Could not load {csv_path}: {e}")
+                except Exception as exc:
+                    print(f"Warning: Could not load {csv_path}: {exc}")
             if frames:
                 price = pd.concat(frames, ignore_index=True)
                 price = price.drop_duplicates(subset="timestamp").sort_values("timestamp")
-                data[gran] = price
+                data[granularity] = price.reset_index(drop=True)
         return data
-
-    def load_chain_tvl(self) -> Optional[pd.DataFrame]:
-        chain_tvl_files = list(self.data_dir.glob("defillama_eth_chain_tvl*.csv"))
-        for f in chain_tvl_files:
-            df = pd.read_csv(f)
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
-            if df["timestamp"].dt.tz is not None:
-                df["timestamp"] = df["timestamp"].dt.tz_localize(None)
-            return df
-        return None
-
-    def load_santiment(self) -> Optional[pd.DataFrame]:
-        santiment_files = list(self.data_dir.glob("santiment_metrics*.csv"))
-        for f in santiment_files:
-            df = pd.read_csv(f)
-            if "datetime" in df.columns:
-                df["timestamp"] = pd.to_datetime(df["datetime"])
-            else:
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
-            if df["timestamp"].dt.tz is not None:
-                df["timestamp"] = df["timestamp"].dt.tz_localize(None)
-            return df
-        return None
 
     def fracdiff(self, series: pd.Series, d: float, thres: float = 0.01) -> pd.Series:
         w = [1.0]
@@ -114,60 +158,67 @@ class DataPreprocessor:
             if abs(w_) < thres:
                 break
             w.append(w_)
-        w = np.array(w[::-1])
+        weights = np.array(w[::-1])
         output = series.copy() * np.nan
-        for idx in range(len(w)-1, len(series)):
-            output.iloc[idx] = np.dot(w, series.iloc[idx-len(w)+1:idx+1])
+        for idx in range(len(weights) - 1, len(series)):
+            output.iloc[idx] = np.dot(weights, series.iloc[idx - len(weights) + 1 : idx + 1])
         return output
 
     def find_optimal_d(self, series: pd.Series, max_d: float = 1.0, corr_threshold: float = 0.97) -> float:
         best_d = 0.0
+        clean = series.dropna()
+        if len(clean) < 50:
+            return best_d
         for d in np.arange(0.1, max_d + 0.01, 0.1):
             diffed = self.fracdiff(series, d).dropna()
-            if len(diffed) < 10:
+            if len(diffed) < 25:
                 continue
             try:
-                adf_stat, pvalue, *_ = adfuller(diffed)
-                corr = np.corrcoef(series.dropna()[-len(diffed):], diffed)[0, 1]
+                _, pvalue, *_ = adfuller(diffed)
+                corr = np.corrcoef(clean.iloc[-len(diffed) :], diffed)[0, 1]
                 if pvalue < 0.05 and corr > corr_threshold:
-                    best_d = d
+                    best_d = float(d)
                     break
             except Exception:
                 continue
         return best_d
 
     def compute_entropy(self, returns: pd.Series, window: int = 24) -> pd.Series:
-        def shannon_entropy(x):
-            hist, _ = np.histogram(x, bins=10, density=True)
-            hist = hist[hist > 0]
-            return -np.sum(hist * np.log(hist))
+        def shannon_entropy(values):
+            counts, _ = np.histogram(values, bins=10)
+            total = counts.sum()
+            if total == 0:
+                return 0.0
+            probabilities = counts[counts > 0] / total
+            return float(-np.sum(probabilities * np.log(probabilities)))
+
         return returns.rolling(window, min_periods=window).apply(shannon_entropy, raw=True)
 
     def cusum_flag(self, series: pd.Series, threshold: float = 2.0) -> pd.Series:
-        mean_val = series.mean()
-        cusum = (series - mean_val).cumsum()
-        flags = (np.abs(cusum) > threshold * series.std()).astype(int)
-        return flags
+        std = series.std()
+        if std == 0 or np.isnan(std):
+            return pd.Series(0, index=series.index)
+        cusum = (series - series.mean()).cumsum()
+        return (np.abs(cusum) > threshold * std).astype(int)
 
-    def sadf_flag(self, series: pd.Series, min_window: int = 24, max_window: int = 100) -> pd.Series:
+    def sadf_flag(self, series: pd.Series, max_window: int = 100, step: int = 12) -> pd.Series:
         flags = pd.Series(0, index=series.index)
-        for i in range(max_window, len(series)):
-            stats = []
-            for w in range(min_window, max_window+1, 10):
-                window_data = series.iloc[i-w+1:i+1]
-                if window_data.isnull().any() or len(window_data) < w:
-                    continue
-                try:
-                    adf_stat, *_ = adfuller(window_data)
-                    stats.append(adf_stat)
-                except Exception:
-                    continue
-            if stats and max(stats) > -1.0:
-                flags.iloc[i] = 1
+        if len(series) < max_window:
+            return flags
+        for idx in range(max_window, len(series), step):
+            window_data = series.iloc[idx - max_window + 1 : idx + 1]
+            if window_data.isnull().any():
+                continue
+            try:
+                adf_stat, *_ = adfuller(window_data)
+            except Exception:
+                continue
+            end_idx = min(idx + step, len(series))
+            flags.iloc[idx:end_idx] = int(adf_stat > -1.0)
         return flags
 
     def volatility_regime(self, returns: pd.Series, window: int = 24) -> pd.Series:
-        vol = returns.rolling(window).std()
+        vol = returns.rolling(window).std().fillna(0)
         low, high = vol.quantile(0.33), vol.quantile(0.67)
         regime = pd.Series(1, index=vol.index)
         regime[vol <= low] = 0
@@ -175,190 +226,113 @@ class DataPreprocessor:
         return regime
 
     def parkinson_vol(self, high: pd.Series, low: pd.Series, window: int = 24) -> pd.Series:
-        pv = np.sqrt(0.25 * np.log(2) * (np.log(high / low) ** 2))
-        return pv.rolling(window).mean()
+        high = high.replace(0, np.nan)
+        low = low.replace(0, np.nan)
+        estimate = np.sqrt((1.0 / (4.0 * np.log(2.0))) * (np.log(high / low) ** 2))
+        return estimate.replace([np.inf, -np.inf], np.nan).rolling(window).mean()
 
-    def prepare_features(self, granularity: str, sequence_length: int = 24) -> Tuple[np.ndarray, np.ndarray]:
-        price_data = self.load_price_data().get(granularity)
-        chain_tvl = self.load_chain_tvl()
-        santiment = self.load_santiment() if self.include_santiment else None
+    def _feature_frame(self, price_data: pd.DataFrame) -> pd.DataFrame:
+        merged = price_data.set_index("timestamp").sort_index().copy()
+        for column in ["open", "high", "low", "close", "volume", "quote_asset_volume"]:
+            merged[column] = _clean_numeric(merged[column])
 
-        if price_data is None or chain_tvl is None:
-            raise ValueError(f"Price and chain TVL data required for {granularity}")
+        merged["price_return"] = _safe_pct_change(merged["close"])
+        merged["log_return"] = np.log(merged["close"].replace(0, np.nan)).diff().replace([np.inf, -np.inf], np.nan).fillna(0)
+        merged["volume_change"] = _safe_pct_change(merged["volume"])
+        merged["quote_volume_change"] = _safe_pct_change(merged["quote_asset_volume"])
+        merged["dollar_volume"] = merged["close"] * merged["volume"]
+        merged["high_low_range"] = _safe_divide(merged["high"] - merged["low"], merged["close"])
+        merged["close_open_return"] = _safe_divide(merged["close"] - merged["open"], merged["open"])
+        merged["return_vol_1"] = merged["log_return"].rolling(1).std().fillna(0)
+        merged["return_vol_24"] = merged["log_return"].rolling(24).std().fillna(0)
+        merged["return_vol_168"] = merged["log_return"].rolling(168).std().fillna(0)
 
-        price_data = price_data.set_index("timestamp").sort_index()
-        freq = pd.infer_freq(price_data.index[:100]) or granularity
-        chain_hourly = chain_tvl.set_index("timestamp").resample(freq).ffill()
-        if santiment is not None:
-            santiment_hourly = santiment.set_index("timestamp").resample(freq).ffill()
-        else:
-            santiment_hourly = pd.DataFrame(index=chain_hourly.index)
-
-        merged = (
-            price_data
-            .join(chain_hourly[["tvl_usd"]], how="left")
-            .join(santiment_hourly, how="left")
-            .sort_index()
-        )
-        merged.fillna(method="ffill", inplace=True)
-
-        merged["price_return"] = np.log(merged["close"]).diff().fillna(0)
-        merged["tvl_change"] = merged["tvl_usd"].pct_change().fillna(0)
-        merged["price_tvl_ratio"] = merged["close"] / merged["tvl_usd"]
-        merged["return_vol_24"] = merged["price_return"].rolling(24).std().fillna(0)
-        merged["volume_tvl_ratio"] = merged["volume"] / merged["tvl_usd"]
-
-        merged["address_growth"] = merged.get("daily_active_addresses_value", pd.Series(0, index=merged.index)).pct_change().fillna(0)
-        merged["social_dominance_change"] = merged.get("social_dominance_total_value", pd.Series(0, index=merged.index)).pct_change().fillna(0)
-        merged["mcap_tvl_ratio"] = merged.get("marketcap_usd_value", pd.Series(0, index=merged.index)) / merged["tvl_usd"]
+        volume_mean = merged["volume"].rolling(24).mean()
+        volume_std = merged["volume"].rolling(24).std().replace(0, np.nan)
+        merged["volume_zscore_24"] = ((merged["volume"] - volume_mean) / volume_std).replace([np.inf, -np.inf], np.nan).fillna(0)
 
         close_d = self.find_optimal_d(merged["close"])
         merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d)
-        merged["return_entropy_24"] = self.compute_entropy(merged["price_return"], 24)
-        merged["return_entropy_168"] = self.compute_entropy(merged["price_return"], 168)
-        merged["cusum_flag"] = self.cusum_flag(merged["price_return"])
+        merged["return_entropy_24"] = self.compute_entropy(merged["log_return"], 24)
+        merged["return_entropy_168"] = self.compute_entropy(merged["log_return"], 168)
+        merged["cusum_flag"] = self.cusum_flag(merged["log_return"])
         merged["sadf_flag"] = self.sadf_flag(merged["close"])
-        merged["vol_regime"] = self.volatility_regime(merged["price_return"])
-        merged["return_vol_1"] = merged["price_return"].rolling(1).std().fillna(0)
-        merged["return_vol_168"] = merged["price_return"].rolling(168).std().fillna(0)
-        merged["parkinson_vol"] = self.parkinson_vol(merged["high"], merged["low"], 24).fillna(0)
+        merged["vol_regime"] = self.volatility_regime(merged["log_return"])
+        merged["parkinson_vol"] = self.parkinson_vol(merged["high"], merged["low"], 24)
 
-        feature_cols = [
-            "close", "volume", "tvl_usd", "price_return", "tvl_change", "price_tvl_ratio",
-            "return_vol_24", "volume_tvl_ratio", "address_growth", "social_dominance_change",
-            "mcap_tvl_ratio", "fracdiff_close", "return_entropy_24", "return_entropy_168",
-            "cusum_flag", "sadf_flag", "vol_regime", "return_vol_1", "return_vol_168", "parkinson_vol"
-        ]
-        features = merged[feature_cols].fillna(0).values
-        targets = merged[["tvl_usd"]].values
+        return merged.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-        features_tensor = torch.FloatTensor(features)
-        targets_tensor = torch.FloatTensor(targets)
-        features_mean = features_tensor.mean(dim=0)
-        features_std = features_tensor.std(dim=0) + 1e-8
-        scaled_features = (features_tensor - features_mean) / features_std
-        targets_min, targets_max = targets_tensor.min(), targets_tensor.max()
-        scaled_targets = (targets_tensor - targets_min) / (targets_max - targets_min + 1e-8)
+    def _dataset_for_granularity(self, granularity: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        price_data = self.load_price_data().get(granularity)
+        if price_data is None or price_data.empty:
+            raise ValueError(f"Lighter OHLCV data required for {granularity}")
+
+        feature_frame = self._feature_frame(price_data)
+        features_df = feature_frame[self.get_feature_cols()].fillna(0)
+        targets_df = feature_frame[["close", "volume"]].fillna(0)
+        return features_df, targets_df
+
+    def prepare_features(self, granularity: str, sequence_length: int = 24) -> Tuple[np.ndarray, np.ndarray]:
+        features_df, targets_df = self._dataset_for_granularity(granularity)
+        if len(features_df) <= sequence_length:
+            raise ValueError(
+                f"Need more than {sequence_length} Lighter OHLCV rows for {granularity}; got {len(features_df)}"
+            )
+
+        features_array = features_df.to_numpy(dtype=float, copy=True)
+        targets_array = targets_df[["close"]].to_numpy(dtype=float, copy=True)
+        features_mean = features_array.mean(axis=0)
+        features_std = features_array.std(axis=0) + 1e-8
+        scaled_features = (features_array - features_mean) / features_std
+        targets_min, targets_max = targets_array.min(), targets_array.max()
+        scaled_targets = (targets_array - targets_min) / (targets_max - targets_min + 1e-8)
 
         X, y = [], []
-        for i in range(len(merged) - sequence_length):
-            X.append(scaled_features[i : i + sequence_length])
-            y.append(scaled_targets[i + sequence_length])
-        return np.array(X), np.array(y)
+        for idx in range(len(features_df) - sequence_length):
+            X.append(scaled_features[idx : idx + sequence_length])
+            y.append(scaled_targets[idx + sequence_length])
+        return np.stack(X), np.stack(y)
 
     def get_all_granularity_features(self, sequence_length: int = 24) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
         output = {}
-        for gran in self.granularities:
+        for granularity in self.granularities:
             try:
-                X, y = self.prepare_features(granularity=gran, sequence_length=sequence_length)
-                output[gran] = (X, y)
-            except Exception as e:
-                print(f"Could not prepare features for {gran}: {e}")
+                output[granularity] = self.prepare_features(granularity=granularity, sequence_length=sequence_length)
+            except Exception as exc:
+                print(f"Could not prepare features for {granularity}: {exc}")
         return output
 
     def get_base_dataset(self, granularity: str = "1h") -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Get base dataset for training with features and targets.
-        
-        Args:
-            granularity: Time granularity to use
-            
-        Returns:
-            Tuple of (features_df, targets_df)
-        """
-        price_data = self.load_price_data().get(granularity)
-        chain_tvl = self.load_chain_tvl()
-        santiment = self.load_santiment()
+        return self._dataset_for_granularity(granularity)
 
-        if price_data is None or chain_tvl is None:
-            raise ValueError(f"Price and chain TVL data required for {granularity}")
-
-        price_data = price_data.set_index("timestamp").sort_index()
-        freq = pd.infer_freq(price_data.index[:100]) or granularity
-        chain_hourly = chain_tvl.set_index("timestamp").resample(freq).ffill()
-        if santiment is not None:
-            santiment_hourly = santiment.set_index("timestamp").resample(freq).ffill()
-        else:
-            santiment_hourly = pd.DataFrame(index=chain_hourly.index)
-
-        merged = (
-            price_data
-            .join(chain_hourly[["tvl_usd"]], how="left")
-            .join(santiment_hourly, how="left")
-            .sort_index()
-        )
-        merged.fillna(method="ffill", inplace=True)
-
-        # Compute all features
-        merged["price_return"] = np.log(merged["close"]).diff().fillna(0)
-        merged["tvl_change"] = merged["tvl_usd"].pct_change().fillna(0)
-        merged["price_tvl_ratio"] = merged["close"] / merged["tvl_usd"]
-        merged["return_vol_24"] = merged["price_return"].rolling(24).std().fillna(0)
-        merged["volume_tvl_ratio"] = merged["volume"] / merged["tvl_usd"]
-
-        merged["address_growth"] = merged.get("daily_active_addresses_value", pd.Series(0, index=merged.index)).pct_change().fillna(0)
-        merged["social_dominance_change"] = merged.get("social_dominance_total_value", pd.Series(0, index=merged.index)).pct_change().fillna(0)
-        merged["mcap_tvl_ratio"] = merged.get("marketcap_usd_value", pd.Series(0, index=merged.index)) / merged["tvl_usd"]
-
-        close_d = self.find_optimal_d(merged["close"])
-        merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d)
-        merged["return_entropy_24"] = self.compute_entropy(merged["price_return"], 24)
-        merged["return_entropy_168"] = self.compute_entropy(merged["price_return"], 168)
-        merged["cusum_flag"] = self.cusum_flag(merged["price_return"])
-        merged["sadf_flag"] = self.sadf_flag(merged["close"])
-        merged["vol_regime"] = self.volatility_regime(merged["price_return"])
-        merged["return_vol_1"] = merged["price_return"].rolling(1).std().fillna(0)
-        merged["return_vol_168"] = merged["price_return"].rolling(168).std().fillna(0)
-        merged["parkinson_vol"] = self.parkinson_vol(merged["high"], merged["low"], 24).fillna(0)
-
-        feature_cols = [
-            "close", "volume", "tvl_usd", "price_return", "tvl_change", "price_tvl_ratio",
-            "return_vol_24", "volume_tvl_ratio", "address_growth", "social_dominance_change",
-            "mcap_tvl_ratio", "fracdiff_close", "return_entropy_24", "return_entropy_168",
-            "cusum_flag", "sadf_flag", "vol_regime", "return_vol_1", "return_vol_168", "parkinson_vol"
-        ]
-        
-        features_df = merged[feature_cols].fillna(0)
-        targets_df = merged[["close", "tvl_usd"]].fillna(0)
-        
-        return features_df, targets_df
-    
     def get_feature_cols(self) -> List[str]:
-        """Get list of feature column names."""
-        return [
-            "close", "volume", "tvl_usd", "price_return", "tvl_change", "price_tvl_ratio",
-            "return_vol_24", "volume_tvl_ratio", "address_growth", "social_dominance_change",
-            "mcap_tvl_ratio", "fracdiff_close", "return_entropy_24", "return_entropy_168",
-            "cusum_flag", "sadf_flag", "vol_regime", "return_vol_1", "return_vol_168", "parkinson_vol"
-        ]
+        return list(LIGHTER_FEATURE_COLUMNS)
 
-# --- Persistence Utilities ---
+
 def save_numpy_arrays(X, y, out_dir: Path, prefix: str):
     np.save(out_dir / f"{prefix}_X.npy", X)
     np.save(out_dir / f"{prefix}_y.npy", y)
+
 
 def save_pickle(obj, out_dir: Path, filename: str):
     with open(out_dir / filename, "wb") as f:
         pickle.dump(obj, f)
 
-# --- Unified CLI ---
+
 def main():
-    parser = argparse.ArgumentParser(description="Unified Data Processing CLI")
+    parser = argparse.ArgumentParser(description="Lighter-only data processing CLI")
     subparsers = parser.add_subparsers(dest="command")
 
-    # Bar sampling CLI
-    bar_parser = subparsers.add_parser("bar_sample", help="Sample bars from CSV")
+    bar_parser = subparsers.add_parser("bar_sample", help="Sample bars from an OHLCV CSV")
     bar_parser.add_argument("csv", type=Path)
     bar_parser.add_argument("--bar-type", default="tick")
     bar_parser.add_argument("--out", type=Path, required=True)
 
-    # Simple feature generation CLI
-    feat_parser = subparsers.add_parser("simple_features", help="Generate simple features from CSV")
+    feat_parser = subparsers.add_parser("simple_features", help="Generate simple features from a CSV")
     feat_parser.add_argument("csv", type=Path)
     feat_parser.add_argument("--out", type=Path, required=True)
 
-    # Full feature engineering CLI
-    full_parser = subparsers.add_parser("full_features", help="Generate full features and persist")
+    full_parser = subparsers.add_parser("full_features", help="Generate Lighter-only sequence features")
     full_parser.add_argument("--sequence-length", type=int, default=24)
     full_parser.add_argument("--data-dir", type=str, default="data")
     full_parser.add_argument("--out-dir", type=str, default="data/processed_features")
@@ -376,17 +350,15 @@ def main():
         args.out.parent.mkdir(parents=True, exist_ok=True)
         bars.to_parquet(args.out)
         print(f"Bar-sampled data saved to {args.out}")
-
     elif args.command == "simple_features":
         df = pd.read_csv(args.csv)
         features = generate_features(df)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         features.to_parquet(args.out)
         print(f"Simple features saved to {args.out}")
-
     elif args.command == "full_features":
         out_dir = Path(args.out_dir)
-        out_dir.mkdir(exist_ok=True)
+        out_dir.mkdir(parents=True, exist_ok=True)
         preprocessor = DataPreprocessor(data_dir=args.data_dir)
         all_granularity_data = preprocessor.get_all_granularity_features(sequence_length=args.sequence_length)
         for granularity, (X, y) in all_granularity_data.items():
@@ -398,11 +370,13 @@ def main():
                 "y_shape": y.shape,
                 "sequence_length": args.sequence_length,
                 "granularity": granularity,
+                "feature_columns": preprocessor.get_feature_cols(),
             }
             save_pickle(meta, out_dir, f"{prefix}_meta.pkl")
-        print(f"Full features for all granularities saved to {out_dir}")
+        print(f"Full features saved to {out_dir}")
     else:
         parser.print_help()
 
+
 if __name__ == "__main__":
-    main() 
+    main()
