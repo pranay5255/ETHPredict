@@ -4,9 +4,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Union
 import warnings
 from pathlib import Path
+
+from src.training.devices import resolve_training_device
 
 # --- Model Classes (from hierarchical.py and simple.py) ---
 
@@ -181,7 +183,7 @@ class EnsemblePredictor:
     def _prepare_data(self, 
                      features_df: pd.DataFrame, 
                      targets_df: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        from features.labeling import create_labels, create_training_labels
+        from src.features.labeling import create_labels, create_training_labels
         combined_df = features_df.copy()
         combined_df['close'] = targets_df['close']
         labeled_df = create_labels(combined_df, price_col='close')
@@ -201,6 +203,7 @@ class EnsemblePredictor:
                                 y_ret: torch.Tensor,
                                 y_dir: torch.Tensor,
                                 sample_weights: torch.Tensor,
+                                device: torch.device,
                                 n_splits: int = 5,
                                 embargo_hours: int = 3) -> Dict[str, List[float]]:
         from src.training.trainer import PurgedTimeSeriesSplit, compute_metrics, hierarchical_training_pipeline
@@ -214,7 +217,6 @@ class EnsemblePredictor:
             'level_2_accuracy': [],
             'information_ratio': []
         }
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         for fold_idx, (train_indices, val_indices) in enumerate(splits):
             print(f"\nFold {fold_idx + 1}/{n_splits}")
             X_train = X[train_indices]
@@ -237,7 +239,8 @@ class EnsemblePredictor:
                 hidden_size=self.hidden_size,
                 num_layers=self.num_layers,
                 batch_size=32,
-                device=device
+                device=device,
+                allow_cpu=device.type == "cpu",
             )
             level_0_model = results["level_0"]["model"]
             level_1_model = results["level_1"]["model"]
@@ -276,7 +279,9 @@ class EnsemblePredictor:
               num_epochs: int = 50,
               batch_size: int = 32,
               learning_rate: float = 0.001,
-              run_cv: bool = True) -> Dict[str, any]:
+              run_cv: bool = True,
+              device: Optional[Union[str, torch.device]] = None,
+              allow_cpu: bool = False) -> Dict[str, any]:
         from src.data.features_all import DataPreprocessor
         from src.training.trainer import hierarchical_training_pipeline
         print("=== Training Ensemble Predictor ===")
@@ -286,23 +291,26 @@ class EnsemblePredictor:
         print(f"  y_ret shape: {y_ret.shape}")
         print(f"  y_dir shape: {y_dir.shape}")
         print(f"  sample_weights shape: {sample_weights.shape}")
+        device = resolve_training_device(device, allow_cpu=allow_cpu)
         if run_cv:
             print("\n=== Running Purged Cross-Validation ===")
-            self.cv_results = self._purged_cross_validation(X, y_ret, y_dir, sample_weights)
+            self.cv_results = self._purged_cross_validation(X, y_ret, y_dir, sample_weights, device)
             print("\n=== Cross-Validation Results ===")
             for metric, scores in self.cv_results.items():
                 mean_score = np.mean(scores)
                 std_score = np.std(scores)
                 print(f"{metric}: {mean_score:.6f} ± {std_score:.6f}")
         print("\n=== Training Final Model ===")
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         results = hierarchical_training_pipeline(
             X, y_ret, y_dir, sample_weights,
             input_size=self.input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             batch_size=batch_size,
-            device=device
+            num_epochs=num_epochs,
+            learning_rate=learning_rate,
+            device=device,
+            allow_cpu=allow_cpu,
         )
         self.level_0_model = results["level_0"]["model"]
         self.level_1_model = results["level_1"]["model"]
@@ -315,8 +323,8 @@ class EnsemblePredictor:
                                    X: torch.Tensor,
                                    y_ret: torch.Tensor,
                                    y_dir: torch.Tensor) -> None:
-        from features.labeling import kelly_position_size
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        from src.features.labeling import kelly_position_size
+        device = next(self.hierarchical_model.parameters()).device
         split_idx = int(0.8 * len(X))
         X_test = X[split_idx:].to(device)
         y_ret_test = y_ret[split_idx:]
