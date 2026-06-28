@@ -1,44 +1,61 @@
-# ETHPredict Execution + Backtesting Task Phases
+# ETHPredict Lighter-Only Task List
 
-## Phase 0 - Preconditions and Critical Fixes
-- [ ] Resolve `csv_loader` import (create `src/csv_loader.py` or fix `runner.py` import to `src.main.validate_csvs`)
-- [ ] Verify `configs/schema.yaml` exists and matches `configs/config.yml`
-- [ ] Replace backtest placeholder predictions with real model inference in `runner.py`
-- [ ] Confirm DEX simulation is out of scope for now (price-data backtest only)
+## Completed in Lighter-Only Refactor
 
-## Phase 1 - Dev Environment (Docker)
-- [ ] Start dev environment with `docker-compose-dev.yml` (note: no proxy server)
-- [ ] Validate dev frontend + backend are reachable after compose up
-- [ ] Record service URLs/ports and log locations for debugging
+- [x] Set `configs/config.yml` to `data.sources: [lighter]`.
+- [x] Configure Lighter ETH perp mainnet market `market_id: 0` with `1h` resolution.
+- [x] Collect raw Lighter OHLCV for `2026-03-28` through `2026-06-28`.
+- [x] Validate raw Lighter OHLCV row count, timestamp ordering, uniqueness, and OHLC numeric quality.
+- [x] Archive legacy Binance, DeFiLlama, and Santiment CSV inputs under `archive/legacy_data_sources/data`.
+- [x] Archive legacy multi-source feature/config/docs/code snapshots under `archive/legacy_data_sources`.
+- [x] Remove active bribe optimization, DEX simulation, and parameter optimization config sections.
+- [x] Refactor `DataPreprocessor` to load only `data/raw/*-lighter-*.csv` and build OHLCV-only features.
+- [x] Add tests proving legacy-looking raw files are ignored.
+- [x] Verify focused tests and Lighter feature-build smoke command.
 
-## Phase 2 - Data Readiness and Validation
-- [ ] Place Binance OHLCV CSVs in `data/raw/`
-- [ ] Place DeFiLlama TVL CSVs in `data/`
-- [ ] Place Santiment CSVs in `data/`
-- [ ] Run CSV validation (via `runner.py` or `src/main.py`) and confirm rejects go to reject dir
+## Completed in UV GPU Experiment Setup
 
-## Phase 3 - Training and Inference Prep
-- [ ] Run training pipeline (`src/training/trainer.py`) with target config
-- [ ] Ensure model artifacts are saved and loadable for inference
-- [ ] Capture training metrics (loss curves, key performance stats)
+- [x] Import the current `requirements.txt` dependency set into the uv project metadata.
+- [x] Keep `requirements.txt` unchanged for legacy setup while treating `pyproject.toml` and `uv.lock` as the active experiment dependency source.
+- [x] Configure `torch>=2.11.0` to use the official PyTorch CUDA 12.8 wheel index on Linux/Windows.
+- [x] Refresh `uv.lock` so CUDA 13 artifacts are replaced with CUDA 12.x packages for the 4090 path.
+- [x] Run `uv sync` for the active environment.
+- [x] Verify uv-managed Torch reports `2.11.0+cu128`, CUDA available, and `NVIDIA GeForce RTX 4090` on `cuda:0`.
+- [x] Add shared CUDA device resolution that defaults neural training to `cuda:0` and requires `--allow-cpu` for CPU neural runs.
+- [x] Add `src.experiments.lighter_compare` for Lighter-only neural trials, CPU ARIMA/SARIMAX baselines, and GLFT metric ranking.
+- [x] Add `configs/lighter_experiments.yml` for triple-barrier and next-hour-return experiment targets.
+- [x] Add CUDA environment, one-batch neural stack, CPU baseline, and end-to-end smoke tests.
+- [x] Verify `uv run pytest`, `uv lock --check`, and the Lighter compare smoke command.
 
-## Phase 4 - Backtesting Execution
-- [ ] Run pipeline end-to-end (`python runner.py configs/config.yml`)
-- [ ] Ensure backtest uses model predictions, not shifted prices
-- [ ] Compute metrics (Sharpe, drawdown, IR, directional accuracy) and save outputs
-- [ ] Validate outputs in `results/` and `logs/`
+## Active Near-Term Tasks
 
-## Phase 5 - Live Execution (Lighter Integration)
-- [ ] Create API keys and set `API_KEY_PRIVATE_KEY`, `BASE_URL`, `ACCOUNT_INDEX`
-- [ ] Initialize `SignerClient` and confirm auth token creation
-- [ ] Implement nonce management via `TransactionApi.next_nonce`
-- [ ] Build signal-to-order mapper (prediction + confidence -> order type/size/TIF)
-- [ ] Implement execution client: sign orders and send `send_tx` / `send_tx_batch`
-- [ ] Add risk gates (max exposure, drawdown checks, confidence thresholds)
-- [ ] Add websocket listeners for orderbook/account updates
-- [ ] Test end-to-end on Lighter testnet before mainnet
+- [ ] Run `python runner.py configs/config.yml` end to end after deciding whether current model/training changes should be kept.
+- [ ] Run the non-smoke Lighter compare experiment: `uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml`.
+- [ ] Review full-run finalists by prediction metrics first, then GLFT backtest metrics.
+- [ ] Replace shifted-price fallback predictions in the top-level backtest path with actual trained model inference.
+- [ ] Decide whether CPU neural fallback should remain a test/development override only or become part of documented non-GPU workflows.
+- [ ] Decide whether Lighter side data should enter features next, starting with funding and mark price candles.
+- [ ] Add a small fixture-backed integration test for `runner.py` using Lighter-only raw data.
+- [ ] Decide whether to migrate legacy `requirements.txt` users fully to uv in a later cleanup.
 
-## Phase 6 - Reporting and Validation
-- [ ] Review results summary in `results/` (CSV/JSON outputs)
-- [ ] Verify model and backtest performance meets thresholds in `PROJECT_STATUS.md`
-- [ ] Document any gaps before production deployment
+## Deferred / Archived for Later
+
+- [ ] Reintroduce Binance OHLCV only if a mixed-source experiment is explicitly reopened.
+- [ ] Reintroduce DeFiLlama/Santiment joins only after defining target/feature semantics for non-market data.
+- [ ] Reintroduce DEX simulation only after the price-data backtest path is stable.
+- [ ] Reintroduce bribe/MEV optimization only as a separate execution research track.
+- [ ] Reintroduce parameter sweeps only after the base Lighter-only run is reproducible.
+- [ ] Add signed Lighter trading or live execution only after offline experiments are reproducible.
+
+## Useful Commands
+
+```bash
+python scripts/lighter_collect_data.py --config configs/config.yml
+python -m src.data.features_all full_features --data-dir data --sequence-length 24 --out-dir /tmp/ethpredict-lighter-features
+uv sync
+uv run python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+uv run pytest
+uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml --smoke
+uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml
+python runner.py configs/config.yml
+```
