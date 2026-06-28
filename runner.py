@@ -96,7 +96,8 @@ class ETHPredictPipeline:
         """Load and validate configuration from YAML file."""
         try:
             config_manager = ConfigManager()
-            config = config_manager.load_config(str(self.config_path))
+            config_manager.load_config(str(self.config_path))
+            config = config_manager.load_raw_config(str(self.config_path))
             logger.info("Configuration loaded and validated successfully")
             return config
         except Exception as e:
@@ -216,13 +217,8 @@ class ETHPredictPipeline:
         """Build bars and comprehensive features."""
         logger.info("Building bars and features...")
         
-        # Initialize data preprocessor
-        data_sources = self.config.get("data", {}).get("sources", [])
-        include_santiment = "santiment" in data_sources
-        self.data_preprocessor = DataPreprocessor(
-            data_dir=str(self.data_dir),
-            include_santiment=include_santiment
-        )
+        # Initialize the Lighter-only data preprocessor.
+        self.data_preprocessor = DataPreprocessor(data_dir=str(self.data_dir))
         
         # Get bar configuration
         bar_config = self.config.get("bars", {})
@@ -265,9 +261,9 @@ class ETHPredictPipeline:
             logger.info("Falling back to simple feature engineering...")
             
             # Fallback to simple feature engineering
-            csv_files = list(self.raw_dir.glob("*.csv"))
+            csv_files = sorted(self.raw_dir.glob("*-lighter-*.csv"))
             if not csv_files:
-                raise ValueError("No CSV files found for feature engineering")
+                raise ValueError("No Lighter CSV files found for feature engineering")
             
             # Use first CSV file
             csv_file = csv_files[0]
@@ -288,7 +284,7 @@ class ETHPredictPipeline:
             targets = features[["close", "volume"]].copy()
             
             # Save features
-            dataset_name = self.config.get("data", {}).get("sources", ["ETH"])[0]
+            dataset_name = "lighter"
             save_features(dataset_name, bar_type, features)
             
             return features, targets
