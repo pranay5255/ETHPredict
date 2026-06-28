@@ -1,0 +1,32 @@
+# Lighter signed trading config.
+#
+# Secrets are intentionally not stored here. Put account/API key values in
+# `.env` or process environment variables.
+
+network: testnet
+base_url: "https://testnet.zklighter.elliot.ai"
+websocket_path: "/stream"
+nonce_management: optimistic
+allow_mainnet: false
+
+default_market: eth_perp
+markets:
+  eth_perp:
+    symbol: "ETH"
+    market_type: "perp"
+    market_index: 0
+    size_decimals: 4
+    price_decimals: 2
+    min_base_amount: "0.0050"
+    min_quote_amount: "10.000000"
+
+  # Lighter examples use market index 2048 for spot ETH. Spot trading requires
+  # spot balances and is not the default profile for this project.
+  eth_spot:
+    symbol: "ETH"
+    market_type: "spot"
+    market_index: 2048
+    size_decimals: 4
+    price_decimals: 2
+    min_base_amount: "0.0050"
+    min_quote_amount: "10.000000"
