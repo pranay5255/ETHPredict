@@ -5,7 +5,6 @@ scikit-learn>=1.0.0
 matplotlib>=3.5.0
 pyarrow>=7.0.0
 requests>=2.28.0
-python-binance>=1.0.16
 python-dotenv>=0.21.0
 tqdm>=4.64.0
 
@@ -15,8 +14,7 @@ scipy>=1.10.0
 seaborn>=0.12.0
 
 # Data collection and APIs
-yfinance>=0.2.0
-ccxt>=3.0.0
+git+https://github.com/elliottech/lighter-python.git
 
 # Technical analysis and financial indicators
 ta>=0.10.0
