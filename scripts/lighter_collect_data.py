@@ -2,7 +2,7 @@
 
 Examples:
     python scripts/lighter_collect_data.py --start 2025-01-17 --end 2025-01-24
-    python scripts/lighter_collect_data.py --config configs/config.yml --resolution 1h
+    python scripts/lighter_collect_data.py --config configs/config.yml --resolution 5m
 """
 
 from __future__ import annotations
@@ -186,12 +186,12 @@ def main() -> None:
         print(f"Wrote recent trades snapshot: {path}")
 
     optional_metrics = [
-        ("volume", f"exchange_metric_volume_{symbol}_{market_type}_daily.csv"),
-        ("open_interest", f"exchange_metric_open_interest_{symbol}_{market_type}_daily.csv"),
+        ("volume", f"exchange_metric_volume_{symbol}_{market_type}_all.csv"),
+        ("open_interest", f"exchange_metric_open_interest_{symbol}_{market_type}_all.csv"),
     ]
     for metric_kind, filename in optional_metrics:
         try:
-            metric_frame = client.exchange_metrics(period="d", kind=metric_kind, market_symbol=symbol)
+            metric_frame = client.exchange_metrics(period="all", kind=metric_kind, market_symbol=symbol)
         except Exception as exc:
             print(f"Skipping optional exchange metric {metric_kind}: {exc}")
             continue
