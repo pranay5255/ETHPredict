@@ -103,6 +103,32 @@ alpha_backtest:
   position_sizing: fixed_notional
   position_notional: 10000.0
   max_position_notional: 10000.0
+  edge_safety_margin_bps: 0.0
+  cooldown_bars: 0
+  max_trades_per_day: 288
+
+benchmark:
+  enabled: true
+  models:
+    - zero_return
+    - momentum
+    - lstm
+    - timesfm
+  route_to_meta_backtest: true
+  timesfm:
+    enabled: true
+    checkpoint: google/timesfm-2.5-200m-pytorch
+    input_series: log_close
+    context_length: 1024
+    batch_size: 16
+
+tracking:
+  trackio:
+    enabled: true
+    project: ethpredict
+    auto_log_gpu: true
+    gpu_log_interval: 10.0
+    auto_log_cpu: false
 
 execution:
   glft:
@@ -113,6 +139,7 @@ pipeline:
   run_name: meta_label_mvp
   selection_metric: metrics.validation.net_pnl
   selection_mode: max
+  min_validation_trades: 1
 
 search:
   mode: grid
