@@ -1,0 +1,71 @@
+data:
+  dir: data
+  granularity: 5m
+
+targets:
+  - next_hour_return
+
+labels:
+  kappa: 2.0
+  timeout: 288
+  volatility_window: 288
+  next_hour_horizon: 12
+
+training:
+  sequence_length: 288
+  hidden_size: 8
+  num_layers: 1
+  dropout: 0.0
+  batch_size: 16
+  epochs: 1
+  learning_rate: 0.001
+  neural_trials_per_target: 1
+
+smoke:
+  max_rows: 640
+  hidden_size: 8
+  batch_size: 16
+  epochs: 1
+  neural_trials_per_target: 1
+
+glft:
+  initial_capital: 100000.0
+  gamma: 0.5
+  kappa: 0.1
+  dt: 0.0034722222
+  max_inventory: 10.0
+  min_spread: 5.0
+  max_drawdown: 0.2
+  seed: 42
+
+staged_trial:
+  artifact_root: artifacts/runs
+  run_name: staged_5m_smoke
+  target: next_hour_return
+  selection_metric: metrics.validation.prediction.mae
+  selection_mode: min
+  split:
+    train_fraction: 0.6
+    validation_fraction: 0.2
+    test_fraction: 0.2
+    purge_bars: 0
+    embargo_bars: 0
+  stage1:
+    max_trials: 1
+    prediction_batch_size: 256
+    search_space:
+      hidden_size: [8]
+      num_layers: [1]
+      dropout: [0.0]
+      learning_rate: [0.001]
+  stage2:
+    max_rows: 80
+    prediction_clip: 0.05
+    selection_metric: metrics.net_pnl
+    selection_mode: max
+    max_trials: 2
+    strategy_search:
+      gamma: [0.3, 0.5]
+      kappa: [0.1]
+      min_spread: [5.0]
+      max_inventory: [10.0]
