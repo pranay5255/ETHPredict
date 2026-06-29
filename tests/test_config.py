@@ -15,6 +15,8 @@ def test_v2_config_validates_and_loads_active_sections():
     assert cfg.targets["horizons"]["next_hour"]["bars"] == 12
     assert cfg.validation["method"] == "purged_walk_forward"
     assert cfg.alpha_backtest["meta_threshold"] == 0.55
+    assert cfg.tracking["trackio"]["project"] == "ethpredict"
+    assert cfg.raw_config["tracking"]["trackio"]["auto_log_gpu"] is True
 
 
 def test_legacy_config_is_preserved_with_deprecation_header():
