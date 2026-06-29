@@ -10,7 +10,7 @@ The current experiment path uses `uv` for dependency management and a CUDA 12.8 
 - **Feature source**: OHLCV only from `data/raw/*-lighter-*.csv`.
 - **Experiment runner**: `src.experiments.lighter_compare` for Lighter-only neural trials, ARIMA/SARIMAX baselines, and GLFT metric ranking.
 - **GPU policy**: neural smoke tests and training default to `cuda:0`; CPU neural runs require explicit `--allow-cpu`.
-- **Side data**: Lighter funding, mark price, order book, and recent trades are collected under `data/lighter/` but are not joined into features yet.
+- **Side data**: Lighter mark-price candles, 1h fundings, latest funding rates, order book, recent trades, and exchange metrics are collected under `data/lighter/` but are not joined into model features yet.
 - **Archived**: Binance, DeFiLlama, Santiment, DEX simulation, bribe optimization, and parameter-optimization config/code are archived under `archive/legacy_data_sources`.
 
 ## Project Layout
@@ -19,6 +19,8 @@ The current experiment path uses `uv` for dependency management and a CUDA 12.8 
 configs/
   config.yml                  # Active Lighter-only pipeline config
   lighter_experiments.yml     # Lighter compare experiment config
+  staged_trial_smoke.yml      # Staged model-trial/backtest artifact smoke config
+  staged_trial_small_*.yml    # Small full-data staged experiments for 5m research
   lighter_trading.yml         # Non-secret Lighter testnet trading defaults
   schema.yaml                 # Active config validation schema
 scripts/
@@ -30,6 +32,7 @@ scripts/
 src/
   trading/                    # Signed Lighter trading config helpers
   experiments/lighter_compare.py # Lighter neural/baseline experiment runner
+  experiments/staged_trial.py # Stage 0/1/2 artifact-backed trial orchestration
   data/features_all.py        # Lighter-only OHLCV feature generation
   data/lighter_client.py      # Public Lighter REST client
   config/loader.py            # Active config loader
@@ -80,10 +83,10 @@ python scripts/lighter_collect_data.py --config configs/config.yml
 Expected active raw output:
 
 ```text
-data/raw/ETHUSDT-1h-lighter-20260328-20260628.csv
+data/raw/ETHUSDT-5m-lighter-20260328-20260628.csv
 ```
 
-The collector also writes Lighter-native side data under `data/lighter/`.
+The collector also writes Lighter-native side data under `data/lighter/`; those files are retained for audit and future research, not joined into the current OHLCV feature set.
 
 ## Lighter Testnet Trading
 
@@ -275,7 +278,7 @@ Mainnet must be deliberately separate: use `.env.lighter.mainnet`, set `LIGHTER_
 Build sequence features from the active Lighter raw CSV:
 
 ```bash
-python -m src.data.features_all full_features --data-dir data --sequence-length 24 --out-dir /tmp/ethpredict-lighter-features
+python -m src.data.features_all full_features --data-dir data --granularity 5m --sequence-length 288 --out-dir /tmp/ethpredict-lighter-features
 ```
 
 `DataPreprocessor` intentionally loads only files matching:
@@ -284,7 +287,7 @@ python -m src.data.features_all full_features --data-dir data --sequence-length 
 data/raw/ETHUSDT-<resolution>-lighter-*.csv
 ```
 
-Legacy-looking files such as `ETHUSDT-1h-2025-04.csv` are ignored by active loaders.
+Legacy-looking files such as `ETHUSDT-5m-2025-04.csv` are ignored by active loaders.
 
 ## Run Pipeline
 
@@ -323,6 +326,103 @@ uv run python -m src.experiments.lighter_compare --config configs/lighter_experi
 
 ARIMA and SARIMAX baselines remain CPU-bound.
 
+## Run Staged Trials
+
+Use the staged runner when you want Stage 1 model/hyperparameter trials to produce frozen artifacts and Stage 2 backtests to consume the selected Stage 1 predictions. The starter smoke config runs one model trial and a small GLFT strategy grid; expand `staged_trial.stage1.search_space` or `staged_trial.stage2.strategy_search` for longer searches.
+
+```bash
+uv run python -m src.experiments.staged_trial --config configs/staged_trial_smoke.yml --smoke
+```
+
+CPU smoke runs are explicit:
+
+```bash
+uv run python -m src.experiments.staged_trial --config configs/staged_trial_smoke.yml --smoke --device cpu --allow-cpu
+```
+
+Each run writes a single artifact directory under `staged_trial.artifact_root`:
+
+```text
+artifacts/runs/<run_id>/
+  resolved_config.yml
+  environment.json
+  stage0_features/manifest.json
+  stage1_model/best_model_manifest.json
+  stage1_model/trials/<trial_id>/predictions_test.parquet
+  stage2_backtest/best_strategy_manifest.json
+  stage2_backtest/strategies/<strategy_id>/{trades,timeseries,pnl}.parquet
+  report/report.json
+  report/report.md
+```
+
+Stage 2 intentionally consumes the best Stage 1 `predictions_test.parquet` and model manifest instead of silently rebuilding model state.
+
+
+## Research Roadmap
+
+The next research direction is a hierarchical signal stack rather than a single model plus GLFT backtest. The staged runner should evolve into these layers:
+
+1. **Level 0 multi-horizon forecaster**: use the same sequence encoder to predict `next_5m_return`, `next_5m_direction`, `next_hour_return`, `next_hour_direction`, and volatility/uncertainty. The 5m horizon is useful for execution timing; the 1h horizon is useful for slower directional edge.
+2. **Level 1 signal proposer**: convert base forecasts into candidate long/short/no-trade signals. A signal is proposed only when predicted edge exceeds estimated spread, fees, slippage, and funding cost.
+3. **Level 2 true meta-labeler**: train a classifier to decide whether to take the proposed base signal. The current `ConfidenceGRU` predicts whether `y_dir != 0`, which is an event-confidence label, not true meta-labeling.
+4. **Level 3 policy/risk layer**: choose horizon, side, size, stop/take-profit, and no-trade decisions from expected net edge, meta probability, volatility, inventory, and drawdown constraints.
+5. **Execution layer**: use simple taker/maker execution in research backtests first. Keep GLFT as a later passive quoting/execution module, not the primary alpha evaluator.
+
+### Triple-Barrier Meta-Labeling
+
+For true meta-labeling, first train the base forecaster and generate **out-of-sample** predictions with purged walk-forward cross-validation. Then build labels from proposed trades:
+
+- `side`: `+1` for proposed long, `-1` for proposed short.
+- `entry_price`: close, mark, or executable mid at signal time.
+- `vertical_barrier`: `1` bar for `next_5m` or `12` bars for `next_hour` on 5m data.
+- `profit_taking_barrier`: volatility-scaled expected upside after costs, for example `kappa_profit * realized_vol`.
+- `stop_loss_barrier`: volatility-scaled downside after costs, for example `kappa_stop * realized_vol`.
+- `meta_label`: `1` if the side-adjusted path hits profit-taking before stop-loss, or exits positive after all modeled costs at the vertical barrier; otherwise `0`.
+
+The meta model inputs should include base predictions, direction probabilities, horizon disagreement, volatility/regime features, funding/cost estimates, and eventually order-book/trade-flow features. Samples without a base signal should be excluded from binary meta-label training or handled by a separate no-trade policy label.
+
+### Purged Cross-Validation
+
+Meta labels must be trained from out-of-sample base predictions. Use purged walk-forward CV:
+
+- Split history into chronological folds.
+- For each fold, train the base model on earlier data only.
+- Purge overlapping lookahead windows around validation labels; use at least the maximum label horizon, currently `288` bars for 24h triple-barrier timeout.
+- Apply an embargo after each validation fold before later training data is allowed.
+- Store fold predictions as artifacts and train the meta-labeler only on these out-of-sample predictions.
+- Reserve the final test split for one untouched evaluation after thresholds and policy settings are chosen on validation.
+
+### Unused Feature Sources and Fit Points
+
+The active model already uses OHLCV-derived returns, volatility, entropy, CUSUM/SADF flags, volatility regime, Parkinson volatility, and fractional-diff close. README/config ideas that are not yet integrated should enter the pipeline in Stage 0:
+
+- **Mark-price candles**: mark/trade basis, rolling premium, premium z-score.
+- **Funding rates**: current funding, funding z-score, time-to-next-funding, expected holding cost.
+- **Order-book snapshots**: spread, depth imbalance, microprice, liquidity slope, top-of-book pressure. These require historical snapshots before they should be trusted for training.
+- **Recent trades**: aggressive flow imbalance, rolling VWAP, trade count, realized slippage.
+- **Exchange metrics**: open interest, OI change, volume/OI ratio, crowding/leverage proxies.
+- **Technical indicators**: RSI, MACD, Bollinger bands, and volume profile as ordinary Stage 0 features.
+- **Tree base models**: XGBoost/LightGBM/CatBoost can be added as tabular Level 0 models using latest-bar and rolling-window summary features, then ensembled with neural outputs before meta-labeling.
+
+### Backtesting Design
+
+GLFT is useful as a plumbing and future passive-execution component, but the main research evaluator should be a directional alpha backtest first:
+
+- Select thresholds, horizon choice, sizing, stops, and take-profits on validation only.
+- Evaluate once on the untouched test split.
+- Model spread, taker/maker fees, slippage, funding, latency, position limits, and max drawdown.
+- Report gross PnL, net PnL, fees, turnover, exposure, hit rate, average win/loss, drawdown, and coverage.
+- Add GLFT later by letting the policy set target inventory or reservation-price skew while GLFT decides passive quote placement.
+
+Recommended build order:
+
+1. Add `next_5m_return` and multi-horizon prediction outputs.
+2. Generate purged walk-forward base predictions.
+3. Build triple-barrier meta labels from net profitability of proposed signals.
+4. Train and evaluate a true meta-label classifier with thresholded coverage/performance reports.
+5. Replace Stage 2 with a validation-selected directional alpha backtest.
+6. Reintroduce GLFT as an optional passive execution layer once alpha quality is measurable.
+
 ## Configuration
 
 The active pipeline config keeps only the sections needed for this phase:
@@ -342,7 +442,7 @@ data:
     market_type: "perp"
     market_id: 0
     pipeline_symbol: "ETHUSDT"
-    resolution: "1h"
+    resolution: "5m"
     funding_resolution: "1h"
     start_date: "2026-03-28"
     end_date: "2026-06-28"
@@ -379,12 +479,20 @@ DEX simulation, bribe/MEV optimization, and parameter sweep config were removed 
 The active experiment config is separate:
 
 ```yaml
+data:
+  granularity: 5m
+
 targets:
   - triple_barrier
   - next_hour_return
 
+labels:
+  timeout: 288
+  volatility_window: 288
+  next_hour_horizon: 12
+
 training:
-  sequence_length: 24
+  sequence_length: 288
   hidden_size: 16
   num_layers: 1
   batch_size: 16
@@ -392,7 +500,7 @@ training:
   neural_trials_per_target: 2
 
 smoke:
-  max_rows: 128
+  max_rows: 640
   neural_trials_per_target: 1
   epochs: 1
 ```
@@ -414,12 +522,12 @@ Focused checks from the Lighter-only refactor remain useful:
 ```bash
 python -m pytest tests/test_lighter_client.py tests/test_lighter_preprocessor.py tests/test_config.py tests/test_runner.py
 python -m py_compile src/data/features_all.py src/data/lighter_client.py scripts/lighter_collect_data.py src/config/loader.py src/config/__init__.py src/main.py runner.py
-python -m src.data.features_all full_features --data-dir data --sequence-length 24 --out-dir /tmp/ethpredict-lighter-features
+python -m src.data.features_all full_features --data-dir data --granularity 5m --sequence-length 288 --out-dir /tmp/ethpredict-lighter-features
 ```
 
 ## Notes
 
-- The active raw Lighter file collected for this pass has 2,208 hourly rows from `2026-03-28 00:00:00 UTC` through `2026-06-27 23:00:00 UTC`.
-- Optional Lighter `exchangeMetrics` outputs are best-effort and may be skipped when the API rejects the period/filter combination.
+- The active raw Lighter file collected for this pass has 26,496 5m rows from `2026-03-28 00:00:00 UTC` through `2026-06-27 23:55:00 UTC`; 24-hour model lookbacks use 288 bars and the next-hour target uses 12 bars.
+- Optional Lighter `exchangeMetrics` outputs are best-effort daily/all-period side data. Mark-price 5m, funding 1h, order-book snapshots, recent-trade snapshots, and exchange metrics stay under `data/lighter/` and are not joined into OHLCV training features.
 - `requirements.txt` is preserved for legacy setup until a later cleanup; uv metadata is the active experiment dependency source.
 - `archive/legacy_data_sources/README.md` lists archived files and why they are no longer active.
