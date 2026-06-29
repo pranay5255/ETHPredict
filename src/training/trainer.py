@@ -10,6 +10,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import pandas as pd
 import itertools
 
+from src.data.features_all import DEFAULT_GRANULARITY, bars_for_duration
 from src.models.model import build_ensemble, EnsemblePredictor, PriceLSTM, MetaMLP, ConfidenceGRU, create_model
 from src.training.devices import resolve_training_device
 
@@ -86,6 +87,10 @@ class HierarchicalPredictor(nn.Module):
         return self.level_2(x)
 
 
+DEFAULT_PURGE_BARS = bars_for_duration(DEFAULT_GRANULARITY, hours=1)
+DEFAULT_EMBARGO_BARS = bars_for_duration(DEFAULT_GRANULARITY, hours=3)
+
+
 class PurgedTimeSeriesSplit:
     """
     Time series cross-validation with purging and embargo to prevent data leakage.
@@ -95,10 +100,18 @@ class PurgedTimeSeriesSplit:
     - Embargo: Add buffer period after test set to prevent information leakage
     """
     
-    def __init__(self, n_splits: int = 5, embargo_hours: int = 3, purge_hours: int = 1):
+    def __init__(
+        self,
+        n_splits: int = 5,
+        embargo_bars: int = DEFAULT_EMBARGO_BARS,
+        purge_bars: int = DEFAULT_PURGE_BARS,
+        embargo_hours: Optional[int] = None,
+        purge_hours: Optional[int] = None,
+    ):
         self.n_splits = n_splits
-        self.embargo_hours = embargo_hours
-        self.purge_hours = purge_hours
+        # Backward-compatible aliases for older callers; values are bar counts.
+        self.embargo_bars = int(embargo_hours if embargo_hours is not None else embargo_bars)
+        self.purge_bars = int(purge_hours if purge_hours is not None else purge_bars)
     
     def split(self, X: torch.Tensor, y: torch.Tensor) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
@@ -123,8 +136,8 @@ class PurgedTimeSeriesSplit:
             test_end = min((i + 1) * test_size, n_samples)
             
             # Purging: remove samples that might overlap with test set
-            purge_start = max(0, test_start - self.purge_hours)
-            purge_end = min(n_samples, test_end + self.purge_hours)
+            purge_start = max(0, test_start - self.purge_bars)
+            purge_end = min(n_samples, test_end + self.purge_bars)
             
             # Training set: all samples except test and purged regions
             train_indices = []
@@ -134,7 +147,7 @@ class PurgedTimeSeriesSplit:
                 train_indices.extend(range(0, purge_start))
             
             # After purged region + embargo
-            embargo_end = min(n_samples, purge_end + self.embargo_hours)
+            embargo_end = min(n_samples, purge_end + self.embargo_bars)
             if embargo_end < n_samples:
                 train_indices.extend(range(embargo_end, n_samples))
             
@@ -478,7 +491,7 @@ def main():
 
     # Build and train the ensemble (handles all data, features, labels, and training internally)
     ensemble = build_ensemble(
-        sequence_length=24,
+        sequence_length=288,
         hidden_size=64,
         num_layers=2,
         num_epochs=50
