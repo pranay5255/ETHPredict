@@ -9,8 +9,8 @@ def triple_barrier_labels(
     returns: pd.Series,
     upper_barrier: float = 0.02,  # κ × σ_h
     lower_barrier: float = -0.02,  # -κ × σ_h  
-    timeout: int = 24,  # τ hours
-    volatility_window: int = 24
+    timeout: int = 288,
+    volatility_window: int = 288
 ) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """
     Implement triple-barrier labeling method from López de Prado.
@@ -20,8 +20,8 @@ def triple_barrier_labels(
         returns: Log returns series
         upper_barrier: Upper barrier threshold (positive)
         lower_barrier: Lower barrier threshold (negative)
-        timeout: Maximum holding period in hours
-        volatility_window: Window for volatility calculation
+        timeout: Maximum holding period in bars
+        volatility_window: Bar window for volatility calculation
         
     Returns:
         Tuple of (y_dir, y_ret, hit_times)
@@ -78,8 +78,9 @@ def adaptive_triple_barrier(
     price_series: pd.Series,
     returns: pd.Series,
     kappa: float = 2.0,  # Multiplier for volatility-based barriers
-    timeout: int = 24,
-    min_return_threshold: float = 0.005  # Minimum return threshold
+    timeout: int = 288,
+    min_return_threshold: float = 0.005,  # Minimum return threshold
+    volatility_window: int = 288,
 ) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """
     Adaptive triple-barrier with volatility-scaled barriers.
@@ -88,18 +89,19 @@ def adaptive_triple_barrier(
         price_series: Price time series
         returns: Log returns
         kappa: Volatility multiplier for barriers
-        timeout: Maximum holding period
+        timeout: Maximum holding period in bars
         min_return_threshold: Minimum return threshold to avoid noise
+        volatility_window: Bar window for volatility-scaled barriers
         
     Returns:
         Tuple of (y_dir, y_ret, hit_times)
     """
-    # Compute rolling volatility
-    vol_24h = returns.rolling(24).std()
+    # Compute rolling volatility over a wall-clock-preserving bar window.
+    rolling_vol = returns.rolling(volatility_window).std()
     
     # Dynamic barriers
-    upper_barriers = kappa * vol_24h
-    lower_barriers = -kappa * vol_24h
+    upper_barriers = kappa * rolling_vol
+    lower_barriers = -kappa * rolling_vol
     
     # Ensure minimum threshold
     upper_barriers = np.maximum(upper_barriers, min_return_threshold)
@@ -178,8 +180,9 @@ def create_labels(
     df: pd.DataFrame,
     price_col: str = "close",
     kappa: float = 2.0,
-    timeout: int = 24,
-    method: str = "adaptive"
+    timeout: int = 288,
+    method: str = "adaptive",
+    volatility_window: int = 288,
 ) -> pd.DataFrame:
     """
     Create labels for training using triple-barrier method.
@@ -188,8 +191,9 @@ def create_labels(
         df: DataFrame with price data
         price_col: Column name for price
         kappa: Volatility multiplier
-        timeout: Maximum holding period
+        timeout: Maximum holding period in bars
         method: "adaptive" or "fixed"
+        volatility_window: Bar window for volatility estimates
         
     Returns:
         DataFrame with additional label columns
@@ -199,11 +203,11 @@ def create_labels(
     
     if method == "adaptive":
         y_dir, y_ret, hit_times = adaptive_triple_barrier(
-            df[price_col], returns, kappa, timeout
+            df[price_col], returns, kappa, timeout, volatility_window=volatility_window
         )
     else:
         y_dir, y_ret, hit_times = triple_barrier_labels(
-            df[price_col], returns, timeout=timeout
+            df[price_col], returns, timeout=timeout, volatility_window=volatility_window
         )
     
     # Add labels to dataframe
@@ -224,7 +228,7 @@ def sample_weights_from_labels(
     y_dir: pd.Series,
     hit_times: pd.Series,
     returns: pd.Series,
-    volatility_window: int = 24
+    volatility_window: int = 288
 ) -> pd.Series:
     """
     Compute sample weights based on label uniqueness and volatility.
@@ -233,7 +237,7 @@ def sample_weights_from_labels(
         y_dir: Direction labels
         hit_times: Time to hit barriers
         returns: Return series
-        volatility_window: Window for volatility calculation
+        volatility_window: Bar window for volatility calculation
         
     Returns:
         Sample weights series
@@ -251,7 +255,10 @@ def sample_weights_from_labels(
     
     # Volatility-based weights (down-weight high volatility periods)
     vol = returns.rolling(volatility_window).std()
-    vol_weights = 1.0 / (1.0 + vol.fillna(vol.mean()))
+    fill_value = vol.mean()
+    if pd.isna(fill_value):
+        fill_value = 0.0
+    vol_weights = 1.0 / (1.0 + vol.fillna(fill_value))
     
     # Combine weights
     combined_weights = uniqueness_weights * vol_weights
@@ -301,7 +308,9 @@ def kelly_position_size(
 
 def create_training_labels(
     df: pd.DataFrame,
-    sequence_length: int = 24
+    sequence_length: int = 288,
+    timeout: int = 288,
+    volatility_window: int = 288,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Create training labels for the hierarchical model.
@@ -309,18 +318,21 @@ def create_training_labels(
     Args:
         df: DataFrame with price and feature data
         sequence_length: Sequence length for time series
+        timeout: Label timeout in bars
+        volatility_window: Bar window for volatility estimates
         
     Returns:
         Tuple of (y_ret, y_dir, sample_weights) as tensors
     """
     # Create triple-barrier labels
-    labeled_df = create_labels(df, price_col="close")
+    labeled_df = create_labels(df, price_col="close", timeout=timeout, volatility_window=volatility_window)
     
     # Create sample weights
     weights = sample_weights_from_labels(
         labeled_df["y_dir"],
         labeled_df["hit_times"],
-        labeled_df["returns"]
+        labeled_df["returns"],
+        volatility_window=volatility_window,
     )
     
     # Convert to sequences
@@ -339,3 +351,138 @@ def create_training_labels(
     weights_tensor = torch.FloatTensor(weights_seq)  # [N]
     
     return y_ret_tensor, y_dir_tensor, weights_tensor 
+
+
+def _meta_label_total_cost_bps(costs: dict, horizon_bars: int, granularity: str) -> float:
+    from src.data.features_all import bars_for_duration
+
+    bars_per_hour = bars_for_duration(granularity, hours=1)
+    horizon_hours = horizon_bars / max(bars_per_hour, 1)
+    return (
+        2.0 * float(costs.get("fee_bps", 0.0))
+        + float(costs.get("spread_bps", 0.0))
+        + float(costs.get("slippage_bps", 0.0))
+        + float(costs.get("funding_bps_per_hour", 0.0)) * horizon_hours
+    )
+
+
+def meta_triple_barrier_labels(
+    signals: pd.DataFrame,
+    price_path: pd.DataFrame,
+    barrier_config: dict,
+    costs: dict,
+    *,
+    granularity: str = "5m",
+) -> pd.DataFrame:
+    """Label proposed long/short signals with side-adjusted triple barriers.
+
+    ``signals`` must contain ``sample_index``, ``side``, ``horizon_bars``,
+    ``realized_vol`` and ``is_candidate``. Rows without a candidate signal are
+    preserved with ``meta_label`` missing so coverage can be reported separately
+    from binary meta-label training.
+    """
+
+    if signals.empty:
+        out = signals.copy()
+        out["meta_label"] = pd.Series(dtype="float64")
+        return out
+
+    path_df = price_path.reset_index(drop=True).copy()
+    for column in ["open", "high", "low", "close"]:
+        if column not in path_df.columns:
+            raise ValueError(f"price_path missing required column: {column}")
+        path_df[column] = pd.to_numeric(path_df[column], errors="coerce").replace([np.inf, -np.inf], np.nan).ffill().bfill()
+
+    profit_kappa = float(barrier_config.get("profit_kappa", 1.5))
+    stop_kappa = float(barrier_config.get("stop_kappa", 1.0))
+    min_edge_ret = float(barrier_config.get("min_edge_bps", 0.0)) / 10_000.0
+
+    labeled_rows = []
+    for _, row in signals.iterrows():
+        out = row.to_dict()
+        is_candidate = bool(row.get("is_candidate", False)) and int(row.get("side", 0)) != 0
+        if not is_candidate:
+            out.update(
+                {
+                    "meta_label": np.nan,
+                    "exit_reason": "no_signal",
+                    "label_gross_return": 0.0,
+                    "label_net_return": 0.0,
+                    "label_holding_bars": 0,
+                    "profit_barrier": np.nan,
+                    "stop_barrier": np.nan,
+                }
+            )
+            labeled_rows.append(out)
+            continue
+
+        sample_index = int(row["sample_index"])
+        if sample_index < 0 or sample_index >= len(path_df) - 1:
+            out.update(
+                {
+                    "meta_label": 0.0,
+                    "exit_reason": "incomplete_path",
+                    "label_gross_return": 0.0,
+                    "label_net_return": -float(row.get("total_cost_bps", 0.0)) / 10_000.0,
+                    "label_holding_bars": 0,
+                    "profit_barrier": np.nan,
+                    "stop_barrier": np.nan,
+                }
+            )
+            labeled_rows.append(out)
+            continue
+
+        side = int(row["side"])
+        horizon_bars = int(row.get("horizon_bars", 1))
+        vertical = min(horizon_bars, len(path_df) - sample_index - 1)
+        total_cost_bps = float(row.get("total_cost_bps", _meta_label_total_cost_bps(costs, horizon_bars, granularity)))
+        cost_ret = total_cost_bps / 10_000.0
+        realized_vol = float(row.get("realized_vol", 0.0))
+        if not np.isfinite(realized_vol) or realized_vol <= 0:
+            realized_vol = 1e-8
+        profit_barrier = max(profit_kappa * realized_vol, min_edge_ret + cost_ret)
+        stop_barrier = max(stop_kappa * realized_vol, cost_ret)
+        entry = float(path_df.loc[sample_index, "close"])
+
+        exit_reason = "vertical"
+        gross_return = 0.0
+        holding_bars = vertical
+        for step in range(1, vertical + 1):
+            future = path_df.loc[sample_index + step]
+            if side > 0:
+                favorable = np.log(float(future["high"]) / entry)
+                adverse = np.log(float(future["low"]) / entry)
+            else:
+                favorable = np.log(entry / float(future["low"]))
+                adverse = np.log(entry / float(future["high"]))
+
+            if adverse <= -stop_barrier:
+                exit_reason = "stop_loss"
+                gross_return = -stop_barrier
+                holding_bars = step
+                break
+            if favorable >= profit_barrier:
+                exit_reason = "profit_take"
+                gross_return = profit_barrier
+                holding_bars = step
+                break
+            if step == vertical:
+                exit_close = float(future["close"])
+                gross_return = side * np.log(exit_close / entry)
+
+        net_return = gross_return - cost_ret
+        meta_label = 1.0 if (exit_reason == "profit_take" or net_return > 0.0) else 0.0
+        out.update(
+            {
+                "meta_label": meta_label,
+                "exit_reason": exit_reason,
+                "label_gross_return": float(gross_return),
+                "label_net_return": float(net_return),
+                "label_holding_bars": int(holding_bars),
+                "profit_barrier": float(profit_barrier),
+                "stop_barrier": float(stop_barrier),
+            }
+        )
+        labeled_rows.append(out)
+
+    return pd.DataFrame(labeled_rows, columns=list(labeled_rows[0].keys()))
