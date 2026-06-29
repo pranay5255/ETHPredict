@@ -7,7 +7,7 @@ ETHPredict is in a Lighter-only raw market-data phase with a uv-managed GPU expe
 Active source:
 
 - Lighter mainnet ETH perp, `market_id: 0`
-- Raw model CSV: `data/raw/ETHUSDT-1h-lighter-20260328-20260628.csv`
+- Raw model CSV: `data/raw/ETHUSDT-5m-lighter-20260328-20260628.csv`
 - Side-data archive: `data/lighter/`
 
 Active experiment path:
@@ -55,7 +55,7 @@ Status: complete for the current raw pass.
 Status: active.
 
 - `src/data/features_all.py` now reads only `data/raw/ETHUSDT-<resolution>-lighter-*.csv`.
-- Default granularity is `1h`.
+- Default research granularity is currently `5m` for staged trials.
 - `include_santiment` remains accepted only as a compatibility no-op.
 - Feature generation uses OHLCV-derived fields only: price/volume, quote volume, returns, range, volatility, entropy, CUSUM/SADF flags, volatility regime, Parkinson volatility, and fractional-diff close.
 - Targets are active market fields: `close` and `volume`; sequence targets use next-step normalized close.
@@ -67,7 +67,7 @@ Status: smoke-tested and active as the uv experiment entry point.
 - `configs/lighter_experiments.yml` defines two active targets: `triple_barrier` and `next_hour_return`.
 - `src.experiments.lighter_compare` runs the `PriceLSTM`, `MetaMLP`, and `ConfidenceGRU` stack on `cuda:0`.
 - The runner includes one forward/backward stack smoke, one or more neural trials per target, CPU ARIMA/SARIMAX baselines, and GLFT backtest metrics for finalist ranking.
-- Smoke mode currently uses 104 sequence samples per target from the active Lighter OHLCV file.
+- Smoke mode verifies plumbing on a small tail slice; small full-data staged trials have also been run on the active 5m file.
 - ARIMA and SARIMAX baselines remain CPU-bound.
 
 ### Configuration
@@ -131,13 +131,42 @@ Status: smoke-tested; full run still pending.
 - The non-smoke configured experiment should be run next.
 - Finalist review should tune prediction metrics first, then rank by GLFT backtest metrics.
 
+### Small Staged 5m Trials
+
+Status: completed as exploratory full-data experiments.
+
+- Added small full-data staged configs for `next_hour_return` and `triple_barrier` on 5m data.
+- Each run used 26,208 sequence samples, 8 model trials, and 6 GLFT strategy trials.
+- The initial parallel launch showed that two full-data jobs can overrun GPU memory during full-dataset base-prediction generation; serial fallback completed cleanly.
+- In the completed runs, `next_hour_return` had better held-out strategy PnL, while `triple_barrier` had stronger validation hit ratio but weaker test transfer.
+- GLFT results are exploratory only because the current simulator is stylized and random-fill based.
+
+### Hierarchical Meta-Labeling Roadmap
+
+Status: not implemented.
+
+- Add `next_5m_return` and multi-horizon outputs alongside `next_hour_return`.
+- Generate out-of-sample base predictions with purged walk-forward CV before training any meta-labeler.
+- Build triple-barrier meta labels from proposed long/short signals: profit-taking, stop-loss, and vertical barriers are evaluated on side-adjusted net returns after spread, fee, slippage, and funding costs.
+- Replace the current `ConfidenceGRU` target of `y_dir != 0` with a true signal-success target, or keep it as a separate event-confidence head.
+- Train the meta model on base predictions, direction probabilities, horizon disagreement, regime/volatility features, and cost/funding features.
+
+### Backtesting and GLFT Positioning
+
+Status: research redesign needed.
+
+- Stage 2 should first become a directional alpha backtest that selects thresholds, sizing, stops, and horizon choice on validation, then evaluates once on test.
+- The alpha backtest should model fees, spread, slippage, funding, latency, exposure, turnover, drawdown, and position limits.
+- GLFT should move to an optional execution layer after alpha validation: the policy sets target inventory or reservation-price skew, and GLFT handles passive quote placement.
+
 ### Lighter Side-Data Features
 
 Status: collected but not integrated.
 
-- Funding, mark price, order book, and recent trades are available under `data/lighter/`.
+- Funding, mark price, order book, recent trades, and exchange metrics are available under `data/lighter/`.
 - Active features intentionally ignore side data for now.
-- Recommended next addition: funding and mark price joins, because they have historical time indexes.
+- Recommended first additions: mark/trade basis, funding cost features, funding z-scores, and time-to-next-funding.
+- Later additions: historical order-book imbalance/microprice, trade-flow imbalance/VWAP, open-interest changes, RSI, MACD, Bollinger bands, and volume profile.
 
 ### Training Environment
 
@@ -181,19 +210,19 @@ Status: active docs updated for Lighter-only scope and uv GPU experiments.
 | End-to-end runner | Needs post-refactor verification |
 | Model-backed backtest predictions | Partial |
 | Full Lighter compare experiment | Pending |
+| Small staged 5m experiments | Complete, exploratory |
+| True meta-labeling with purged CV | Not started |
+| Directional alpha backtest | Not started |
 | Lighter side-data joins | Not started |
 | Live trading/execution | Out of scope |
 
 ## Next Recommended Steps
 
-1. Run the top-level pipeline with the active config:
-
-   ```bash
-   python runner.py configs/config.yml
-   ```
-
-2. Fix any model/training/backtest integration failures exposed by that run.
-3. Run the non-smoke Lighter compare experiment through uv and inspect the ranked finalists.
-4. Replace shifted-price fallback predictions with explicit model inference outputs.
-5. Decide whether to add funding and mark-price side-data joins.
-6. Keep archived legacy sources untouched unless a new experiment explicitly reopens them.
+1. Add `next_5m_return` and multi-horizon base outputs for 5m and 1h prediction.
+2. Add purged walk-forward CV artifact generation for out-of-sample base predictions.
+3. Build triple-barrier meta labels from proposed signal profitability after modeled costs.
+4. Train and evaluate a true meta-label classifier with thresholded coverage, hit-rate, and net-PnL reports.
+5. Replace Stage 2's GLFT-first ranking with a validation-selected directional alpha backtest.
+6. Add funding and mark-price joins first, then historical order-book/trade-flow features once available.
+7. Reintroduce GLFT only as an optional passive execution layer after alpha quality is measurable.
+8. Keep archived legacy sources untouched unless a new experiment explicitly reopens them.
