@@ -29,6 +29,7 @@ from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_fo
 from src.features.labeling import meta_triple_barrier_labels
 from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics
+from src.utils.trackio_logging import log_trackio_run
 
 
 class MultiHorizonLSTM(nn.Module):
@@ -228,6 +229,22 @@ def _total_cost_bps(config: Mapping[str, Any], horizon_bars: int, granularity: s
         + float(costs.get("slippage_bps", 0.0))
         + float(costs.get("funding_bps_per_hour", 0.0)) * horizon_hours
     )
+
+
+def _granularity_timedelta(granularity: str, bars: int = 1) -> pd.Timedelta:
+    raw = str(granularity).strip().lower()
+    try:
+        value = int(raw[:-1])
+        unit = raw[-1]
+    except (TypeError, ValueError, IndexError):
+        return pd.Timedelta(minutes=5 * max(1, int(bars)))
+    if unit == "m":
+        return pd.Timedelta(minutes=value * max(1, int(bars)))
+    if unit == "h":
+        return pd.Timedelta(hours=value * max(1, int(bars)))
+    if unit == "d":
+        return pd.Timedelta(days=value * max(1, int(bars)))
+    return pd.Timedelta(minutes=5 * max(1, int(bars)))
 
 
 def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: bool = False) -> Dict[str, Any]:
@@ -583,20 +600,98 @@ def add_meta_probabilities(candidates: pd.DataFrame, meta_model: Any) -> pd.Data
     return out
 
 
+def _apply_alpha_trade_limits(
+    eligible: pd.DataFrame,
+    config: Mapping[str, Any],
+    *,
+    initial_capital: float,
+    notional: float,
+) -> pd.DataFrame:
+    alpha = config.get("alpha_backtest", {}) or {}
+    out = eligible.copy()
+    if out.empty:
+        return out
+
+    max_trades_per_day = alpha.get("max_trades_per_day")
+    if max_trades_per_day is not None:
+        out["_trade_day"] = pd.to_datetime(out["timestamp"]).dt.floor("D")
+        out = out.groupby("_trade_day", sort=False).head(int(max_trades_per_day)).drop(columns=["_trade_day"])
+
+    cooldown_bars = int(alpha.get("cooldown_bars", 0) or 0)
+    if cooldown_bars > 0:
+        gap = _granularity_timedelta(str(config.get("data", {}).get("granularity", DEFAULT_GRANULARITY)), bars=cooldown_bars)
+        keep_indices: List[Any] = []
+        last_timestamp: Optional[pd.Timestamp] = None
+        for idx, row in out.sort_values("timestamp").iterrows():
+            timestamp = pd.to_datetime(row["timestamp"])
+            if last_timestamp is None or timestamp - last_timestamp >= gap:
+                keep_indices.append(idx)
+                last_timestamp = timestamp
+        out = out.loc[keep_indices]
+
+    max_turnover = alpha.get("max_turnover")
+    if max_turnover is None and alpha.get("max_turnover_multiple") is not None:
+        max_turnover = initial_capital * float(alpha.get("max_turnover_multiple"))
+    if max_turnover is not None and notional > 0:
+        max_trades = max(0, int(math.floor(float(max_turnover) / notional)))
+        out = out.head(max_trades)
+
+    return out
+
+
+def _empty_alpha_metrics(candidate_count: int, total_candidates: int, policy: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "coverage": 0.0,
+        "candidate_coverage": candidate_count / max(total_candidates, 1),
+        "trades": 0.0,
+        "gross_pnl": 0.0,
+        "net_pnl": 0.0,
+        "fees": 0.0,
+        "gross_pnl_to_fees": 0.0,
+        "turnover": 0.0,
+        "exposure": 0.0,
+        "average_net_pnl_per_trade": 0.0,
+        "trades_per_day": 0.0,
+        "hit_ratio": 0.0,
+        "win_rate": 0.0,
+        "average_win": 0.0,
+        "average_loss": 0.0,
+        "max_drawdown": 0.0,
+        "return_mean": 0.0,
+        "return_std": 0.0,
+        "return_p05": 0.0,
+        "return_p50": 0.0,
+        "return_p95": 0.0,
+        "horizon_distribution": {},
+        "side_distribution": {"long": 0, "short": 0},
+        **dict(policy),
+    }
+
+
 def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> Tuple[Dict[str, Any], pd.DataFrame]:
     alpha = config.get("alpha_backtest", {}) or {}
     initial_capital = float(alpha.get("initial_capital", 100_000.0))
     meta_threshold = float(alpha.get("meta_threshold", 0.5))
     edge_threshold = float(alpha.get("edge_threshold_bps", 0.0))
+    safety_margin = float(alpha.get("edge_safety_margin_bps", 0.0))
+    effective_edge_threshold = edge_threshold + safety_margin
     horizon_choice = str(alpha.get("horizon", "best"))
     notional = float(alpha.get("position_notional", initial_capital))
     max_notional = float(alpha.get("max_position_notional", notional))
     notional = min(notional, max_notional) if max_notional > 0 else notional
+    policy = {
+        "meta_threshold": meta_threshold,
+        "edge_threshold_bps": edge_threshold,
+        "edge_safety_margin_bps": safety_margin,
+        "effective_edge_threshold_bps": effective_edge_threshold,
+        "max_trades_per_day": alpha.get("max_trades_per_day"),
+        "cooldown_bars": int(alpha.get("cooldown_bars", 0) or 0),
+    }
 
     eligible = candidates[
         (candidates["is_candidate"])
         & (candidates["meta_prob"] >= meta_threshold)
-        & (candidates["expected_edge_bps"] >= edge_threshold)
+        & (candidates["expected_edge_bps"] >= effective_edge_threshold)
     ].copy()
     if horizon_choice != "best":
         eligible = eligible[eligible["horizon"] == horizon_choice].copy()
@@ -604,6 +699,7 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
         eligible["score"] = eligible["meta_prob"] * eligible["expected_edge_bps"]
         eligible = eligible.sort_values(["timestamp", "score"], ascending=[True, False])
         eligible = eligible.drop_duplicates(subset=["timestamp"], keep="first").sort_values("timestamp")
+        eligible = _apply_alpha_trade_limits(eligible, config, initial_capital=initial_capital, notional=notional)
 
     trades: List[Dict[str, Any]] = []
     for _, row in eligible.iterrows():
@@ -639,27 +735,7 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
     total_rows = max(1, int(candidates["timestamp"].nunique()) if "timestamp" in candidates else len(candidates))
     candidate_count = int(candidates["is_candidate"].sum()) if "is_candidate" in candidates else 0
     if trades_df.empty:
-        metrics = {
-            "coverage": 0.0,
-            "candidate_coverage": candidate_count / max(len(candidates), 1),
-            "trades": 0.0,
-            "gross_pnl": 0.0,
-            "net_pnl": 0.0,
-            "fees": 0.0,
-            "turnover": 0.0,
-            "exposure": 0.0,
-            "hit_ratio": 0.0,
-            "win_rate": 0.0,
-            "average_win": 0.0,
-            "average_loss": 0.0,
-            "max_drawdown": 0.0,
-            "return_mean": 0.0,
-            "return_std": 0.0,
-            "return_p05": 0.0,
-            "return_p50": 0.0,
-            "return_p95": 0.0,
-        }
-        return metrics, pd.DataFrame(columns=["timestamp", "horizon", "side", "notional", "net_pnl"])
+        return _empty_alpha_metrics(candidate_count, len(candidates), policy), pd.DataFrame(columns=["timestamp", "horizon", "side", "notional", "net_pnl"])
 
     trades_df["cumulative_net_pnl"] = trades_df["net_pnl"].cumsum()
     equity = initial_capital + trades_df["cumulative_net_pnl"]
@@ -667,15 +743,27 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
     wins = trades_df[trades_df["net_pnl"] > 0]
     losses = trades_df[trades_df["net_pnl"] <= 0]
     returns = trades_df["net_return"].to_numpy(dtype=float)
+    timestamps = pd.to_datetime(trades_df["timestamp"])
+    days = max(1, int((timestamps.max().floor("D") - timestamps.min().floor("D")).days) + 1)
+    horizon_distribution = {str(key): int(value) for key, value in trades_df["horizon"].value_counts().sort_index().items()}
+    side_distribution = {
+        "long": int((trades_df["side"] > 0).sum()),
+        "short": int((trades_df["side"] < 0).sum()),
+    }
+    total_fees = float(trades_df["fees"].sum())
+    gross_pnl = float(trades_df["gross_pnl"].sum())
     metrics = {
         "coverage": float(len(trades_df) / total_rows),
         "candidate_coverage": float(candidate_count / max(len(candidates), 1)),
         "trades": float(len(trades_df)),
-        "gross_pnl": float(trades_df["gross_pnl"].sum()),
+        "gross_pnl": gross_pnl,
         "net_pnl": float(trades_df["net_pnl"].sum()),
-        "fees": float(trades_df["fees"].sum()),
+        "fees": total_fees,
+        "gross_pnl_to_fees": float(gross_pnl / total_fees) if abs(total_fees) > 1e-12 else 0.0,
         "turnover": float(trades_df["notional"].sum()),
         "exposure": float(trades_df["notional"].sum() / (initial_capital * total_rows)),
+        "average_net_pnl_per_trade": float(trades_df["net_pnl"].mean()),
+        "trades_per_day": float(len(trades_df) / days),
         "hit_ratio": float((trades_df["gross_return"] > 0).mean()),
         "win_rate": float((trades_df["net_pnl"] > 0).mean()),
         "average_win": float(wins["net_pnl"].mean()) if not wins.empty else 0.0,
@@ -686,8 +774,88 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
         "return_p05": float(np.quantile(returns, 0.05)),
         "return_p50": float(np.quantile(returns, 0.50)),
         "return_p95": float(np.quantile(returns, 0.95)),
+        "horizon_distribution": horizon_distribution,
+        "side_distribution": side_distribution,
+        **policy,
     }
     return metrics, trades_df
+
+
+def probability_bucket_table(candidates: pd.DataFrame, bins: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]:
+    bins = list(bins or np.linspace(0.0, 1.0, 11))
+    frame = candidates[candidates["is_candidate"]].copy() if "is_candidate" in candidates else candidates.copy()
+    if frame.empty or "meta_prob" not in frame:
+        return []
+    frame["bucket"] = pd.cut(frame["meta_prob"].astype(float), bins=bins, include_lowest=True)
+    rows: List[Dict[str, Any]] = []
+    for bucket, part in frame.groupby("bucket", observed=False):
+        labeled = part[part["meta_label"].notna()] if "meta_label" in part else part.iloc[0:0]
+        rows.append(
+            {
+                "bucket": str(bucket),
+                "count": int(len(part)),
+                "mean_meta_prob": float(part["meta_prob"].mean()) if len(part) else 0.0,
+                "observed_success_rate": float(labeled["meta_label"].mean()) if len(labeled) else 0.0,
+                "mean_expected_edge_bps": float(part["expected_edge_bps"].mean()) if "expected_edge_bps" in part and len(part) else 0.0,
+            }
+        )
+    return rows
+
+
+def predicted_edge_bucket_table(candidates: pd.DataFrame, bins: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]:
+    bins = list(bins or [-math.inf, 0.0, 5.0, 10.0, 25.0, 50.0, math.inf])
+    labels = ["lt_0", "0_5", "5_10", "10_25", "25_50", "50_plus"]
+    if candidates.empty or "expected_edge_bps" not in candidates:
+        return []
+    frame = candidates[candidates["is_candidate"]].copy() if "is_candidate" in candidates else candidates.copy()
+    frame["bucket"] = pd.cut(frame["expected_edge_bps"].astype(float), bins=bins, labels=labels, include_lowest=True)
+    rows: List[Dict[str, Any]] = []
+    for label in labels:
+        part = frame[frame["bucket"] == label]
+        labeled = part[part["meta_label"].notna()] if "meta_label" in part else part.iloc[0:0]
+        rows.append(
+            {
+                "bucket": label,
+                "count": int(len(part)),
+                "mean_expected_edge_bps": float(part["expected_edge_bps"].mean()) if len(part) else 0.0,
+                "observed_success_rate": float(labeled["meta_label"].mean()) if len(labeled) else 0.0,
+                "mean_label_net_return": float(part["label_net_return"].mean()) if "label_net_return" in part and len(part) else 0.0,
+            }
+        )
+    return rows
+
+
+def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]:
+    thresholds = list(thresholds or [0.50, 0.55, 0.60, 0.65, 0.70, 0.80])
+    if candidates.empty or "meta_prob" not in candidates or "meta_label" not in candidates:
+        return []
+    base = candidates[candidates["is_candidate"]].copy() if "is_candidate" in candidates else candidates.copy()
+    labeled = base[base["meta_label"].notna()].copy()
+    positives = float((labeled["meta_label"] == 1.0).sum())
+    rows: List[Dict[str, Any]] = []
+    for threshold in thresholds:
+        selected = labeled[labeled["meta_prob"] >= float(threshold)]
+        tp = float((selected["meta_label"] == 1.0).sum())
+        rows.append(
+            {
+                "threshold": float(threshold),
+                "selected": int(len(selected)),
+                "coverage": float(len(selected) / max(len(labeled), 1)),
+                "precision": float(tp / max(len(selected), 1)),
+                "recall": float(tp / max(positives, 1.0)),
+            }
+        )
+    return rows
+
+
+def alpha_diagnostics(candidates: pd.DataFrame, config: Mapping[str, Any]) -> Dict[str, Any]:
+    alpha = config.get("alpha_backtest", {}) or {}
+    thresholds = alpha.get("meta_threshold_grid")
+    return {
+        "probability_buckets": probability_bucket_table(candidates),
+        "predicted_edge_buckets": predicted_edge_bucket_table(candidates),
+        "meta_label_thresholds": meta_threshold_table(candidates, thresholds),
+    }
 
 
 def _split_manifest(dataset: Mapping[str, Any], splits: Mapping[str, Any]) -> Dict[str, Any]:
@@ -787,6 +955,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
 
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
     test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
+    diagnostics = {"validation": alpha_diagnostics(oof_candidates, config), "test": alpha_diagnostics(test_candidates, config)}
 
     model_path = trial_dir / "base_multi_horizon_lstm.pt"
     torch.save(final_model.state_dict(), model_path)
@@ -797,6 +966,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
         "test_candidates": trial_dir / "meta_candidates_test.parquet",
         "validation_trades": trial_dir / "alpha_trades_validation.parquet",
         "test_trades": trial_dir / "alpha_trades_test.parquet",
+        "diagnostics": trial_dir / "alpha_diagnostics.json",
     }
     oof_predictions.to_parquet(paths["oof_predictions"], index=False)
     test_predictions.to_parquet(paths["test_predictions"], index=False)
@@ -804,6 +974,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
     test_candidates.to_parquet(paths["test_candidates"], index=False)
     validation_trades.to_parquet(paths["validation_trades"], index=False)
     test_trades.to_parquet(paths["test_trades"], index=False)
+    _write_json(paths["diagnostics"], diagnostics)
 
     manifest = {
         "stage": "mvp_trial",
@@ -823,6 +994,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
         "model_path": model_path,
         "artifact_paths": paths,
         "metrics": {"validation": validation_metrics, "test": test_metrics},
+        "diagnostics_path": paths["diagnostics"],
         "manifest_path": trial_dir / "manifest.json",
     }
     _write_json(trial_dir / "manifest.json", manifest)
@@ -845,24 +1017,203 @@ def _rank_trials(trials: Sequence[Mapping[str, Any]], config: Mapping[str, Any])
     return sorted(trials, key=lambda item: _metric_value(item, metric), reverse=(mode == "max"))
 
 
+def _validation_trade_count(trial: Mapping[str, Any]) -> float:
+    return _metric_value(trial, "metrics.validation.trades")
+
+
+def select_trials_with_trade_floor(
+    trials: Sequence[Mapping[str, Any]],
+    config: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Dict[str, Any]]:
+    pipeline = config.get("pipeline", {}) or {}
+    metric = str(pipeline.get("selection_metric", "metrics.validation.net_pnl"))
+    mode = str(pipeline.get("selection_mode", "max"))
+    min_trades = int(pipeline.get("min_validation_trades", pipeline.get("selection_min_trades", 1)) or 0)
+    ranked = _rank_trials(trials, config)
+    raw_best = dict(ranked[0])
+    raw_best_trades = _validation_trade_count(raw_best)
+    raw_best["selected_by"] = {"metric": metric, "mode": mode, "value": _metric_value(raw_best, metric)}
+    raw_best["selection_status"] = "trade_qualified" if raw_best_trades >= min_trades else "abstention"
+
+    qualified = [trial for trial in trials if _validation_trade_count(trial) >= min_trades]
+    best_trading: Optional[Dict[str, Any]] = None
+    if qualified:
+        best_trading = dict(_rank_trials(qualified, config)[0])
+        best_trading["selected_by"] = {"metric": metric, "mode": mode, "value": _metric_value(best_trading, metric)}
+        best_trading["selection_status"] = "trade_qualified"
+
+    selection = {
+        "metric": metric,
+        "mode": mode,
+        "min_validation_trades": min_trades,
+        "raw_best_trial_id": raw_best.get("trial_id"),
+        "raw_best_validation_trades": raw_best_trades,
+        "raw_best_selection_status": raw_best["selection_status"],
+        "best_trading_trial_id": best_trading.get("trial_id") if best_trading else None,
+        "qualified_trial_count": int(len(qualified)),
+    }
+    return raw_best, best_trading, selection
+
+
+def _selection_status_for_trial(
+    trial: Mapping[str, Any],
+    raw_best: Mapping[str, Any],
+    best_trading: Optional[Mapping[str, Any]],
+    selection: Mapping[str, Any],
+) -> str:
+    trial_id = trial.get("trial_id")
+    raw_best_id = raw_best.get("trial_id")
+    best_trading_id = best_trading.get("trial_id") if best_trading else None
+    if trial_id == raw_best_id and trial_id == best_trading_id:
+        return "raw_best_trade_qualified"
+    if trial_id == raw_best_id:
+        return str(raw_best.get("selection_status", "raw_best"))
+    if trial_id == best_trading_id:
+        return "trade_qualified_selected"
+    min_trades = int(selection.get("min_validation_trades", 0) or 0)
+    if _validation_trade_count(trial) >= min_trades:
+        return "trade_qualified_not_selected"
+    return "unselected"
+
+
+def _log_meta_label_trial_trackio(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    trial: Mapping[str, Any],
+    selection_status: str,
+    raw_best: Mapping[str, Any],
+    best_trading: Optional[Mapping[str, Any]],
+    smoke: bool,
+) -> None:
+    trial_id = str(trial.get("trial_id", "unknown"))
+    artifacts = {"manifest": trial.get("manifest_path"), "diagnostics": trial.get("diagnostics_path"), "model": trial.get("model_path")}
+    artifacts.update(trial.get("artifact_paths", {}) or {})
+    artifacts = {key: value for key, value in artifacts.items() if value is not None}
+    is_raw_best = trial_id == raw_best.get("trial_id")
+    is_best_trading = bool(best_trading and trial_id == best_trading.get("trial_id"))
+
+    run_config = {
+        "stage": "meta_label_mvp_trial",
+        "run_id": run_id,
+        "trial_id": trial_id,
+        "trial_index": trial.get("trial_index"),
+        "selection_status": selection_status,
+        "is_raw_best": is_raw_best,
+        "is_best_trade_qualified": is_best_trading,
+        "smoke": smoke,
+        "overrides": trial.get("overrides", {}),
+        "manifest_path": trial.get("manifest_path"),
+        "diagnostics_path": trial.get("diagnostics_path"),
+        "model_path": trial.get("model_path"),
+    }
+    metrics = {
+        "alpha": trial.get("metrics", {}) or {},
+        "selection": {
+            "is_raw_best": is_raw_best,
+            "is_best_trade_qualified": is_best_trading,
+            "trade_qualified": selection_status in {"raw_best_trade_qualified", "trade_qualified_selected", "trade_qualified_not_selected"},
+        },
+    }
+    log_trackio_run(
+        config,
+        name=f"meta_label/{run_id}/{trial_id}",
+        group="meta_label_mvp",
+        run_config=run_config,
+        metrics=metrics,
+        artifacts=artifacts,
+        status="success",
+    )
+
+
+def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, report: Mapping[str, Any], smoke: bool) -> None:
+    best = report.get("best_trial", {}) or {}
+    best_trading = report.get("best_trading_trial") or {}
+    selection = report.get("selection", {}) or {}
+    benchmark = report.get("benchmark") or {}
+    report_paths = {
+        "json": report.get("report_json_path"),
+        "markdown": report.get("report_markdown_path"),
+        "manifest": Path(report.get("run_dir", ".")) / "manifest.json" if report.get("run_dir") else None,
+        "raw_best_manifest": report.get("best_trial_manifest_path"),
+        "trade_qualified_manifest": report.get("best_trading_trial_manifest_path"),
+        "benchmark_manifest": benchmark.get("manifest_path") if isinstance(benchmark, Mapping) else None,
+    }
+    artifacts = {key: value for key, value in report_paths.items() if value is not None}
+    run_config = {
+        "stage": "meta_label_mvp_summary",
+        "run_id": run_id,
+        "smoke": smoke,
+        "config_path": report.get("config_path"),
+        "run_dir": report.get("run_dir"),
+        "raw_best_trial_id": selection.get("raw_best_trial_id"),
+        "raw_best_selection_status": selection.get("raw_best_selection_status"),
+        "best_trading_trial_id": selection.get("best_trading_trial_id"),
+        "qualified_trial_count": selection.get("qualified_trial_count"),
+        "report_paths": report_paths,
+    }
+    metrics = {
+        "selection": selection,
+        "raw_best": best.get("metrics", {}) or {},
+        "best_trading": best_trading.get("metrics", {}) if isinstance(best_trading, Mapping) else {},
+        "run": {
+            "trials": len(report.get("trials", []) or []),
+            "smoke": smoke,
+            "has_trade_qualified_trial": bool(report.get("best_trading_trial")),
+        },
+    }
+    log_trackio_run(
+        config,
+        name=f"meta_label/{run_id}/summary",
+        group="meta_label_mvp",
+        run_config=run_config,
+        metrics=metrics,
+        artifacts=artifacts,
+        status=str(report.get("status", "success")),
+    )
+
+
 def _report_markdown(report: Mapping[str, Any]) -> str:
     best = report["best_trial"]
+    best_trading = report.get("best_trading_trial")
+    selection = report.get("selection", {})
     lines = [
-        f"# Meta-Labeling MVP Report: {report['run_id']}",
+        "# Meta-Labeling MVP Report: {}".format(report["run_id"]),
         "",
-        f"- Status: `{report['status']}`",
-        f"- Trials: `{len(report['trials'])}`",
-        f"- Best trial: `{best['trial_id']}`",
-        f"- Validation net PnL: `{best['metrics']['validation']['net_pnl']}`",
-        f"- Test net PnL: `{best['metrics']['test']['net_pnl']}`",
-        f"- Test trades: `{best['metrics']['test']['trades']}`",
-        f"- Test coverage: `{best['metrics']['test']['coverage']}`",
-        "",
-        "## Artifacts",
-        "",
-        f"- Report JSON: `{report['report_json_path']}`",
-        f"- Best trial manifest: `{best['manifest_path']}`",
+        "- Status: `{}`".format(report["status"]),
+        "- Trials: `{}`".format(len(report["trials"])),
+        "- Raw best trial: `{}`".format(best["trial_id"]),
+        "- Raw best status: `{}`".format(best.get("selection_status", "unknown")),
+        "- Raw validation net PnL: `{}`".format(best["metrics"]["validation"]["net_pnl"]),
+        "- Raw validation trades: `{}`".format(best["metrics"]["validation"]["trades"]),
+        "- Test net PnL: `{}`".format(best["metrics"]["test"]["net_pnl"]),
+        "- Test trades: `{}`".format(best["metrics"]["test"]["trades"]),
+        "- Test coverage: `{}`".format(best["metrics"]["test"]["coverage"]),
+        "- Minimum validation trades for trading selection: `{}`".format(selection.get("min_validation_trades")),
     ]
+    if best_trading:
+        lines.extend(
+            [
+                "- Best trade-qualified trial: `{}`".format(best_trading["trial_id"]),
+                "- Trade-qualified validation net PnL: `{}`".format(best_trading["metrics"]["validation"]["net_pnl"]),
+                "- Trade-qualified validation trades: `{}`".format(best_trading["metrics"]["validation"]["trades"]),
+            ]
+        )
+    else:
+        lines.append("- Best trade-qualified trial: `none`")
+    if report.get("benchmark"):
+        lines.append("- Forecast benchmark: `{}`".format(report["benchmark"]["manifest_path"]))
+    lines.extend(
+        [
+            "",
+            "## Artifacts",
+            "",
+            "- Report JSON: `{}`".format(report["report_json_path"]),
+            "- Raw best trial manifest: `{}`".format(best["manifest_path"]),
+        ]
+    )
+    if report.get("best_trading_trial_manifest_path"):
+        lines.append("- Trade-qualified trial manifest: `{}`".format(report["best_trading_trial_manifest_path"]))
     return "\n".join(lines) + "\n"
 
 
@@ -892,13 +1243,40 @@ def run_meta_labeling_mvp(
     _write_json(run_dir / "environment.json", _environment_manifest())
     stage0_dataset = build_multi_horizon_lighter_dataset(config_for_search, smoke=smoke)
     stage0 = _write_stage0(stage0_dataset, run_dir)
+    benchmark_summary = None
+    if (config_for_search.get("benchmark", {}) or {}).get("enabled", True):
+        from src.experiments.forecast_benchmark import run_forecast_benchmark_from_dataset
+
+        benchmark_summary = run_forecast_benchmark_from_dataset(
+            config_for_search,
+            stage0_dataset,
+            run_dir / "forecast_benchmark",
+            smoke=smoke,
+            device=resolved_device,
+            config_path=config_path,
+            run_id=run_id,
+        )
 
     trial_specs = expand_grid_search(config_for_search)
     trial_manifests = [_run_one_trial(spec, run_dir, smoke=smoke, device=resolved_device) for spec in trial_specs]
-    ranked = _rank_trials(trial_manifests, config_for_search)
-    best = dict(ranked[0])
+    best, best_trading, selection = select_trials_with_trade_floor(trial_manifests, config_for_search)
     best_path = run_dir / "best_trial_manifest.json"
     _write_json(best_path, best)
+    best_trading_path = None
+    if best_trading is not None:
+        best_trading_path = run_dir / "best_trade_qualified_trial_manifest.json"
+        _write_json(best_trading_path, best_trading)
+
+    for trial in trial_manifests:
+        _log_meta_label_trial_trackio(
+            config_for_search,
+            run_id=run_id,
+            trial=trial,
+            selection_status=_selection_status_for_trial(trial, best, best_trading, selection),
+            raw_best=best,
+            best_trading=best_trading,
+            smoke=smoke,
+        )
 
     report_dir = run_dir / "report"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -909,9 +1287,13 @@ def run_meta_labeling_mvp(
         "smoke": smoke,
         "device": str(resolved_device),
         "stage0": stage0,
+        "benchmark": benchmark_summary,
         "trials": trial_manifests,
         "best_trial": best,
         "best_trial_manifest_path": best_path,
+        "best_trading_trial": best_trading,
+        "best_trading_trial_manifest_path": best_trading_path,
+        "selection": selection,
         "status": "success",
         "report_json_path": report_dir / "report.json",
         "report_markdown_path": report_dir / "report.md",
@@ -919,4 +1301,5 @@ def run_meta_labeling_mvp(
     _write_json(report["report_json_path"], report)
     Path(report["report_markdown_path"]).write_text(_report_markdown(report), encoding="utf-8")
     _write_json(run_dir / "manifest.json", report)
+    _log_meta_label_summary_trackio(config_for_search, run_id=run_id, report=report, smoke=smoke)
     return _json_ready(report)
