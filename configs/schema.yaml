@@ -230,6 +230,26 @@ oneOf:
             minimum: 1
           spaces:
             type: object
+      tracking:
+        type: object
+        properties:
+          trackio:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              project:
+                type: string
+              auto_log_gpu:
+                type: boolean
+              gpu_log_interval:
+                type: number
+                exclusiveMinimum: 0
+              auto_log_cpu:
+                type: boolean
+              cpu_log_interval:
+                type: number
+                exclusiveMinimum: 0
       pipeline:
         type: object
       execution:
