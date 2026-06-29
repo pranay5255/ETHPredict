@@ -33,12 +33,14 @@ from loguru import logger
 from src.config.loader import ConfigManager
 from src.csv_loader import validate_csvs
 from src.data.features_all import (
+    DEFAULT_GRANULARITY,
     DataPreprocessor, 
     sample_bars, 
     generate_features, 
     save_features,
     save_numpy_arrays,
-    save_pickle
+    save_pickle,
+    bars_for_duration,
 )
 from src.features.labeling import (
     create_labels,
@@ -107,6 +109,17 @@ class ETHPredictPipeline:
                 config = yaml.safe_load(f)
             return config
     
+    def _active_granularity(self) -> str:
+        data_cfg = self.config.get("data", {})
+        return (
+            data_cfg.get("granularity")
+            or data_cfg.get("lighter", {}).get("resolution")
+            or DEFAULT_GRANULARITY
+        )
+
+    def _bars_for_hours(self, hours: float) -> int:
+        return bars_for_duration(self._active_granularity(), hours=hours)
+
     def run_complete_pipeline(self) -> Dict[str, Any]:
         """
         Execute the complete ETHPredict pipeline.
@@ -218,7 +231,8 @@ class ETHPredictPipeline:
         logger.info("Building bars and features...")
         
         # Initialize the Lighter-only data preprocessor.
-        self.data_preprocessor = DataPreprocessor(data_dir=str(self.data_dir))
+        granularity = self._active_granularity()
+        self.data_preprocessor = DataPreprocessor(data_dir=str(self.data_dir), granularities=[granularity])
         
         # Get bar configuration
         bar_config = self.config.get("bars", {})
@@ -228,13 +242,14 @@ class ETHPredictPipeline:
         feature_config = self.config.get("features", {})
         feature_mode = "full"  # Always use full features for comprehensive system
         
-        sequence_length = self.config.get("training", {}).get("sequence_length", 24)
+        default_sequence_length = self._bars_for_hours(24)
+        sequence_length = self.config.get("training", {}).get("sequence_length", default_sequence_length)
         if sequence_length is None:
-            sequence_length = self.config.get("model", {}).get("level2", {}).get("params", {}).get("sequence_length", 24)
+            sequence_length = self.config.get("model", {}).get("level2", {}).get("params", {}).get("sequence_length", default_sequence_length)
         
         try:
             # Use full feature engineering with DataPreprocessor
-            features_df, targets_df = self.data_preprocessor.get_base_dataset(granularity="1h")
+            features_df, targets_df = self.data_preprocessor.get_base_dataset(granularity=granularity)
             
             # Save processed features
             all_granularity_data = self.data_preprocessor.get_all_granularity_features(sequence_length=sequence_length)
@@ -249,7 +264,8 @@ class ETHPredictPipeline:
                     "y_shape": y.shape,
                     "sequence_length": sequence_length,
                     "granularity": granularity,
-                    "feature_columns": self.data_preprocessor.get_feature_cols()
+                    "feature_columns": self.data_preprocessor.get_feature_cols(),
+                    "feature_window_bars": self.data_preprocessor.feature_window_bars(granularity)
                 }
                 save_pickle(meta, self.processed_dir, f"{prefix}_meta.pkl")
             
@@ -261,7 +277,7 @@ class ETHPredictPipeline:
             logger.info("Falling back to simple feature engineering...")
             
             # Fallback to simple feature engineering
-            csv_files = sorted(self.raw_dir.glob("*-lighter-*.csv"))
+            csv_files = sorted(self.raw_dir.glob(f"*-{granularity}-lighter-*.csv"))
             if not csv_files:
                 raise ValueError("No Lighter CSV files found for feature engineering")
             
@@ -303,21 +319,23 @@ class ETHPredictPipeline:
         
         # Generate labels using triple-barrier method
         kappa = model_config.get("level0", {}).get("params", {}).get("kappa", 2.0)
-        timeout = training_config.get("label_timeout", 24)
+        timeout = training_config.get("label_timeout", self._bars_for_hours(24))
         
         labeled_df = create_labels(
             combined_df, 
             price_col="close",
             kappa=kappa,
             timeout=timeout,
-            method="adaptive"
+            method="adaptive",
+            volatility_window=timeout,
         )
         
         # Add sample weights
         weights = sample_weights_from_labels(
             labeled_df["y_dir"],
             labeled_df["hit_times"], 
-            labeled_df["returns"]
+            labeled_df["returns"],
+            volatility_window=timeout
         )
         labeled_df["sample_weights"] = weights
         
@@ -337,7 +355,8 @@ class ETHPredictPipeline:
         model_config = self.config.get("model", {})
         
         # Model parameters
-        sequence_length = model_config.get("level2", {}).get("params", {}).get("sequence_length", 24)
+        default_sequence_length = self._bars_for_hours(24)
+        sequence_length = training_config.get("sequence_length") or model_config.get("level2", {}).get("params", {}).get("sequence_length", default_sequence_length)
         hidden_size = model_config.get("level1", {}).get("params", {}).get("hidden_layers", [64])[0]
         num_layers = model_config.get("level1", {}).get("params", {}).get("num_layers", 2)
         num_epochs = training_config.get("epochs", 50)
@@ -348,7 +367,8 @@ class ETHPredictPipeline:
                 sequence_length=sequence_length,
                 hidden_size=hidden_size,
                 num_layers=num_layers,
-                num_epochs=num_epochs
+                num_epochs=num_epochs,
+                granularity=self._active_granularity()
             )
             
             logger.info("Ensemble model trained successfully")
@@ -364,7 +384,9 @@ class ETHPredictPipeline:
             ensemble = EnsemblePredictor(
                 input_size=input_size,
                 hidden_size=hidden_size,
-                sequence_length=sequence_length
+                sequence_length=sequence_length,
+                granularity=self._active_granularity(),
+                label_timeout=self._bars_for_hours(24)
             )
             
             # Train with available data
@@ -390,7 +412,7 @@ class ETHPredictPipeline:
             gamma=mm_config.get("gamma", 0.5),
             kappa=mm_config.get("inventory_skew_factor", 0.5),
             sigma=mm_config.get("volatility_multiplier", 2.0),
-            dt=1.0 / 24.0,  # Hourly data
+            dt=mm_config.get("dt", 1.0 / self._bars_for_hours(24)),
             max_inventory=mm_config.get("inventory_limit", 10000),
             min_spread=mm_config.get("min_spread", 0.0005)
         )
@@ -428,7 +450,7 @@ class ETHPredictPipeline:
                 self.config.get("model", {})
                 .get("level2", {})
                 .get("params", {})
-                .get("sequence_length", 24)
+                .get("sequence_length", self._bars_for_hours(24))
             )
 
             if self.ensemble_model and hasattr(self.ensemble_model, "predict"):
