@@ -1,124 +1,319 @@
-type: object
-required:
-- experiment
-- bars
-- features
-- model
-properties:
-  experiment:
+$schema: "https://json-schema.org/draft/2020-12/schema"
+oneOf:
+  - title: "ETHPredict v2 hierarchical meta-labeling config"
     type: object
     required:
-    - id
-    - seed
-    - trials
+      - version
+      - experiment
+      - data
+      - targets
+      - validation
+      - labels
+      - model
+      - training
+      - costs
+      - alpha_backtest
+      - search
     properties:
-      id:
-        type: string
-      seed:
-        type: integer
-      trials:
-        type: integer
-  bars:
-    type: object
-    required:
-    - type
-    properties:
-      type:
-        type: string
-        enum:
-        - time
-        - tick
-        - volume
-        - dollar
-      threshold_usd:
-        type: number
-      threshold_ticks:
-        type: integer
-      threshold_volume:
-        type: number
-      time_interval:
-        type: string
-        pattern: ^[0-9]+[mhd]$
-  features:
-    type: object
-    required:
-    - frac_diff_order
-    - include
-    properties:
-      frac_diff_order:
-        type: number
-        minimum: 0
-        maximum: 1
-      include:
-        type: array
-        items:
-          type: string
-          enum:
-          - vol_adj_flow
-          - rsi
-          - macd
-          - bollinger
-          - volume_profile
-  model:
-    type: object
-    required:
-    - level0
-    properties:
-      level0:
+      version:
+        const: 2
+      experiment:
         type: object
-        required:
-        - algo
-        - params
+        required: [id, seed, trials]
         properties:
-          algo:
+          id:
             type: string
-            enum:
-            - xgboost
-            - lightgbm
-            - catboost
-          params:
+          name:
+            type: string
+          seed:
+            type: integer
+          trials:
+            type: integer
+            minimum: 1
+      data:
+        type: object
+        required: [dir, granularity, sources]
+        properties:
+          dir:
+            type: string
+          granularity:
+            type: string
+          sources:
+            type: array
+            items:
+              type: string
+          lighter:
             type: object
+      bars:
+        type: object
+        properties:
+          type:
+            type: string
+          time_interval:
+            type: string
+      features:
+        type: object
+        properties:
+          frac_diff_order:
+            type: number
+            minimum: 0
+            maximum: 1
+          include:
+            type: array
+            items:
+              type: string
+      targets:
+        type: object
+        required: [horizons]
+        properties:
+          horizons:
+            type: object
+            minProperties: 1
+            additionalProperties:
+              type: object
+              required: [bars]
+              properties:
+                bars:
+                  type: integer
+                  minimum: 1
+      validation:
+        type: object
+        required: [method, folds, test_fraction, purge_bars, embargo_bars]
+        properties:
+          method:
+            const: purged_walk_forward
+          folds:
+            type: integer
+            minimum: 1
+          test_fraction:
+            type: number
+            exclusiveMinimum: 0
+            exclusiveMaximum: 1
+          purge_bars:
+            type: integer
+            minimum: 0
+          embargo_bars:
+            type: integer
+            minimum: 0
+      labels:
+        type: object
+        required: [meta_triple_barrier]
+        properties:
+          meta_triple_barrier:
+            type: object
+            required: [profit_kappa, stop_kappa, vertical_barriers, min_edge_bps, cost_mode]
             properties:
-              max_depth:
-                type: integer
-                minimum: 1
-              eta:
+              profit_kappa:
                 type: number
                 minimum: 0
-              tree_method:
+              stop_kappa:
+                type: number
+                minimum: 0
+              vertical_barriers:
+                type: object
+                additionalProperties:
+                  type: integer
+                  minimum: 1
+              volatility_window:
+                type: integer
+                minimum: 1
+              min_edge_bps:
+                type: number
+                minimum: 0
+              cost_mode:
                 type: string
-                enum:
-                - gpu_hist
-                - hist
-                - exact
-      meta_labeling:
-        type: boolean
-  market_maker:
-    type: object
-    properties:
-      gamma:
-        type: number
-        minimum: 0
-      hedge:
-        type: boolean
-      inventory_limit:
-        type: number
-      quote_spread:
-        type: number
-        minimum: 0
-  backtest:
+      model:
+        type: object
+        required: [base, meta_labeler]
+        properties:
+          type:
+            type: string
+          base:
+            type: object
+            required: [type, hidden_size, num_layers]
+            properties:
+              type:
+                type: string
+              hidden_size:
+                type: integer
+                minimum: 1
+              num_layers:
+                type: integer
+                minimum: 1
+              dropout:
+                type: number
+                minimum: 0
+          meta_labeler:
+            type: object
+            required: [type, hidden_size]
+            properties:
+              type:
+                type: string
+              hidden_size:
+                type: integer
+                minimum: 1
+              num_layers:
+                type: integer
+                minimum: 1
+              dropout:
+                type: number
+                minimum: 0
+              enabled:
+                type: boolean
+      training:
+        type: object
+        required: [sequence_length, epochs, batch_size, learning_rate]
+        properties:
+          sequence_length:
+            type: integer
+            minimum: 1
+          epochs:
+            type: integer
+            minimum: 1
+          batch_size:
+            type: integer
+            minimum: 1
+          learning_rate:
+            type: number
+            exclusiveMinimum: 0
+          weight_decay:
+            type: number
+            minimum: 0
+          loss_weights:
+            type: object
+      costs:
+        type: object
+        properties:
+          fee_bps:
+            type: number
+            minimum: 0
+          spread_bps:
+            type: number
+            minimum: 0
+          slippage_bps:
+            type: number
+            minimum: 0
+          funding_bps_per_hour:
+            type: number
+      alpha_backtest:
+        type: object
+        required: [initial_capital, meta_threshold, edge_threshold_bps]
+        properties:
+          initial_capital:
+            type: number
+            minimum: 0
+          horizon:
+            type: string
+          meta_threshold:
+            type: number
+            minimum: 0
+            maximum: 1
+          edge_threshold_bps:
+            type: number
+            minimum: 0
+          position_sizing:
+            type: string
+          position_notional:
+            type: number
+            minimum: 0
+          max_position_notional:
+            type: number
+            minimum: 0
+      search:
+        type: object
+        required: [mode, spaces]
+        properties:
+          mode:
+            const: grid
+          max_trials:
+            type: integer
+            minimum: 1
+          spaces:
+            type: object
+      pipeline:
+        type: object
+      execution:
+        type: object
+      smoke:
+        type: object
+  - title: "Legacy ETHPredict config"
+    not:
+      required: [version]
     type: object
     required:
-    - start
-    - end
-    - initial_capital
+      - experiment
+      - bars
+      - features
+      - model
     properties:
-      start:
-        type: string
-        format: date
-      end:
-        type: string
-        format: date
-      initial_capital:
-        type: number
-        minimum: 0
+      experiment:
+        type: object
+        required:
+          - id
+          - seed
+          - trials
+        properties:
+          id:
+            type: string
+          seed:
+            type: integer
+          trials:
+            type: integer
+      bars:
+        type: object
+        required:
+          - type
+        properties:
+          type:
+            type: string
+            enum:
+              - time
+              - tick
+              - volume
+              - dollar
+          threshold_usd:
+            type: number
+          threshold_ticks:
+            type: integer
+          threshold_volume:
+            type: number
+          time_interval:
+            type: string
+            pattern: ^[0-9]+[mhd]$
+      features:
+        type: object
+        required:
+          - frac_diff_order
+          - include
+        properties:
+          frac_diff_order:
+            type: number
+            minimum: 0
+            maximum: 1
+          include:
+            type: array
+            items:
+              type: string
+      model:
+        type: object
+        properties:
+          level0:
+            type: object
+            properties:
+              algo:
+                type: string
+                enum:
+                  - xgboost
+                  - lightgbm
+                  - catboost
+                  - lstm
+              params:
+                type: object
+          base:
+            type: object
+          meta_labeling:
+            type: boolean
+      market_maker:
+        type: object
+      backtest:
+        type: object
