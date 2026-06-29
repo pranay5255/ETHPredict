@@ -8,7 +8,12 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 import warnings
 from pathlib import Path
 
+from src.data.features_all import DEFAULT_GRANULARITY, bars_for_duration
 from src.training.devices import resolve_training_device
+
+DEFAULT_SEQUENCE_LENGTH = bars_for_duration(DEFAULT_GRANULARITY, hours=24)
+DEFAULT_BARS_PER_DAY = bars_for_duration(DEFAULT_GRANULARITY, hours=24)
+DEFAULT_EMBARGO_BARS = bars_for_duration(DEFAULT_GRANULARITY, hours=3)
 
 # --- Model Classes (from hierarchical.py and simple.py) ---
 
@@ -167,12 +172,17 @@ class EnsemblePredictor:
                  hidden_size: int = 64,
                  num_layers: int = 2,
                  dropout: float = 0.2,
-                 sequence_length: int = 24):
+                 sequence_length: int = DEFAULT_SEQUENCE_LENGTH,
+                 granularity: str = DEFAULT_GRANULARITY,
+                 label_timeout: Optional[int] = None):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout = dropout
         self.sequence_length = sequence_length
+        self.granularity = granularity
+        self.label_timeout = int(label_timeout or bars_for_duration(granularity, hours=24))
+        self.bars_per_day = bars_for_duration(granularity, hours=24)
         self.hierarchical_model = None
         self.level_0_model = None
         self.level_1_model = None
@@ -186,7 +196,12 @@ class EnsemblePredictor:
         from src.features.labeling import create_labels, create_training_labels
         combined_df = features_df.copy()
         combined_df['close'] = targets_df['close']
-        labeled_df = create_labels(combined_df, price_col='close')
+        labeled_df = create_labels(
+            combined_df,
+            price_col='close',
+            timeout=self.label_timeout,
+            volatility_window=self.label_timeout,
+        )
         features = features_df.values
         features_tensor = torch.FloatTensor(features)
         features_mean = features_tensor.mean(dim=0)
@@ -196,7 +211,12 @@ class EnsemblePredictor:
         for i in range(len(scaled_features) - self.sequence_length):
             X_seq.append(scaled_features[i:i + self.sequence_length])
         X = torch.stack(X_seq)
-        y_ret, y_dir, sample_weights = create_training_labels(labeled_df, self.sequence_length)
+        y_ret, y_dir, sample_weights = create_training_labels(
+            labeled_df,
+            self.sequence_length,
+            timeout=self.label_timeout,
+            volatility_window=self.label_timeout,
+        )
         return X, y_ret, y_dir, sample_weights
     def _purged_cross_validation(self,
                                 X: torch.Tensor,
@@ -205,9 +225,9 @@ class EnsemblePredictor:
                                 sample_weights: torch.Tensor,
                                 device: torch.device,
                                 n_splits: int = 5,
-                                embargo_hours: int = 3) -> Dict[str, List[float]]:
+                                embargo_bars: int = DEFAULT_EMBARGO_BARS) -> Dict[str, List[float]]:
         from src.training.trainer import PurgedTimeSeriesSplit, compute_metrics, hierarchical_training_pipeline
-        cv_splitter = PurgedTimeSeriesSplit(n_splits=n_splits, embargo_hours=embargo_hours)
+        cv_splitter = PurgedTimeSeriesSplit(n_splits=n_splits, embargo_bars=embargo_bars)
         splits = cv_splitter.split(X, y_ret)
         cv_scores = {
             'level_0_mae': [],
@@ -362,9 +382,9 @@ class EnsemblePredictor:
             returns = y_ret_np
             pnl = positions[:-1] * returns[1:]
             self.performance_metrics.update({
-                'kelly_sharpe': np.mean(pnl) / (np.std(pnl) + 1e-8) * np.sqrt(24 * 365),
+                'kelly_sharpe': np.mean(pnl) / (np.std(pnl) + 1e-8) * np.sqrt(self.bars_per_day * 365),
                 'kelly_max_dd': self._calculate_max_drawdown(np.cumsum(pnl)),
-                'kelly_calmar': (np.mean(pnl) * 24 * 365) / (self._calculate_max_drawdown(np.cumsum(pnl)) + 1e-8)
+                'kelly_calmar': (np.mean(pnl) * self.bars_per_day * 365) / (self._calculate_max_drawdown(np.cumsum(pnl)) + 1e-8)
             })
     def _calculate_max_drawdown(self, cumulative_returns: np.ndarray) -> float:
         peak = np.maximum.accumulate(cumulative_returns)
@@ -426,14 +446,15 @@ class EnsemblePredictor:
             }
         return cv_summary
 
-def build_ensemble(sequence_length: int = 24, 
+def build_ensemble(sequence_length: int = DEFAULT_SEQUENCE_LENGTH, 
                   hidden_size: int = 64, 
                   num_layers: int = 2,
-                  num_epochs: int = 50) -> EnsemblePredictor:
+                  num_epochs: int = 50,
+                  granularity: str = DEFAULT_GRANULARITY) -> EnsemblePredictor:
     from src.data.features_all import DataPreprocessor
     print("=== Building ETH Price Prediction Ensemble ===")
-    preprocessor = DataPreprocessor()
-    features_df, targets_df = preprocessor.get_base_dataset()
+    preprocessor = DataPreprocessor(granularities=[granularity])
+    features_df, targets_df = preprocessor.get_base_dataset(granularity)
     print(f"Loaded data:")
     print(f"  Features: {features_df.shape}")
     print(f"  Targets: {targets_df.shape}")
@@ -443,7 +464,8 @@ def build_ensemble(sequence_length: int = 24,
         input_size=input_size,
         hidden_size=hidden_size,
         num_layers=num_layers,
-        sequence_length=sequence_length
+        sequence_length=sequence_length,
+        granularity=granularity,
     )
     results = ensemble.train(
         features_df=features_df,
@@ -465,7 +487,7 @@ def build_ensemble(sequence_length: int = 24,
 
 if __name__ == "__main__":
     ensemble = build_ensemble(
-        sequence_length=24,
+        sequence_length=DEFAULT_SEQUENCE_LENGTH,
         hidden_size=64,
         num_layers=2,
         num_epochs=50
