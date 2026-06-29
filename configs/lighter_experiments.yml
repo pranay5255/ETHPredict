@@ -1,6 +1,6 @@
 data:
   dir: data
-  granularity: 1h
+  granularity: 5m
 
 targets:
   - triple_barrier
@@ -8,11 +8,12 @@ targets:
 
 labels:
   kappa: 2.0
-  timeout: 24
-  next_hour_horizon: 1
+  timeout: 288
+  volatility_window: 288
+  next_hour_horizon: 12
 
 training:
-  sequence_length: 24
+  sequence_length: 288
   hidden_size: 16
   num_layers: 1
   dropout: 0.0
@@ -22,7 +23,7 @@ training:
   neural_trials_per_target: 2
 
 smoke:
-  max_rows: 128
+  max_rows: 640
   neural_trials_per_target: 1
   epochs: 1
   hidden_size: 8
@@ -33,7 +34,7 @@ glft:
   initial_capital: 100000.0
   gamma: 0.5
   kappa: 0.1
-  dt: 0.0416666667
+  dt: 0.0034722222
   max_inventory: 10.0
   min_spread: 5.0
   max_drawdown: 0.2
