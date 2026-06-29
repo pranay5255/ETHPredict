@@ -17,7 +17,12 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller
 
+from src.data.lighter_client import RESOLUTION_TO_MS
+
 warnings.filterwarnings("ignore")
+
+DEFAULT_GRANULARITY = "5m"
+MS_PER_HOUR = 60 * 60 * 1000
 
 OHLCV_COLUMNS = [
     "open_time",
@@ -48,18 +53,27 @@ LIGHTER_FEATURE_COLUMNS = [
     "dollar_volume",
     "high_low_range",
     "close_open_return",
-    "return_vol_1",
-    "return_vol_24",
-    "return_vol_168",
-    "volume_zscore_24",
+    "return_vol_1bar",
+    "return_vol_24h",
+    "return_vol_7d",
+    "volume_zscore_24h",
     "fracdiff_close",
-    "return_entropy_24",
-    "return_entropy_168",
+    "return_entropy_24h",
+    "return_entropy_7d",
     "cusum_flag",
     "sadf_flag",
     "vol_regime",
     "parkinson_vol",
 ]
+
+
+def bars_for_duration(granularity: str, *, hours: float) -> int:
+    """Return the number of bars needed to preserve a wall-clock duration."""
+
+    if granularity not in RESOLUTION_TO_MS:
+        raise ValueError(f"Unsupported Lighter candle granularity: {granularity}")
+    bars = round((hours * MS_PER_HOUR) / RESOLUTION_TO_MS[granularity])
+    return max(1, int(bars))
 
 
 def _clean_numeric(series: pd.Series) -> pd.Series:
@@ -98,10 +112,10 @@ def sample_bars(df: pd.DataFrame, bar_type: str) -> pd.DataFrame:
     return bars.reset_index(drop=True)
 
 
-def generate_features(df: pd.DataFrame) -> pd.DataFrame:
+def generate_features(df: pd.DataFrame, volatility_window: int = 288) -> pd.DataFrame:
     df = df.sort_values("timestamp").copy()
     df["return"] = df["close"].pct_change().fillna(0)
-    df["rolling_vol"] = df["return"].rolling(24).std().fillna(0)
+    df["rolling_vol"] = df["return"].rolling(volatility_window).std().fillna(0)
     return df
 
 
@@ -124,8 +138,16 @@ class DataPreprocessor:
         granularities: Optional[Sequence[str]] = None,
     ):
         self.data_dir = Path(data_dir)
-        self.granularities = list(granularities or ["1h"])
+        self.granularities = list(granularities or [DEFAULT_GRANULARITY])
         self.include_santiment = include_santiment
+
+    def feature_window_bars(self, granularity: str) -> Dict[str, int]:
+        return {
+            "one_bar": 1,
+            "one_hour": bars_for_duration(granularity, hours=1),
+            "twenty_four_hours": bars_for_duration(granularity, hours=24),
+            "seven_days": bars_for_duration(granularity, hours=24 * 7),
+        }
 
     def load_price_data(self) -> Dict[str, pd.DataFrame]:
         data: Dict[str, pd.DataFrame] = {}
@@ -231,8 +253,13 @@ class DataPreprocessor:
         estimate = np.sqrt((1.0 / (4.0 * np.log(2.0))) * (np.log(high / low) ** 2))
         return estimate.replace([np.inf, -np.inf], np.nan).rolling(window).mean()
 
-    def _feature_frame(self, price_data: pd.DataFrame) -> pd.DataFrame:
+    def _feature_frame(self, price_data: pd.DataFrame, granularity: str) -> pd.DataFrame:
         merged = price_data.set_index("timestamp").sort_index().copy()
+        windows = self.feature_window_bars(granularity)
+        window_24h = windows["twenty_four_hours"]
+        window_7d = windows["seven_days"]
+        step_1h = windows["one_hour"]
+
         for column in ["open", "high", "low", "close", "volume", "quote_asset_volume"]:
             merged[column] = _clean_numeric(merged[column])
 
@@ -243,22 +270,22 @@ class DataPreprocessor:
         merged["dollar_volume"] = merged["close"] * merged["volume"]
         merged["high_low_range"] = _safe_divide(merged["high"] - merged["low"], merged["close"])
         merged["close_open_return"] = _safe_divide(merged["close"] - merged["open"], merged["open"])
-        merged["return_vol_1"] = merged["log_return"].rolling(1).std().fillna(0)
-        merged["return_vol_24"] = merged["log_return"].rolling(24).std().fillna(0)
-        merged["return_vol_168"] = merged["log_return"].rolling(168).std().fillna(0)
+        merged["return_vol_1bar"] = merged["log_return"].rolling(windows["one_bar"]).std().fillna(0)
+        merged["return_vol_24h"] = merged["log_return"].rolling(window_24h).std().fillna(0)
+        merged["return_vol_7d"] = merged["log_return"].rolling(window_7d).std().fillna(0)
 
-        volume_mean = merged["volume"].rolling(24).mean()
-        volume_std = merged["volume"].rolling(24).std().replace(0, np.nan)
-        merged["volume_zscore_24"] = ((merged["volume"] - volume_mean) / volume_std).replace([np.inf, -np.inf], np.nan).fillna(0)
+        volume_mean = merged["volume"].rolling(window_24h).mean()
+        volume_std = merged["volume"].rolling(window_24h).std().replace(0, np.nan)
+        merged["volume_zscore_24h"] = ((merged["volume"] - volume_mean) / volume_std).replace([np.inf, -np.inf], np.nan).fillna(0)
 
         close_d = self.find_optimal_d(merged["close"])
         merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d)
-        merged["return_entropy_24"] = self.compute_entropy(merged["log_return"], 24)
-        merged["return_entropy_168"] = self.compute_entropy(merged["log_return"], 168)
+        merged["return_entropy_24h"] = self.compute_entropy(merged["log_return"], window_24h)
+        merged["return_entropy_7d"] = self.compute_entropy(merged["log_return"], window_7d)
         merged["cusum_flag"] = self.cusum_flag(merged["log_return"])
-        merged["sadf_flag"] = self.sadf_flag(merged["close"])
-        merged["vol_regime"] = self.volatility_regime(merged["log_return"])
-        merged["parkinson_vol"] = self.parkinson_vol(merged["high"], merged["low"], 24)
+        merged["sadf_flag"] = self.sadf_flag(merged["close"], max_window=window_24h, step=step_1h)
+        merged["vol_regime"] = self.volatility_regime(merged["log_return"], window=window_24h)
+        merged["parkinson_vol"] = self.parkinson_vol(merged["high"], merged["low"], window_24h)
 
         return merged.replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -267,12 +294,12 @@ class DataPreprocessor:
         if price_data is None or price_data.empty:
             raise ValueError(f"Lighter OHLCV data required for {granularity}")
 
-        feature_frame = self._feature_frame(price_data)
+        feature_frame = self._feature_frame(price_data, granularity)
         features_df = feature_frame[self.get_feature_cols()].fillna(0)
         targets_df = feature_frame[["close", "volume"]].fillna(0)
         return features_df, targets_df
 
-    def prepare_features(self, granularity: str, sequence_length: int = 24) -> Tuple[np.ndarray, np.ndarray]:
+    def prepare_features(self, granularity: str, sequence_length: int = 288) -> Tuple[np.ndarray, np.ndarray]:
         features_df, targets_df = self._dataset_for_granularity(granularity)
         if len(features_df) <= sequence_length:
             raise ValueError(
@@ -293,7 +320,7 @@ class DataPreprocessor:
             y.append(scaled_targets[idx + sequence_length])
         return np.stack(X), np.stack(y)
 
-    def get_all_granularity_features(self, sequence_length: int = 24) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    def get_all_granularity_features(self, sequence_length: int = 288) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
         output = {}
         for granularity in self.granularities:
             try:
@@ -302,7 +329,7 @@ class DataPreprocessor:
                 print(f"Could not prepare features for {granularity}: {exc}")
         return output
 
-    def get_base_dataset(self, granularity: str = "1h") -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def get_base_dataset(self, granularity: str = DEFAULT_GRANULARITY) -> Tuple[pd.DataFrame, pd.DataFrame]:
         return self._dataset_for_granularity(granularity)
 
     def get_feature_cols(self) -> List[str]:
@@ -333,7 +360,8 @@ def main():
     feat_parser.add_argument("--out", type=Path, required=True)
 
     full_parser = subparsers.add_parser("full_features", help="Generate Lighter-only sequence features")
-    full_parser.add_argument("--sequence-length", type=int, default=24)
+    full_parser.add_argument("--sequence-length", type=int, default=288)
+    full_parser.add_argument("--granularity", action="append", help="Lighter candle granularity to process, e.g. 5m. Repeat for multiple granularities.")
     full_parser.add_argument("--data-dir", type=str, default="data")
     full_parser.add_argument("--out-dir", type=str, default="data/processed_features")
 
@@ -359,7 +387,7 @@ def main():
     elif args.command == "full_features":
         out_dir = Path(args.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        preprocessor = DataPreprocessor(data_dir=args.data_dir)
+        preprocessor = DataPreprocessor(data_dir=args.data_dir, granularities=args.granularity)
         all_granularity_data = preprocessor.get_all_granularity_features(sequence_length=args.sequence_length)
         for granularity, (X, y) in all_granularity_data.items():
             prefix = f"{granularity}_seq{args.sequence_length}"
@@ -371,6 +399,7 @@ def main():
                 "sequence_length": args.sequence_length,
                 "granularity": granularity,
                 "feature_columns": preprocessor.get_feature_cols(),
+                "feature_window_bars": preprocessor.feature_window_bars(granularity),
             }
             save_pickle(meta, out_dir, f"{prefix}_meta.pkl")
         print(f"Full features saved to {out_dir}")
