@@ -358,6 +358,21 @@ artifacts/runs/<run_id>/
 Stage 2 intentionally consumes the best Stage 1 `predictions_test.parquet` and model manifest instead of silently rebuilding model state.
 
 
+## Trackio Dashboard
+
+Trackio logging is enabled in `configs/config.yml` for the active v2 research path and writes to the local Trackio store by default. Launch the local dashboard with the Python entry point when CLI networking is awkward in sandboxed shells:
+
+```bash
+uv run python -c "import trackio; trackio.show(project='ethpredict', open_browser=False, host='127.0.0.1', server_port=7860)"
+```
+
+The CLI alternative is also available:
+
+```bash
+uv run trackio show --project ethpredict
+```
+
+
 ## Research Roadmap
 
 The next research direction is a hierarchical signal stack rather than a single model plus GLFT backtest. The staged runner should evolve into these layers:
