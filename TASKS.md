@@ -24,17 +24,22 @@
 - [x] Add shared CUDA device resolution that defaults neural training to `cuda:0` and requires `--allow-cpu` for CPU neural runs.
 - [x] Add `src.experiments.lighter_compare` for Lighter-only neural trials, CPU ARIMA/SARIMAX baselines, and GLFT metric ranking.
 - [x] Add `configs/lighter_experiments.yml` for triple-barrier and next-hour-return experiment targets.
+- [x] Add small full-data staged configs for 5m `next_hour_return` and `triple_barrier` experiments.
+- [x] Run exploratory small staged 5m experiments and confirm serial full-data execution succeeds after parallel CUDA OOM fallback.
 - [x] Add CUDA environment, one-batch neural stack, CPU baseline, and end-to-end smoke tests.
 - [x] Verify `uv run pytest`, `uv lock --check`, and the Lighter compare smoke command.
 
 ## Active Near-Term Tasks
 
+- [ ] Add `next_5m_return` and multi-horizon model outputs for 5m and 1h returns/direction.
+- [ ] Add purged walk-forward CV that stores out-of-sample base predictions for each fold.
+- [ ] Implement triple-barrier meta-label generation for proposed long/short signals using profit-taking, stop-loss, and vertical barriers after estimated costs.
+- [ ] Train a true meta-label classifier from out-of-sample base predictions, replacing or separating the current `y_dir != 0` confidence target.
+- [ ] Report meta-label threshold performance: coverage, directional accuracy, hit ratio, gross/net PnL, fees, turnover, and drawdown.
+- [ ] Replace Stage 2's GLFT-first ranking with a validation-selected directional alpha backtest.
+- [ ] Add Stage 0 funding and mark-price joins first; add historical order-book/trade-flow features only when time-indexed history is available.
+- [ ] Keep GLFT as an optional passive execution layer after alpha validation, using policy target inventory or reservation-price skew.
 - [ ] Run `python runner.py configs/config.yml` end to end after deciding whether current model/training changes should be kept.
-- [ ] Run the non-smoke Lighter compare experiment: `uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml`.
-- [ ] Review full-run finalists by prediction metrics first, then GLFT backtest metrics.
-- [ ] Replace shifted-price fallback predictions in the top-level backtest path with actual trained model inference.
-- [ ] Decide whether CPU neural fallback should remain a test/development override only or become part of documented non-GPU workflows.
-- [ ] Decide whether Lighter side data should enter features next, starting with funding and mark price candles.
 - [ ] Add a small fixture-backed integration test for `runner.py` using Lighter-only raw data.
 - [ ] Decide whether to migrate legacy `requirements.txt` users fully to uv in a later cleanup.
 
@@ -43,6 +48,7 @@
 - [ ] Reintroduce Binance OHLCV only if a mixed-source experiment is explicitly reopened.
 - [ ] Reintroduce DeFiLlama/Santiment joins only after defining target/feature semantics for non-market data.
 - [ ] Reintroduce DEX simulation only after the price-data backtest path is stable.
+- [ ] Treat GLFT parameter search as deferred alpha evaluation; use it only for passive execution research after directional alpha validation.
 - [ ] Reintroduce bribe/MEV optimization only as a separate execution research track.
 - [ ] Reintroduce parameter sweeps only after the base Lighter-only run is reproducible.
 - [ ] Add signed Lighter trading or live execution only after offline experiments are reproducible.
@@ -57,5 +63,7 @@ uv run python -c "import torch; print(torch.__version__); print(torch.cuda.is_av
 uv run pytest
 uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml --smoke
 uv run python -m src.experiments.lighter_compare --config configs/lighter_experiments.yml
+uv run python -m src.experiments.staged_trial --config configs/staged_trial_small_next_hour.yml --run-name staged_5m_small_next_hour
+uv run python -m src.experiments.staged_trial --config configs/staged_trial_small_triple_barrier.yml --run-name staged_5m_small_triple_barrier
 python runner.py configs/config.yml
 ```
