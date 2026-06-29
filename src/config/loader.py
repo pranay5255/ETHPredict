@@ -65,6 +65,7 @@ class Config:
     costs: Optional[Dict[str, Any]] = None
     alpha_backtest: Optional[Dict[str, Any]] = None
     search: Optional[Dict[str, Any]] = None
+    tracking: Optional[Dict[str, Any]] = None
 
 
 class ConfigManager:
@@ -186,6 +187,7 @@ class ConfigManager:
             costs=config.get("costs"),
             alpha_backtest=config.get("alpha_backtest"),
             search=config.get("search"),
+            tracking=config.get("tracking"),
         )
 
 
