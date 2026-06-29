@@ -59,5 +59,9 @@ def test_lighter_compare_smoke_end_to_end():
     assert set(result["targets"]) == {"triple_barrier", "next_hour_return"}
     for target_result in result["targets"].values():
         assert target_result["samples"] > 0
+        assert target_result["granularity"] == "5m"
+        assert target_result["sequence_length"] == 288
+        assert target_result["timeout_bars"] == 288
+        assert target_result["next_hour_horizon_bars"] == 12
         assert len(target_result["neural_trials"]) == 1
         assert set(target_result["baselines"]) == {"arima", "sarimax"}
