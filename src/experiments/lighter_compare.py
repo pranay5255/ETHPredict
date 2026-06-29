@@ -14,7 +14,7 @@ import yaml
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-from src.data.features_all import DataPreprocessor
+from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_for_duration
 from src.features.labeling import create_labels, sample_weights_from_labels
 from src.market_maker.glft import GLFTParams, GLFTQuoteCalculator
 from src.market_maker.inventory import InventoryBook
@@ -24,12 +24,20 @@ from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics, hierarchical_training_pipeline
 
 
+DEFAULT_SEQUENCE_LENGTH = bars_for_duration(DEFAULT_GRANULARITY, hours=24)
+DEFAULT_NEXT_HOUR_HORIZON = bars_for_duration(DEFAULT_GRANULARITY, hours=1)
+
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "data": {"dir": "data", "granularity": "1h"},
+    "data": {"dir": "data", "granularity": DEFAULT_GRANULARITY},
     "targets": ["triple_barrier", "next_hour_return"],
-    "labels": {"kappa": 2.0, "timeout": 24, "next_hour_horizon": 1},
+    "labels": {
+        "kappa": 2.0,
+        "timeout": DEFAULT_SEQUENCE_LENGTH,
+        "volatility_window": DEFAULT_SEQUENCE_LENGTH,
+        "next_hour_horizon": DEFAULT_NEXT_HOUR_HORIZON,
+    },
     "training": {
-        "sequence_length": 24,
+        "sequence_length": DEFAULT_SEQUENCE_LENGTH,
         "hidden_size": 16,
         "num_layers": 1,
         "dropout": 0.0,
@@ -50,7 +58,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "initial_capital": 100_000.0,
         "gamma": 0.5,
         "kappa": 0.1,
-        "dt": 1.0 / 24.0,
+        "dt": 1.0 / DEFAULT_SEQUENCE_LENGTH,
         "max_inventory": 10.0,
         "min_spread": 5.0,
         "max_drawdown": 0.2,
@@ -96,33 +104,44 @@ def _normalise_features(features_df: pd.DataFrame) -> torch.Tensor:
 
 def build_lighter_dataset(config: Dict[str, Any], target: str, *, smoke: bool) -> Dict[str, Any]:
     data_cfg = config["data"]
+    granularity = data_cfg.get("granularity", DEFAULT_GRANULARITY)
     training_cfg = _training_config(config, smoke)
     sequence_length = int(training_cfg["sequence_length"])
+    label_cfg = config["labels"]
+    timeout_bars = int(label_cfg.get("timeout", bars_for_duration(granularity, hours=24)))
+    volatility_window = int(label_cfg.get("volatility_window", timeout_bars))
+    next_hour_horizon = int(label_cfg.get("next_hour_horizon", bars_for_duration(granularity, hours=1)))
 
-    preprocessor = DataPreprocessor(data_dir=data_cfg["dir"], granularities=[data_cfg["granularity"]])
-    features_df, targets_df = preprocessor.get_base_dataset(granularity=data_cfg["granularity"])
+    preprocessor = DataPreprocessor(data_dir=data_cfg["dir"], granularities=[granularity])
+    features_df, targets_df = preprocessor.get_base_dataset(granularity=granularity)
 
     max_rows = int(config.get("smoke", {}).get("max_rows", 0)) if smoke else 0
     if max_rows:
-        min_rows = sequence_length + int(config["labels"].get("timeout", 24)) + 2
+        label_lookahead = timeout_bars if target == "triple_barrier" else next_hour_horizon
+        min_rows = sequence_length + label_lookahead + 2
         max_rows = max(max_rows, min_rows)
         features_df = features_df.tail(max_rows)
         targets_df = targets_df.tail(max_rows)
 
     prices = targets_df["close"].astype(float)
-    label_cfg = config["labels"]
     if target == "triple_barrier":
         labels = create_labels(
             pd.DataFrame({"close": prices}, index=prices.index),
             price_col="close",
             kappa=float(label_cfg["kappa"]),
-            timeout=int(label_cfg["timeout"]),
+            timeout=timeout_bars,
+            volatility_window=volatility_window,
         )
         y_ret = labels["y_ret"].astype(float)
         y_dir = labels["y_dir"].astype(int)
-        weights = sample_weights_from_labels(labels["y_dir"], labels["hit_times"], labels["returns"])
+        weights = sample_weights_from_labels(
+            labels["y_dir"],
+            labels["hit_times"],
+            labels["returns"],
+            volatility_window=volatility_window,
+        )
     elif target == "next_hour_return":
-        horizon = int(label_cfg.get("next_hour_horizon", 1))
+        horizon = next_hour_horizon
         y_ret = np.log(prices.shift(-horizon) / prices).replace([np.inf, -np.inf], np.nan).fillna(0.0)
         y_dir = np.sign(y_ret).astype(int)
         weights = pd.Series(1.0 / max(len(y_ret), 1), index=y_ret.index)
@@ -155,6 +174,10 @@ def build_lighter_dataset(config: Dict[str, Any], target: str, *, smoke: bool) -
         "sample_weights": torch.tensor(weight_values, dtype=torch.float32),
         "close": pd.Series(close_values, index=pd.Index(timestamps, name="timestamp")),
         "input_size": int(scaled_features.shape[1]),
+        "granularity": granularity,
+        "sequence_length": sequence_length,
+        "timeout_bars": timeout_bars,
+        "next_hour_horizon_bars": next_hour_horizon,
     }
 
 
@@ -212,7 +235,9 @@ def _glft_metrics(config: Dict[str, Any], closes: pd.Series, predicted_returns: 
     glft_cfg = config["glft"]
     clipped_returns = np.asarray(predicted_returns, dtype=float).reshape(-1)
     predicted_prices = closes * np.exp(np.clip(clipped_returns, -0.05, 0.05))
-    volatility = closes.pct_change().rolling(12, min_periods=2).std().fillna(closes.pct_change().std() or 0.001)
+    granularity = config.get("data", {}).get("granularity", DEFAULT_GRANULARITY)
+    one_hour_bars = bars_for_duration(granularity, hours=1)
+    volatility = closes.pct_change().rolling(one_hour_bars, min_periods=2).std().fillna(closes.pct_change().std() or 0.001)
 
     params = GLFTParams(
         gamma=float(glft_cfg["gamma"]),
@@ -340,6 +365,10 @@ def run_experiment(
         )
         output["targets"][target] = {
             "samples": int(dataset["X"].shape[0]),
+            "granularity": dataset["granularity"],
+            "sequence_length": dataset["sequence_length"],
+            "timeout_bars": dataset["timeout_bars"],
+            "next_hour_horizon_bars": dataset["next_hour_horizon_bars"],
             "neural_trials": neural_trials,
             "best_trial": finalists[0],
             "baselines": run_arima_sarimax_smoke(
