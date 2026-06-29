@@ -1,0 +1,66 @@
+data:
+  dir: data
+  granularity: 5m
+
+targets:
+  - triple_barrier
+
+labels:
+  kappa: 2.0
+  timeout: 288
+  volatility_window: 288
+  next_hour_horizon: 12
+
+training:
+  sequence_length: 288
+  hidden_size: 32
+  num_layers: 1
+  dropout: 0.1
+  batch_size: 64
+  epochs: 10
+  learning_rate: 0.001
+  neural_trials_per_target: 1
+
+glft:
+  initial_capital: 100000.0
+  gamma: 0.5
+  kappa: 0.1
+  dt: 0.0034722222
+  max_inventory: 10.0
+  min_spread: 5.0
+  max_drawdown: 0.2
+  seed: 42
+
+staged_trial:
+  artifact_root: artifacts/runs
+  run_name: staged_5m_small_triple_barrier
+  target: triple_barrier
+  selection_metric: metrics.validation.prediction.hit_ratio
+  selection_mode: max
+  split:
+    train_fraction: 0.6
+    validation_fraction: 0.2
+    test_fraction: 0.2
+    purge_bars: 12
+    embargo_bars: 288
+  stage1:
+    max_trials: 8
+    prediction_batch_size: 512
+    search_space:
+      hidden_size: [16, 32]
+      num_layers: [1, 2]
+      dropout: [0.0, 0.1]
+      learning_rate: [0.001]
+      batch_size: [64]
+      epochs: [10]
+  stage2:
+    max_rows: 2000
+    prediction_clip: 0.03
+    selection_metric: metrics.net_pnl
+    selection_mode: max
+    max_trials: 6
+    strategy_search:
+      gamma: [0.1, 0.3, 0.5]
+      kappa: [0.05, 0.1]
+      min_spread: [5.0]
+      max_inventory: [10.0]
