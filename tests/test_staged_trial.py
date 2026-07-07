@@ -3,13 +3,18 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 import yaml
 
 from src.experiments.meta_labeling_mvp import (
+    _run_trial_safe,
+    _trial_accounting,
     build_multi_horizon_lighter_dataset,
     purged_walk_forward_splits,
     run_alpha_backtest,
+    train_base_model,
 )
+from src.config.loader import expand_grid_search
 from src.experiments.staged_trial import run_staged_trial
 from src.features.labeling import meta_triple_barrier_labels
 
@@ -242,6 +247,119 @@ def test_alpha_backtest_has_explicit_cost_accounting():
     assert metrics["net_pnl"] == 9.0
 
 
+def test_event_sampling_can_filter_observation_times(tmp_path):
+    data_dir = tmp_path / "data"
+    _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=48, step=0.01)
+    config = _v2_config(data_dir, tmp_path / "runs")
+    config["training"]["sequence_length"] = 4
+    config["sampling"] = {"mode": "cusum", "cusum_threshold_bps": 1.0}
+
+    dataset = build_multi_horizon_lighter_dataset(config, smoke=False)
+
+    assert dataset["event_diagnostics"]["mode"] == "cusum"
+    assert 0 < dataset["event_diagnostics"]["events"] <= dataset["event_diagnostics"]["dense_observations"]
+    assert dataset["event_diagnostics"]["average_uniqueness"] > 0.0
+    assert dataset["event_diagnostics"]["effective_sample_size"] > 0.0
+    assert "event_time" in dataset["samples"].columns
+    assert set(dataset["samples"]["event_trigger_type"]).issubset({"positive_cusum", "negative_cusum"})
+
+    config["sampling"] = {"mode": "volatility_cusum", "volatility_multiplier": 0.1, "min_threshold_bps": 1.0}
+    vol_dataset = build_multi_horizon_lighter_dataset(config, smoke=False)
+    assert vol_dataset["event_diagnostics"]["mode"] == "volatility_cusum"
+
+
+def test_edge_triggered_sampling_uses_configured_feature_column(tmp_path):
+    data_dir = tmp_path / "data"
+    _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=48, step=0.01)
+    config = _v2_config(data_dir, tmp_path / "runs")
+    config["training"]["sequence_length"] = 4
+    config["sampling"] = {"mode": "edge_triggered", "edge_column": "log_return", "edge_threshold_bps": 1.0}
+
+    dataset = build_multi_horizon_lighter_dataset(config, smoke=False)
+
+    assert dataset["event_diagnostics"]["mode"] == "edge_triggered"
+    assert dataset["event_diagnostics"]["edge_column"] == "log_return"
+    assert set(dataset["samples"]["event_trigger_type"]) == {"edge_triggered"}
+
+
+def test_explicit_v2_search_trials_keep_ids_and_overrides(tmp_path):
+    config = _v2_config(tmp_path / "data", tmp_path / "runs")
+    config["search"] = {
+        "mode": "grid",
+        "max_trials": 2,
+        "trials": [
+            {"id": "normal", "overrides": {"alpha_backtest.meta_threshold": 0.4}},
+            {"id": "skip_case", "overrides": {"trial.skip": True, "trial.skip_reason": "fixture skip"}},
+            {"id": "ignored", "overrides": {}},
+        ],
+    }
+
+    specs = expand_grid_search(config)
+
+    assert [spec["trial_id"] for spec in specs] == ["normal", "skip_case"]
+    assert specs[0]["config"]["alpha_backtest"]["meta_threshold"] == 0.4
+    assert specs[1]["config"]["trial"]["skip"] is True
+
+
+def test_skipped_v2_trial_writes_manifest_and_accounting(tmp_path):
+    config = _v2_config(tmp_path / "data", tmp_path / "runs")
+    spec = {
+        "trial_index": 0,
+        "trial_id": "skip_case",
+        "overrides": {"trial.skip": True},
+        "config": {**config, "trial": {"skip": True, "skip_reason": "fixture skip"}},
+    }
+
+    manifest = _run_trial_safe(spec, tmp_path / "runs" / "skip_trial", smoke=False, device=torch.device("cpu"))
+
+    assert manifest["status"] == "skipped"
+    assert manifest["skip_reason"] == "fixture skip"
+    assert Path(manifest["manifest_path"]).exists()
+    accounting = _trial_accounting([manifest], {"min_validation_trades": 1}, config)
+    assert accounting["counts"]["skipped"] == 1
+    assert accounting["counts"]["no_trade"] == 0
+    assert accounting["counts"]["low_trade"] == 0
+
+
+def test_failed_v2_trial_writes_manifest_with_reason(tmp_path):
+    data_dir = tmp_path / "data"
+    _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=48, step=0.01)
+    config = _v2_config(data_dir, tmp_path / "runs")
+    config["training"]["sequence_length"] = 4
+    config["sampling"] = {"mode": "edge_triggered", "edge_column": "missing_edge", "edge_threshold_bps": 1.0}
+    spec = {"trial_index": 0, "trial_id": "bad_sampling", "overrides": {}, "config": config}
+
+    manifest = _run_trial_safe(spec, tmp_path / "runs" / "safe_trial", smoke=False, device=torch.device("cpu"))
+
+    assert manifest["status"] == "failed"
+    assert manifest["skip_reason"]
+    assert manifest["error_type"] == "ValueError"
+    assert "missing_edge" in manifest["reason"]
+    assert Path(manifest["manifest_path"]).exists()
+
+    accounting = _trial_accounting([manifest], {"min_validation_trades": 1}, config)
+    assert accounting["counts"]["failed"] == 1
+    assert accounting["counts"]["no_trade"] == 0
+    assert accounting["counts"]["low_trade"] == 0
+
+
+def test_base_model_scaler_is_fit_on_train_indices_only(tmp_path):
+    data_dir = tmp_path / "data"
+    _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=48, step=0.002)
+    config = _v2_config(data_dir, tmp_path / "runs")
+    config["training"]["sequence_length"] = 4
+    dataset = build_multi_horizon_lighter_dataset(config, smoke=False)
+    train_indices = np.arange(0, min(12, int(dataset["X"].shape[0])), dtype=int)
+
+    model, history = train_base_model(dataset, train_indices, config, torch.device("cpu"))
+
+    expected_mean = dataset["X"][train_indices].mean(dim=(0, 1), keepdim=True)
+    full_mean = dataset["X"].mean(dim=(0, 1), keepdim=True)
+    assert torch.allclose(model.feature_mean, expected_mean)
+    assert not torch.allclose(model.feature_mean, full_mean)
+    assert history["preprocessing"]["fit_scope"] == "train_indices_only"
+
+
 def test_v2_staged_trial_runs_meta_labeling_alpha_smoke(tmp_path):
     data_dir = tmp_path / "data"
     _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=96, step=0.002)
@@ -254,3 +372,18 @@ def test_v2_staged_trial_runs_meta_labeling_alpha_smoke(tmp_path):
     assert result["best_trial"]["trial_id"] == "grid_000"
     assert Path(result["best_trial_manifest_path"]).exists()
     assert Path(result["best_trial"]["artifact_paths"]["test_candidates"]).exists()
+    assert result["raw_data"]["files"][0]["sha256"]
+    assert result["run_identity"]["resolved_config_hash"]
+    assert result["trial_accounting"]["trial_count"] == 1
+    assert result["selection"]["classification_best_trial_id"] == "grid_000"
+    assert result["selection"]["calibration_best_trial_id"] == "grid_000"
+    assert "classification_best" in result["trial_accounting"]["trials"][0]["selection_roles"]
+    assert "calibration_best" in result["trial_accounting"]["trials"][0]["selection_roles"]
+
+    trial_manifest = json.loads(Path(result["best_trial_manifest_path"]).read_text(encoding="utf-8"))
+    assert trial_manifest["split_manifest_hash"]
+    assert trial_manifest["final_test_evaluation"]["count"] >= 1
+    assert trial_manifest["dataset"]["feature_manifest"]["columns"]
+    assert trial_manifest["dataset"]["event_diagnostics"]["mode"] == "dense"
+    assert trial_manifest["dataset"]["bar_clock_diagnostics"]["serial_correlation"]
+    assert trial_manifest["dataset"]["side_data_manifest"]["status"] == "disabled"
