@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import pickle
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import warnings
 
 import numpy as np
@@ -66,6 +66,20 @@ LIGHTER_FEATURE_COLUMNS = [
     "parkinson_vol",
 ]
 
+FEATURE_FAMILY_COLUMNS: Dict[str, List[str]] = {
+    "ohlcv": ["open", "high", "low", "close", "volume", "quote_asset_volume"],
+    "returns": ["price_return", "log_return", "volume_change", "quote_volume_change", "dollar_volume", "high_low_range", "close_open_return"],
+    "realized_volatility": ["return_vol_1bar", "return_vol_24h", "return_vol_7d", "parkinson_vol"],
+    "volume": ["volume_zscore_24h"],
+    "fracdiff": ["fracdiff_close"],
+    "entropy": ["return_entropy_24h", "return_entropy_7d"],
+    "event_flags": ["cusum_flag"],
+    "structural_break": ["sadf_flag"],
+    "volatility_regime": ["vol_regime"],
+}
+
+DEFAULT_FEATURE_FAMILIES = list(FEATURE_FAMILY_COLUMNS)
+
 
 def bars_for_duration(granularity: str, *, hours: float) -> int:
     """Return the number of bars needed to preserve a wall-clock duration."""
@@ -87,6 +101,134 @@ def _safe_pct_change(series: pd.Series) -> pd.Series:
 def _safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
     denominator = denominator.replace(0, np.nan)
     return (numerator / denominator).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+def _unique_columns(columns: Sequence[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for column in columns:
+        if column not in seen:
+            seen.add(column)
+            out.append(column)
+    return out
+
+
+def feature_columns_for_families(include: Optional[Sequence[str]]) -> List[str]:
+    families = list(include or DEFAULT_FEATURE_FAMILIES)
+    columns: List[str] = []
+    for family in families:
+        if family in FEATURE_FAMILY_COLUMNS:
+            columns.extend(FEATURE_FAMILY_COLUMNS[family])
+        elif family in LIGHTER_FEATURE_COLUMNS:
+            columns.append(family)
+    return [column for column in _unique_columns(columns) if column in LIGHTER_FEATURE_COLUMNS]
+
+
+def _bar_threshold(bar_cfg: Mapping[str, Any], bar_type: str) -> float:
+    if bar_type == "volume":
+        return float(bar_cfg.get("threshold_volume", bar_cfg.get("threshold", 10_000.0)))
+    if bar_type == "dollar":
+        return float(bar_cfg.get("threshold_usd", bar_cfg.get("threshold", 10_000_000.0)))
+    if bar_type == "tick":
+        return float(bar_cfg.get("threshold_ticks", bar_cfg.get("threshold", 1000.0)))
+    return 0.0
+
+
+def construct_activity_bars(df: pd.DataFrame, *, bar_type: str, threshold: float) -> pd.DataFrame:
+    if bar_type not in {"tick", "volume", "dollar"}:
+        raise ValueError(f"Unsupported activity bar type: {bar_type}")
+    if threshold <= 0:
+        raise ValueError(f"Activity bar threshold must be positive, got {threshold}")
+    ordered = df.sort_values("timestamp").reset_index(drop=True).copy()
+    if bar_type == "tick":
+        metric = pd.Series(1.0, index=ordered.index)
+    elif bar_type == "volume":
+        metric = _clean_numeric(ordered["volume"])
+    else:
+        metric = _clean_numeric(ordered["close"]) * _clean_numeric(ordered["volume"])
+
+    group_ids: List[int] = []
+    running = 0.0
+    group = 0
+    for value in metric.to_numpy(dtype=float):
+        group_ids.append(group)
+        running += max(float(value), 0.0)
+        if running >= threshold:
+            group += 1
+            running = 0.0
+
+    grouped = ordered.groupby(group_ids, sort=True)
+    bars = grouped.agg(
+        open_time=("open_time", "first"),
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+        close_time=("close_time", "last"),
+        quote_asset_volume=("quote_asset_volume", "sum"),
+        number_of_trades=("number_of_trades", "sum"),
+        taker_buy_base_asset_volume=("taker_buy_base_asset_volume", "sum"),
+        taker_buy_quote_asset_volume=("taker_buy_quote_asset_volume", "sum"),
+        ignore=("ignore", "last"),
+        timestamp=("timestamp", "last"),
+    )
+    return bars.reset_index(drop=True)
+
+
+def bar_coverage_report(df: pd.DataFrame, *, granularity: str, bar_type: str, source_rows: int) -> Dict[str, Any]:
+    if df.empty:
+        return {"granularity": granularity, "bar_type": bar_type, "rows": 0, "source_rows": int(source_rows), "coverage_ratio": 0.0}
+    timestamps = pd.to_datetime(df["timestamp"])
+    deltas = timestamps.sort_values().diff().dropna()
+    return {
+        "granularity": granularity,
+        "bar_type": bar_type,
+        "rows": int(len(df)),
+        "source_rows": int(source_rows),
+        "coverage_ratio": float(len(df) / max(source_rows, 1)),
+        "start_timestamp": timestamps.min(),
+        "end_timestamp": timestamps.max(),
+        "monotonic_timestamp": bool(timestamps.is_monotonic_increasing),
+        "duplicate_timestamps": int(timestamps.duplicated().sum()),
+        "median_interval_seconds": float(deltas.median().total_seconds()) if len(deltas) else 0.0,
+        "max_interval_seconds": float(deltas.max().total_seconds()) if len(deltas) else 0.0,
+    }
+
+
+def join_side_data_asof(
+    base: pd.DataFrame,
+    side: pd.DataFrame,
+    *,
+    columns: Sequence[str],
+    tolerance: Optional[pd.Timedelta] = None,
+    prefix: str = "",
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    if "timestamp" not in base.columns or "timestamp" not in side.columns:
+        raise ValueError("base and side data must include timestamp columns")
+    left = base.sort_values("timestamp").copy()
+    right_columns = ["timestamp", *[column for column in columns if column in side.columns]]
+    right = side[right_columns].sort_values("timestamp").copy()
+    renamed = {column: f"{prefix}{column}" for column in right_columns if column != "timestamp" and prefix}
+    right = right.rename(columns=renamed)
+    joined = pd.merge_asof(left, right, on="timestamp", direction="backward", tolerance=tolerance)
+    value_columns = [renamed.get(column, column) for column in columns if column in side.columns]
+    coverage = {column: float(joined[column].notna().mean()) if column in joined.columns and len(joined) else 0.0 for column in value_columns}
+    report = {
+        "rows": int(len(joined)),
+        "side_rows": int(len(side)),
+        "columns": value_columns,
+        "coverage": coverage,
+        "min_coverage": min(coverage.values()) if coverage else 0.0,
+        "tolerance_seconds": float(tolerance.total_seconds()) if tolerance is not None else None,
+    }
+    return joined, report
+
+
+def validate_side_data_coverage(report: Mapping[str, Any], *, min_coverage: float) -> None:
+    observed = float(report.get("min_coverage", 0.0))
+    if observed < float(min_coverage):
+        raise ValueError(f"Side-data coverage {observed:.3f} is below required threshold {float(min_coverage):.3f}")
 
 
 def sample_bars(df: pd.DataFrame, bar_type: str) -> pd.DataFrame:
@@ -136,10 +278,16 @@ class DataPreprocessor:
         data_dir: str = "data",
         include_santiment: bool = False,
         granularities: Optional[Sequence[str]] = None,
+        feature_config: Optional[Mapping[str, Any]] = None,
+        bar_config: Optional[Mapping[str, Any]] = None,
     ):
         self.data_dir = Path(data_dir)
         self.granularities = list(granularities or [DEFAULT_GRANULARITY])
         self.include_santiment = include_santiment
+        self.feature_config = dict(feature_config or {})
+        self.bar_config = dict(bar_config or {})
+        self._last_bar_reports: Dict[str, Dict[str, Any]] = {}
+        self._last_fracdiff: Dict[str, Any] = {}
 
     def feature_window_bars(self, granularity: str) -> Dict[str, int]:
         return {
@@ -169,7 +317,20 @@ class DataPreprocessor:
                     print(f"Warning: Could not load {csv_path}: {exc}")
             if frames:
                 price = pd.concat(frames, ignore_index=True)
-                price = price.drop_duplicates(subset="timestamp").sort_values("timestamp")
+                source_rows = len(price)
+                price = price.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
+                bar_type = str(self.bar_config.get("type", self.bar_config.get("bar_type", "time"))).lower()
+                if bar_type != "time":
+                    threshold = _bar_threshold(self.bar_config, bar_type)
+                    price = construct_activity_bars(price, bar_type=bar_type, threshold=threshold)
+                report = bar_coverage_report(price, granularity=granularity, bar_type=bar_type, source_rows=source_rows)
+                min_rows = int(self.bar_config.get("min_rows", 1) or 1)
+                if int(report["rows"]) < min_rows:
+                    raise ValueError(
+                        f"Insufficient {bar_type} bar coverage for {granularity}: "
+                        f"rows={report['rows']}, min_rows={min_rows}"
+                    )
+                self._last_bar_reports[granularity] = report
                 data[granularity] = price.reset_index(drop=True)
         return data
 
@@ -185,6 +346,46 @@ class DataPreprocessor:
         for idx in range(len(weights) - 1, len(series)):
             output.iloc[idx] = np.dot(weights, series.iloc[idx - len(weights) + 1 : idx + 1])
         return output
+
+    def fracdiff_fixed_width(self, series: pd.Series, d: float, thres: float = 0.01) -> pd.Series:
+        weights = [1.0]
+        k = 1
+        while k < len(series):
+            weight = -weights[-1] * (d - k + 1) / k
+            if abs(weight) < thres:
+                break
+            weights.append(weight)
+            k += 1
+        weights_arr = np.array(weights[::-1])
+        width = len(weights_arr)
+        output = series.copy() * np.nan
+        for idx in range(width - 1, len(series)):
+            window = series.iloc[idx - width + 1 : idx + 1]
+            output.iloc[idx] = float(np.dot(weights_arr, window))
+        return output
+
+    def fracdiff_diagnostics(self, source: pd.Series, diffed: pd.Series, *, mode: str, order: float, threshold: float) -> Dict[str, Any]:
+        clean = pd.DataFrame({"source": source, "diffed": diffed}).replace([np.inf, -np.inf], np.nan).dropna()
+        pvalue: Optional[float] = None
+        memory_correlation: Optional[float] = None
+        if len(clean) >= 25:
+            try:
+                _, pvalue, *_ = adfuller(clean["diffed"])
+                memory_correlation = float(clean["source"].corr(clean["diffed"]))
+            except Exception:
+                pvalue = None
+                memory_correlation = None
+        return {
+            "mode": mode,
+            "order": float(order),
+            "threshold": float(threshold),
+            "rows": int(len(diffed)),
+            "valid_rows": int(diffed.notna().sum()),
+            "nan_rows": int(diffed.isna().sum()),
+            "adf_pvalue": pvalue,
+            "memory_correlation": memory_correlation,
+            "implementation_note": "AFML-inspired fixed-width fracdiff proxy" if mode in {"fixed_width", "fixed-width"} else "AFML-inspired expanding-window fracdiff proxy",
+        }
 
     def find_optimal_d(self, series: pd.Series, max_d: float = 1.0, corr_threshold: float = 0.97) -> float:
         best_d = 0.0
@@ -278,8 +479,27 @@ class DataPreprocessor:
         volume_std = merged["volume"].rolling(window_24h).std().replace(0, np.nan)
         merged["volume_zscore_24h"] = ((merged["volume"] - volume_mean) / volume_std).replace([np.inf, -np.inf], np.nan).fillna(0)
 
-        close_d = self.find_optimal_d(merged["close"])
-        merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d)
+        frac_cfg = self.feature_config.get("fracdiff", {}) if isinstance(self.feature_config.get("fracdiff"), dict) else {}
+        has_configured_order = "frac_diff_order" in self.feature_config or "order" in frac_cfg
+        frac_mode = str(self.feature_config.get("frac_diff_mode", frac_cfg.get("mode", "fixed" if has_configured_order else "auto"))).lower()
+        frac_threshold = float(self.feature_config.get("frac_diff_threshold", frac_cfg.get("threshold", 0.01)))
+        close_d = float(self.feature_config.get("frac_diff_order", frac_cfg.get("order", 0.0)))
+        if frac_mode == "auto":
+            close_d = self.find_optimal_d(merged["close"])
+            merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d, thres=frac_threshold)
+        elif frac_mode in {"fixed_width", "fixed-width"}:
+            merged["fracdiff_close"] = self.fracdiff_fixed_width(merged["close"], close_d, thres=frac_threshold)
+        elif frac_mode in {"none", "disabled"}:
+            merged["fracdiff_close"] = 0.0
+        else:
+            merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d, thres=frac_threshold)
+        self._last_fracdiff = self.fracdiff_diagnostics(
+            merged["close"],
+            merged["fracdiff_close"],
+            mode=frac_mode,
+            order=close_d,
+            threshold=frac_threshold,
+        )
         merged["return_entropy_24h"] = self.compute_entropy(merged["log_return"], window_24h)
         merged["return_entropy_7d"] = self.compute_entropy(merged["log_return"], window_7d)
         merged["cusum_flag"] = self.cusum_flag(merged["log_return"])
@@ -333,7 +553,24 @@ class DataPreprocessor:
         return self._dataset_for_granularity(granularity)
 
     def get_feature_cols(self) -> List[str]:
-        return list(LIGHTER_FEATURE_COLUMNS)
+        include = self.feature_config.get("include")
+        return feature_columns_for_families(include if isinstance(include, list) else None)
+
+    def feature_manifest(self) -> Dict[str, Any]:
+        include = self.feature_config.get("include")
+        families = include if isinstance(include, list) else DEFAULT_FEATURE_FAMILIES
+        return {
+            "families": list(families),
+            "columns": self.get_feature_cols(),
+            "fracdiff": dict(self._last_fracdiff),
+            "transform_notes": {
+                "cusum_flag": "Dense-sample feature only; observation-time CUSUM sampling is controlled by sampling.mode.",
+                "sadf_flag": "Computationally simplified structural-break proxy, not a full SADF research implementation.",
+            },
+        }
+
+    def bar_manifest(self) -> Dict[str, Any]:
+        return {"config": dict(self.bar_config), "coverage": dict(self._last_bar_reports)}
 
 
 def save_numpy_arrays(X, y, out_dir: Path, prefix: str):
