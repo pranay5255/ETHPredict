@@ -8,9 +8,13 @@ meta-labels, and directional alpha backtesting.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
 import json
 import math
 import platform
+import subprocess
+import traceback
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +33,7 @@ from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_fo
 from src.features.labeling import meta_triple_barrier_labels
 from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics
-from src.utils.trackio_logging import log_trackio_run
+from src.utils.trackio_logging import enforce_trackio_policy, log_trackio_run
 
 
 class MultiHorizonLSTM(nn.Module):
@@ -147,6 +151,110 @@ def _write_yaml(path: Path, payload: Mapping[str, Any]) -> Path:
     return path
 
 
+def _stable_hash(payload: Any) -> str:
+    encoded = json.dumps(_json_ready(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _command_output(args: Sequence[str]) -> Optional[str]:
+    try:
+        result = subprocess.run(args, check=False, capture_output=True, text=True)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _git_manifest() -> Dict[str, Any]:
+    status = _command_output(["git", "status", "--short"])
+    critical = []
+    for line in (status or "").splitlines():
+        path = line[3:] if len(line) > 3 else line
+        if path.startswith(("configs/", "src/", "tests/", "context/", "TASKS.md")):
+            critical.append({"status": line[:2].strip(), "path": path})
+    return {
+        "commit": _command_output(["git", "rev-parse", "HEAD"]),
+        "dirty": bool(status),
+        "status_short": status or "",
+        "critical_untracked_or_modified": critical,
+    }
+
+
+def _dependency_manifest() -> Dict[str, Any]:
+    packages = ["numpy", "pandas", "torch", "pyarrow", "scikit-learn", "trackio", "PyYAML"]
+    versions: Dict[str, Optional[str]] = {}
+    for package in packages:
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = None
+    return versions
+
+
+def _raw_data_manifest(config: Mapping[str, Any]) -> Dict[str, Any]:
+    data_cfg = config.get("data", {}) or {}
+    granularity = data_cfg.get("granularity", data_cfg.get("lighter", {}).get("resolution", DEFAULT_GRANULARITY))
+    raw_dir = Path(data_cfg.get("dir", "data")) / "raw"
+    files = sorted(raw_dir.glob(f"ETHUSDT-{granularity}-lighter-*.csv"))
+    return {
+        "raw_dir": raw_dir,
+        "granularity": granularity,
+        "files": [
+            {"path": path, "bytes": path.stat().st_size, "sha256": _sha256_path(path)}
+            for path in files
+        ],
+    }
+
+
+def _device_manifest(device: torch.device) -> Dict[str, Any]:
+    return {
+        "requested": str(device),
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_device_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
+        "cuda_device_name": torch.cuda.get_device_name(device) if device.type == "cuda" and torch.cuda.is_available() else None,
+    }
+
+
+def _config_identity(config: Mapping[str, Any], config_path: Path) -> Dict[str, Any]:
+    raw = _load_yaml(config_path) if config_path.exists() else {}
+    return {
+        "resolved_config_path": config_path,
+        "resolved_config_hash": _stable_hash(config),
+        "source_config_hash": _stable_hash(raw),
+    }
+
+
+def _record_final_test_evaluation(config: Mapping[str, Any], run_dir: Path, *, trial_id: str, split_hash: str, smoke: bool) -> Dict[str, Any]:
+    guard_cfg = ((config.get("research", {}) or {}).get("final_test_guard", {}) or {})
+    spec_hash = _stable_hash({"config": config, "split_hash": split_hash})
+    ledger_path = run_dir.parent / "_final_test_reuse_ledger.json"
+    ledger: Dict[str, Any] = {}
+    if ledger_path.exists():
+        try:
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            ledger = {}
+    record = dict(ledger.get(spec_hash, {}))
+    count = int(record.get("count", 0)) + 1
+    blocked = bool(guard_cfg.get("do_not_reuse_test", config.get("do_not_reuse_test", False))) and count > 1 and not smoke
+    record.update({"count": count, "last_trial_id": trial_id, "last_run_dir": str(run_dir), "split_hash": split_hash})
+    ledger[spec_hash] = record
+    ledger_path.write_text(json.dumps(ledger, indent=2, sort_keys=True), encoding="utf-8")
+    payload = {"spec_hash": spec_hash, "count": count, "ledger_path": ledger_path, "blocked": blocked}
+    if blocked:
+        raise RuntimeError(f"Final test set reuse blocked for research spec {spec_hash}; ledger count={count}")
+    return payload
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         out = float(value)
@@ -183,6 +291,8 @@ def _environment_manifest() -> Dict[str, Any]:
         "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "pandas": pd.__version__,
         "numpy": np.__version__,
+        "git": _git_manifest(),
+        "dependencies": _dependency_manifest(),
     }
 
 
@@ -247,6 +357,149 @@ def _granularity_timedelta(granularity: str, bars: int = 1) -> pd.Timedelta:
     return pd.Timedelta(minutes=5 * max(1, int(bars)))
 
 
+def _sampling_config(config: Mapping[str, Any]) -> Dict[str, Any]:
+    raw = config.get("sampling", config.get("events", {})) if isinstance(config, Mapping) else {}
+    return dict(raw or {})
+
+
+def _distribution_summary(series: pd.Series) -> Dict[str, Any]:
+    clean = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if clean.empty:
+        return {"count": 0}
+    return {
+        "count": int(len(clean)),
+        "mean": float(clean.mean()),
+        "std": float(clean.std(ddof=0)),
+        "p05": float(clean.quantile(0.05)),
+        "p50": float(clean.quantile(0.50)),
+        "p95": float(clean.quantile(0.95)),
+    }
+
+
+def _span_uniqueness(indices: Sequence[int], horizon_bars: int) -> Dict[str, float]:
+    spans = [(int(idx), int(idx) + max(1, int(horizon_bars))) for idx in indices]
+    if not spans:
+        return {"average_uniqueness": 0.0, "effective_sample_size": 0.0}
+    start = min(left for left, _ in spans)
+    end = max(right for _, right in spans)
+    concurrency = np.zeros(end - start + 1, dtype=float)
+    for left, right in spans:
+        concurrency[left - start : right - start + 1] += 1.0
+    uniqueness = []
+    for left, right in spans:
+        active = concurrency[left - start : right - start + 1]
+        uniqueness.append(float(np.mean(1.0 / np.maximum(active, 1.0))))
+    return {
+        "average_uniqueness": float(np.mean(uniqueness)),
+        "effective_sample_size": float(np.sum(uniqueness)),
+    }
+
+
+def _bar_clock_diagnostics(
+    features_df: pd.DataFrame,
+    log_returns: pd.Series,
+    realized_vol: pd.Series,
+    y_dir_array: np.ndarray,
+    horizons: Sequence[Tuple[str, int]],
+) -> Dict[str, Any]:
+    missingness = {
+        str(column): float(value)
+        for column, value in features_df.isna().mean().sort_values(ascending=False).head(25).items()
+        if float(value) > 0.0
+    }
+    return {
+        "missingness_top": missingness,
+        "serial_correlation": {
+            "lag_1_log_return": _safe_float(log_returns.autocorr(lag=1), 0.0),
+            "lag_12_log_return": _safe_float(log_returns.autocorr(lag=min(12, max(1, len(log_returns) - 1))), 0.0),
+        },
+        "realized_volatility_distribution": _distribution_summary(realized_vol),
+        "log_return_distribution": _distribution_summary(log_returns),
+        "label_balance": {
+            name: float(y_dir_array[:, idx].mean()) if len(y_dir_array) else 0.0
+            for idx, (name, _) in enumerate(horizons)
+        },
+    }
+
+
+def _select_event_indices(
+    log_returns: pd.Series,
+    realized_vol: pd.Series,
+    features_df: pd.DataFrame,
+    dense_indices: Sequence[int],
+    config: Mapping[str, Any],
+) -> Tuple[List[int], Dict[int, Dict[str, Any]], Dict[str, Any]]:
+    sampling = _sampling_config(config)
+    mode = str(sampling.get("mode", "dense")).lower()
+    dense = [int(idx) for idx in dense_indices]
+    if mode in {"dense", "rolling"}:
+        metadata = {idx: {"event_time_index": idx, "trigger_type": "dense", "trigger_threshold": 0.0, "reference_volatility": float(realized_vol.iloc[idx])} for idx in dense}
+        return dense, metadata, {"mode": "dense", "dense_observations": len(dense), "events": len(dense), "event_rate": 1.0}
+    if mode in {"model_edge", "edge", "edge_triggered"}:
+        edge_column = str(sampling.get("edge_column", "log_return"))
+        if edge_column not in features_df.columns:
+            raise ValueError(f"Edge-triggered observation sampling requires feature column {edge_column!r}")
+        threshold = float(sampling.get("edge_threshold_bps", sampling.get("threshold_bps", 10.0))) / 10_000.0
+        selected = [idx for idx in dense if abs(float(features_df.iloc[idx][edge_column])) >= threshold]
+        metadata = {
+            idx: {
+                "event_time_index": idx,
+                "trigger_type": "edge_triggered",
+                "trigger_threshold": float(threshold),
+                "reference_volatility": float(realized_vol.iloc[idx]),
+                "edge_column": edge_column,
+            }
+            for idx in selected
+        }
+        return selected, metadata, {
+            "mode": mode,
+            "dense_observations": len(dense),
+            "events": len(selected),
+            "event_rate": float(len(selected) / max(len(dense), 1)),
+            "edge_column": edge_column,
+            "edge_threshold_bps": float(threshold * 10_000.0),
+        }
+
+    fixed_threshold = float(sampling.get("threshold_bps", sampling.get("cusum_threshold_bps", 10.0))) / 10_000.0
+    vol_multiplier = float(sampling.get("volatility_multiplier", sampling.get("cusum_volatility_multiplier", 1.0)))
+    min_threshold = float(sampling.get("min_threshold_bps", 1.0)) / 10_000.0
+    selected: List[int] = []
+    metadata: Dict[int, Dict[str, Any]] = {}
+    s_pos = 0.0
+    s_neg = 0.0
+    dense_set = set(dense)
+    for idx in dense:
+        value = float(log_returns.iloc[idx])
+        s_pos = max(0.0, s_pos + value)
+        s_neg = min(0.0, s_neg + value)
+        ref_vol = float(realized_vol.iloc[idx])
+        threshold = max(min_threshold, ref_vol * vol_multiplier) if mode in {"volatility_cusum", "vol_scaled_cusum", "volatility-scaled-cusum"} else fixed_threshold
+        trigger = None
+        if s_pos > threshold:
+            trigger = "positive_cusum"
+        elif abs(s_neg) > threshold:
+            trigger = "negative_cusum"
+        if trigger and idx in dense_set:
+            selected.append(idx)
+            metadata[idx] = {
+                "event_time_index": idx,
+                "trigger_type": trigger,
+                "trigger_threshold": float(threshold),
+                "reference_volatility": ref_vol,
+            }
+            s_pos = 0.0
+            s_neg = 0.0
+    diagnostics = {
+        "mode": mode,
+        "dense_observations": len(dense),
+        "events": len(selected),
+        "event_rate": float(len(selected) / max(len(dense), 1)),
+        "threshold_bps": float(fixed_threshold * 10_000.0),
+        "volatility_multiplier": vol_multiplier,
+    }
+    return selected, metadata, diagnostics
+
+
 def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: bool = False) -> Dict[str, Any]:
     data_cfg = config.get("data", {})
     granularity = data_cfg.get("granularity", data_cfg.get("lighter", {}).get("resolution", DEFAULT_GRANULARITY))
@@ -257,7 +510,15 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     label_cfg = config.get("labels", {}).get("meta_triple_barrier", {})
     volatility_window = int(label_cfg.get("volatility_window", bars_for_duration(granularity, hours=24)))
 
-    preprocessor = DataPreprocessor(data_dir=data_cfg.get("dir", "data"), granularities=[granularity])
+    bar_cfg = dict(config.get("bars", {}) or data_cfg.get("bars", {}) or {})
+    if data_cfg.get("bar_type") is not None and "type" not in bar_cfg:
+        bar_cfg["type"] = data_cfg.get("bar_type")
+    preprocessor = DataPreprocessor(
+        data_dir=data_cfg.get("dir", "data"),
+        granularities=[granularity],
+        feature_config=config.get("features", {}) or {},
+        bar_config=bar_cfg,
+    )
     features_df, targets_df = preprocessor.get_base_dataset(granularity=granularity)
 
     if smoke:
@@ -280,15 +541,18 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     fill_vol = _safe_float(realized_vol.mean(), 0.001)
     realized_vol = realized_vol.fillna(fill_vol).clip(lower=1e-8)
 
-    scaled_features = _normalise_features(features_df)
+    raw_features = torch.tensor(features_df.to_numpy(dtype=float), dtype=torch.float32)
     X: List[torch.Tensor] = []
     y_ret: List[List[float]] = []
     y_dir: List[List[float]] = []
     sample_rows: List[Dict[str, Any]] = []
-    last_start = len(features_df) - sequence_length - max_horizon
-    for start in range(last_start):
-        label_idx = start + sequence_length
-        X.append(scaled_features[start:label_idx])
+    dense_label_indices = list(range(sequence_length, len(features_df) - max_horizon))
+    event_indices, event_metadata, event_diagnostics = _select_event_indices(log_returns, realized_vol, features_df, dense_label_indices, config)
+    if not event_indices:
+        raise ValueError(f"Sampling mode {event_diagnostics.get('mode')} produced no events")
+    for label_idx in event_indices:
+        start = label_idx - sequence_length
+        X.append(raw_features[start:label_idx])
         ret_row: List[float] = []
         dir_row: List[float] = []
         entry = float(prices.iloc[label_idx])
@@ -311,6 +575,11 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
                 "volume": float(feature_row.get("volume", 0.0)),
                 "realized_vol": float(realized_vol.iloc[label_idx]),
                 "vol_regime": float(feature_row.get("vol_regime", 0.0)),
+                "event_trigger_type": event_metadata.get(label_idx, {}).get("trigger_type", "unknown"),
+                "event_trigger_threshold": event_metadata.get(label_idx, {}).get("trigger_threshold", 0.0),
+                "event_reference_volatility": event_metadata.get(label_idx, {}).get("reference_volatility", float(realized_vol.iloc[label_idx])),
+                "event_time": prices.index[label_idx],
+                "source_bar_index": label_idx,
             }
         )
 
@@ -323,6 +592,14 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     price_path = price_path.reset_index(drop=True)
 
     sample_weights = torch.full((len(X),), 1.0 / max(len(X), 1), dtype=torch.float32)
+    y_dir_array = np.asarray(y_dir, dtype=float) if y_dir else np.empty((0, len(horizons)))
+    event_diagnostics = dict(event_diagnostics)
+    event_diagnostics["class_balance"] = {
+        name: float(y_dir_array[:, idx].mean()) if len(y_dir_array) else 0.0
+        for idx, (name, _) in enumerate(horizons)
+    }
+    event_diagnostics.update(_span_uniqueness(event_indices, max_horizon))
+    bar_clock_diagnostics = _bar_clock_diagnostics(features_df, log_returns, realized_vol, y_dir_array, horizons)
     return {
         "target": "multi_horizon",
         "X": torch.stack(X),
@@ -332,7 +609,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         "samples": pd.DataFrame(sample_rows),
         "price_path": price_path,
         "close": pd.Series([row["close"] for row in sample_rows], index=pd.Index([row["timestamp"] for row in sample_rows], name="timestamp")),
-        "input_size": int(scaled_features.shape[1]),
+        "input_size": int(raw_features.shape[1]),
         "granularity": granularity,
         "sequence_length": sequence_length,
         "horizon_names": [name for name, _ in horizons],
@@ -340,6 +617,11 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         "max_horizon_bars": max_horizon,
         "feature_columns": preprocessor.get_feature_cols(),
         "feature_window_bars": preprocessor.feature_window_bars(granularity),
+        "feature_manifest": preprocessor.feature_manifest(),
+        "bar_manifest": preprocessor.bar_manifest(),
+        "event_diagnostics": event_diagnostics,
+        "bar_clock_diagnostics": bar_clock_diagnostics,
+        "side_data_manifest": {"enabled_groups": [], "coverage": {}, "status": "disabled"},
     }
 
 
@@ -393,6 +675,9 @@ def _subset(dataset: Mapping[str, Any], indices: np.ndarray) -> Tuple[torch.Tens
 def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Mapping[str, Any], device: torch.device) -> Tuple[MultiHorizonLSTM, Dict[str, Any]]:
     X, y_ret, y_dir, weights = _subset(dataset, indices)
     X = X.to(device)
+    feature_mean = X.mean(dim=(0, 1), keepdim=True)
+    feature_std = X.std(dim=(0, 1), keepdim=True, unbiased=False) + 1e-8
+    X = (X - feature_mean) / feature_std
     y_ret = y_ret.to(device)
     y_dir = y_dir.to(device)
     weights = weights.to(device)
@@ -438,7 +723,18 @@ def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Ma
             total += float(weighted.detach().cpu())
             batches += 1
         losses.append(total / max(batches, 1))
-    return model, {"training_losses": losses, "final_loss": losses[-1] if losses else 0.0}
+    model.feature_mean = feature_mean.detach().cpu()
+    model.feature_std = feature_std.detach().cpu()
+    return model, {
+        "training_losses": losses,
+        "final_loss": losses[-1] if losses else 0.0,
+        "preprocessing": {
+            "scaler": "standard",
+            "fit_scope": "train_indices_only",
+            "mean_shape": list(feature_mean.shape),
+            "std_shape": list(feature_std.shape),
+        },
+    }
 
 
 def predict_base_model(model: MultiHorizonLSTM, dataset: Mapping[str, Any], indices: np.ndarray, device: torch.device, batch_size: int = 512) -> pd.DataFrame:
@@ -446,9 +742,14 @@ def predict_base_model(model: MultiHorizonLSTM, dataset: Mapping[str, Any], indi
     pred_returns: List[torch.Tensor] = []
     pred_probs: List[torch.Tensor] = []
     model.eval()
+    feature_mean = getattr(model, "feature_mean", torch.zeros((1, 1, int(dataset["input_size"]))))
+    feature_std = getattr(model, "feature_std", torch.ones((1, 1, int(dataset["input_size"]))))
+    feature_mean = feature_mean.to(device)
+    feature_std = feature_std.to(device)
     with torch.no_grad():
         for start in range(0, len(X), batch_size):
             batch = X[start : start + batch_size].to(device)
+            batch = (batch - feature_mean) / feature_std
             ret, logits = model(batch)
             pred_returns.append(ret.detach().cpu())
             pred_probs.append(torch.sigmoid(logits).detach().cpu())
@@ -901,6 +1202,11 @@ def _write_stage0(dataset: Mapping[str, Any], run_dir: Path) -> Dict[str, Any]:
         "horizons": dataset["horizon_bars"],
         "feature_columns": dataset["feature_columns"],
         "feature_window_bars": dataset["feature_window_bars"],
+        "feature_manifest": dataset.get("feature_manifest", {}),
+        "bar_manifest": dataset.get("bar_manifest", {}),
+        "event_diagnostics": dataset.get("event_diagnostics", {}),
+        "bar_clock_diagnostics": dataset.get("bar_clock_diagnostics", {}),
+        "side_data_manifest": dataset.get("side_data_manifest", {}),
         "input_size": int(dataset["input_size"]),
         "samples": int(dataset["X"].shape[0]),
         "X_shape": list(dataset["X"].shape),
@@ -923,7 +1229,10 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
 
     dataset = build_multi_horizon_lighter_dataset(config, smoke=smoke)
     splits = purged_walk_forward_splits(int(dataset["X"].shape[0]), config.get("validation", {}))
-    _write_json(trial_dir / "split_manifest.json", _split_manifest(dataset, splits))
+    split_manifest = _split_manifest(dataset, splits)
+    split_manifest_path = trial_dir / "split_manifest.json"
+    _write_json(split_manifest_path, split_manifest)
+    split_manifest_hash = _stable_hash(split_manifest)
 
     oof_frames: List[pd.DataFrame] = []
     fold_manifests: List[Dict[str, Any]] = []
@@ -956,6 +1265,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
     test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
     diagnostics = {"validation": alpha_diagnostics(oof_candidates, config), "test": alpha_diagnostics(test_candidates, config)}
+    final_test_evaluation = _record_final_test_evaluation(config, run_dir, trial_id=trial_id, split_hash=split_manifest_hash, smoke=smoke)
 
     model_path = trial_dir / "base_multi_horizon_lstm.pt"
     torch.save(final_model.state_dict(), model_path)
@@ -980,6 +1290,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
         "stage": "mvp_trial",
         "trial_index": int(spec["trial_index"]),
         "trial_id": trial_id,
+        "status": "completed",
         "overrides": spec.get("overrides", {}),
         "config": config,
         "dataset": {
@@ -987,18 +1298,102 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
             "input_size": int(dataset["input_size"]),
             "sequence_length": int(dataset["sequence_length"]),
             "horizons": dataset["horizon_bars"],
+            "feature_manifest": dataset.get("feature_manifest", {}),
+            "bar_manifest": dataset.get("bar_manifest", {}),
+            "event_diagnostics": dataset.get("event_diagnostics", {}),
+            "bar_clock_diagnostics": dataset.get("bar_clock_diagnostics", {}),
+            "side_data_manifest": dataset.get("side_data_manifest", {}),
         },
+        "run_identity": {"config_hash": _stable_hash(config), "git": _git_manifest(), "dependencies": _dependency_manifest()},
+        "raw_data": _raw_data_manifest(config),
+        "split_manifest_path": split_manifest_path,
+        "split_manifest_hash": split_manifest_hash,
+        "final_test_evaluation": final_test_evaluation,
         "folds": fold_manifests,
         "final_training_history": final_history,
         "meta_labeler": meta_model.manifest(),
         "model_path": model_path,
         "artifact_paths": paths,
         "metrics": {"validation": validation_metrics, "test": test_metrics},
+        "diagnostics": diagnostics,
         "diagnostics_path": paths["diagnostics"],
         "manifest_path": trial_dir / "manifest.json",
     }
     _write_json(trial_dir / "manifest.json", manifest)
     return manifest
+
+
+def _failed_trial_manifest(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, error: BaseException) -> Dict[str, Any]:
+    config = dict(spec.get("config", {}))
+    if smoke:
+        config = apply_smoke_overrides(config)
+    trial_id = str(spec.get("trial_id", "unknown"))
+    trial_dir = run_dir / "trials" / trial_id
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "stage": "mvp_trial",
+        "trial_index": int(spec.get("trial_index", -1)),
+        "trial_id": trial_id,
+        "status": "failed",
+        "reason": str(error),
+        "skip_reason": str(error),
+        "error_type": type(error).__name__,
+        "traceback": traceback.format_exc(),
+        "overrides": spec.get("overrides", {}),
+        "config": config,
+        "run_identity": {"config_hash": _stable_hash(config), "git": _git_manifest(), "dependencies": _dependency_manifest()},
+        "raw_data": _raw_data_manifest(config),
+        "artifact_paths": {},
+        "metrics": {"validation": {}, "test": {}},
+        "manifest_path": trial_dir / "manifest.json",
+    }
+    _write_json(trial_dir / "manifest.json", manifest)
+    return manifest
+
+
+def _skipped_trial_manifest(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, reason: str) -> Dict[str, Any]:
+    config = dict(spec.get("config", {}))
+    if smoke:
+        config = apply_smoke_overrides(config)
+    trial_id = str(spec.get("trial_id", "unknown"))
+    trial_dir = run_dir / "trials" / trial_id
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "stage": "mvp_trial",
+        "trial_index": int(spec.get("trial_index", -1)),
+        "trial_id": trial_id,
+        "status": "skipped",
+        "reason": reason,
+        "skip_reason": reason,
+        "overrides": spec.get("overrides", {}),
+        "config": config,
+        "run_identity": {"config_hash": _stable_hash(config), "git": _git_manifest(), "dependencies": _dependency_manifest()},
+        "raw_data": _raw_data_manifest(config),
+        "artifact_paths": {},
+        "metrics": {"validation": {}, "test": {}},
+        "manifest_path": trial_dir / "manifest.json",
+    }
+    _write_json(trial_dir / "manifest.json", manifest)
+    return manifest
+
+
+def _run_trial_safe(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, device: torch.device) -> Dict[str, Any]:
+    trial_cfg = (spec.get("config", {}) or {}).get("trial", {})
+    if isinstance(trial_cfg, Mapping) and bool(trial_cfg.get("skip", False)):
+        return _skipped_trial_manifest(
+            spec,
+            run_dir,
+            smoke=smoke,
+            reason=str(trial_cfg.get("skip_reason", "trial marked skipped by config")),
+        )
+    try:
+        return _run_one_trial(spec, run_dir, smoke=smoke, device=device)
+    except RuntimeError as exc:
+        if "Final test set reuse blocked" in str(exc):
+            raise
+        return _failed_trial_manifest(spec, run_dir, smoke=smoke, error=exc)
+    except Exception as exc:
+        return _failed_trial_manifest(spec, run_dir, smoke=smoke, error=exc)
 
 
 def _metric_value(payload: Mapping[str, Any], path: str) -> float:
@@ -1019,6 +1414,42 @@ def _rank_trials(trials: Sequence[Mapping[str, Any]], config: Mapping[str, Any])
 
 def _validation_trade_count(trial: Mapping[str, Any]) -> float:
     return _metric_value(trial, "metrics.validation.trades")
+
+
+def _mean_validation_direction_accuracy(trial: Mapping[str, Any]) -> float:
+    values: List[float] = []
+    for fold in trial.get("folds", []) or []:
+        fold_metrics = fold.get("metrics", {}) if isinstance(fold, Mapping) else {}
+        for horizon_metrics in (fold_metrics or {}).values():
+            if not isinstance(horizon_metrics, Mapping):
+                continue
+            direction = horizon_metrics.get("direction", {})
+            value = _safe_float(direction.get("accuracy"), math.nan) if isinstance(direction, Mapping) else math.nan
+            if math.isfinite(value):
+                values.append(value)
+    return float(np.mean(values)) if values else -math.inf
+
+
+def _trial_calibration_error(trial: Mapping[str, Any]) -> float:
+    diagnostics = trial.get("diagnostics", {}) if isinstance(trial.get("diagnostics"), Mapping) else {}
+    validation = diagnostics.get("validation", {}) if isinstance(diagnostics, Mapping) else {}
+    if not validation:
+        return math.inf
+    return _expected_calibration_error(validation)
+
+
+def _selection_roles_for_trial(trial: Mapping[str, Any], selection: Mapping[str, Any]) -> List[str]:
+    trial_id = trial.get("trial_id")
+    roles: List[str] = []
+    if trial_id == selection.get("raw_best_trial_id"):
+        roles.append("raw_best")
+    if trial_id == selection.get("best_trading_trial_id"):
+        roles.append("trade_qualified_best")
+    if trial_id == selection.get("classification_best_trial_id"):
+        roles.append("classification_best")
+    if trial_id == selection.get("calibration_best_trial_id"):
+        roles.append("calibration_best")
+    return roles or ["not_selected"]
 
 
 def select_trials_with_trade_floor(
@@ -1042,6 +1473,10 @@ def select_trials_with_trade_floor(
         best_trading["selected_by"] = {"metric": metric, "mode": mode, "value": _metric_value(best_trading, metric)}
         best_trading["selection_status"] = "trade_qualified"
 
+    classification_best = max(trials, key=_mean_validation_direction_accuracy)
+    calibration_candidates = [trial for trial in trials if math.isfinite(_trial_calibration_error(trial))]
+    calibration_best = min(calibration_candidates, key=_trial_calibration_error) if calibration_candidates else None
+
     selection = {
         "metric": metric,
         "mode": mode,
@@ -1050,9 +1485,130 @@ def select_trials_with_trade_floor(
         "raw_best_validation_trades": raw_best_trades,
         "raw_best_selection_status": raw_best["selection_status"],
         "best_trading_trial_id": best_trading.get("trial_id") if best_trading else None,
+        "classification_best_trial_id": classification_best.get("trial_id") if classification_best else None,
+        "classification_best_score": _mean_validation_direction_accuracy(classification_best) if classification_best else None,
+        "calibration_best_trial_id": calibration_best.get("trial_id") if calibration_best else None,
+        "calibration_best_ece": _trial_calibration_error(calibration_best) if calibration_best else None,
         "qualified_trial_count": int(len(qualified)),
     }
     return raw_best, best_trading, selection
+
+
+def _expected_calibration_error(diagnostics: Mapping[str, Any]) -> float:
+    buckets = diagnostics.get("probability_buckets", []) if isinstance(diagnostics, Mapping) else []
+    total = sum(int(row.get("count", 0) or 0) for row in buckets)
+    if total <= 0:
+        return 0.0
+    error = 0.0
+    for row in buckets:
+        count = int(row.get("count", 0) or 0)
+        error += count * abs(_safe_float(row.get("mean_meta_prob")) - _safe_float(row.get("observed_success_rate")))
+    return float(error / total)
+
+
+def _trial_failure_modes(
+    trial: Mapping[str, Any],
+    *,
+    selection_role: str,
+    min_trades: int,
+    config: Mapping[str, Any],
+) -> Dict[str, Any]:
+    thresholds = ((config.get("tracking", {}) or {}).get("failure_mode_thresholds", {}) or {})
+    initial_capital = _safe_float((config.get("alpha_backtest", {}) or {}).get("initial_capital"), 1.0)
+    validation = trial.get("metrics", {}).get("validation", {}) if isinstance(trial.get("metrics"), Mapping) else {}
+    test = trial.get("metrics", {}).get("test", {}) if isinstance(trial.get("metrics"), Mapping) else {}
+    diagnostics = trial.get("diagnostics", {}) if isinstance(trial.get("diagnostics"), Mapping) else {}
+    validation_trades = _safe_float(validation.get("trades"))
+    test_trades = _safe_float(test.get("trades"))
+    validation_turnover = _safe_float(validation.get("turnover"))
+    validation_fees = _safe_float(validation.get("fees"))
+    validation_gross = _safe_float(validation.get("gross_pnl"))
+    validation_net = _safe_float(validation.get("net_pnl"))
+    test_net = _safe_float(test.get("net_pnl"))
+    calibration_error = _expected_calibration_error(diagnostics.get("validation", {}))
+    is_winner = selection_role in {"raw_best", "trade_qualified_best", "classification_best", "calibration_best", "raw_best_trade_qualified", "trade_qualified_selected", "abstention", "trade_qualified"}
+    cost_ratio = abs(validation_fees) / max(abs(validation_gross), 1e-8)
+    flags = {
+        "no_trade_winner": bool(is_winner and validation_trades <= 0),
+        "low_trade_winner": bool(is_winner and validation_trades < min_trades),
+        "poor_calibration": bool(calibration_error > float(thresholds.get("poor_calibration_ece", 0.20))),
+        "high_turnover": bool(validation_turnover > initial_capital * float(thresholds.get("high_turnover_multiple", 10.0))),
+        "unstable_validation_test": bool((validation_net > 0.0 and test_net < 0.0) or (validation_net < 0.0 and test_net > 0.0)),
+        "high_cost_sensitivity": bool(cost_ratio > float(thresholds.get("high_cost_to_gross_ratio", 2.0))),
+        "concentrated_pnl": bool(validation_trades > 0 and _safe_float(validation.get("coverage")) < float(thresholds.get("min_trade_coverage", 0.01))),
+    }
+    return {
+        "flags": flags,
+        "metrics": {
+            "validation_trades": validation_trades,
+            "test_trades": test_trades,
+            "validation_turnover": validation_turnover,
+            "validation_net_pnl": validation_net,
+            "test_net_pnl": test_net,
+            "calibration_error": calibration_error,
+            "cost_to_gross_ratio": cost_ratio,
+        },
+    }
+
+
+def _trial_accounting(trials: Sequence[Mapping[str, Any]], selection: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any]:
+    min_trades = int(selection.get("min_validation_trades", 0) or 0)
+    rows: List[Dict[str, Any]] = []
+    counts = {"completed": 0, "failed": 0, "skipped": 0, "no_trade": 0, "low_trade": 0, "trade_qualified": 0}
+    flag_counts = {
+        "no_trade_winner": 0,
+        "low_trade_winner": 0,
+        "poor_calibration": 0,
+        "high_turnover": 0,
+        "unstable_validation_test": 0,
+        "high_cost_sensitivity": 0,
+        "concentrated_pnl": 0,
+    }
+    for trial in trials:
+        validation_trades = _metric_value(trial, "metrics.validation.trades")
+        test_trades = _metric_value(trial, "metrics.test.trades")
+        validation_trades = validation_trades if math.isfinite(validation_trades) else 0.0
+        test_trades = test_trades if math.isfinite(test_trades) else 0.0
+        status = str(trial.get("status", "completed"))
+        trial_id = trial.get("trial_id")
+        selection_roles = _selection_roles_for_trial(trial, selection)
+        selection_role = selection_roles[0]
+        failure_modes = _trial_failure_modes(trial, selection_role=selection_role, min_trades=min_trades, config=config)
+        for flag, value in failure_modes["flags"].items():
+            flag_counts[flag] = flag_counts.get(flag, 0) + int(bool(value))
+        counts[status] = counts.get(status, 0) + 1
+        if status == "completed":
+            if validation_trades <= 0:
+                counts["no_trade"] += 1
+            if validation_trades < min_trades:
+                counts["low_trade"] += 1
+            else:
+                counts["trade_qualified"] += 1
+        rows.append(
+            {
+                "trial_id": trial_id,
+                "status": status,
+                "validation_trades": validation_trades,
+                "test_trades": test_trades,
+                "selection_role": selection_role,
+                "selection_roles": selection_roles,
+                "skip_reason": trial.get("skip_reason"),
+                "artifact_paths": trial.get("artifact_paths", {}),
+                "split_manifest_hash": trial.get("split_manifest_hash"),
+                "failure_modes": failure_modes,
+            }
+        )
+    return {
+        "trial_count": int(len(trials)),
+        "counts": counts,
+        "trials": rows,
+        "failure_modes": {
+            "no_trade_trials": counts.get("no_trade", 0),
+            "low_trade_trials": counts.get("low_trade", 0),
+            "qualified_trial_count": counts.get("trade_qualified", 0),
+            **flag_counts,
+        },
+    }
 
 
 def _selection_status_for_trial(
@@ -1070,6 +1626,13 @@ def _selection_status_for_trial(
         return str(raw_best.get("selection_status", "raw_best"))
     if trial_id == best_trading_id:
         return "trade_qualified_selected"
+    roles = _selection_roles_for_trial(trial, selection)
+    if "classification_best" in roles and "calibration_best" in roles:
+        return "classification_calibration_best"
+    if "classification_best" in roles:
+        return "classification_best"
+    if "calibration_best" in roles:
+        return "calibration_best"
     min_trades = int(selection.get("min_validation_trades", 0) or 0)
     if _validation_trade_count(trial) >= min_trades:
         return "trade_qualified_not_selected"
@@ -1084,6 +1647,7 @@ def _log_meta_label_trial_trackio(
     selection_status: str,
     raw_best: Mapping[str, Any],
     best_trading: Optional[Mapping[str, Any]],
+    selection: Mapping[str, Any],
     smoke: bool,
 ) -> None:
     trial_id = str(trial.get("trial_id", "unknown"))
@@ -1092,6 +1656,7 @@ def _log_meta_label_trial_trackio(
     artifacts = {key: value for key, value in artifacts.items() if value is not None}
     is_raw_best = trial_id == raw_best.get("trial_id")
     is_best_trading = bool(best_trading and trial_id == best_trading.get("trial_id"))
+    selection_roles = _selection_roles_for_trial(trial, selection)
 
     run_config = {
         "stage": "meta_label_mvp_trial",
@@ -1099,6 +1664,7 @@ def _log_meta_label_trial_trackio(
         "trial_id": trial_id,
         "trial_index": trial.get("trial_index"),
         "selection_status": selection_status,
+        "selection_roles": selection_roles,
         "is_raw_best": is_raw_best,
         "is_best_trade_qualified": is_best_trading,
         "smoke": smoke,
@@ -1106,13 +1672,34 @@ def _log_meta_label_trial_trackio(
         "manifest_path": trial.get("manifest_path"),
         "diagnostics_path": trial.get("diagnostics_path"),
         "model_path": trial.get("model_path"),
+        "trial_status": trial.get("status", "completed"),
+        "split_manifest_hash": trial.get("split_manifest_hash"),
+        "final_test_evaluation": trial.get("final_test_evaluation"),
+        "feature_manifest": (trial.get("dataset", {}) or {}).get("feature_manifest"),
+        "bar_manifest": (trial.get("dataset", {}) or {}).get("bar_manifest"),
+        "event_diagnostics": (trial.get("dataset", {}) or {}).get("event_diagnostics"),
+        "bar_clock_diagnostics": (trial.get("dataset", {}) or {}).get("bar_clock_diagnostics"),
+        "side_data_manifest": (trial.get("dataset", {}) or {}).get("side_data_manifest"),
     }
     metrics = {
         "alpha": trial.get("metrics", {}) or {},
         "selection": {
             "is_raw_best": is_raw_best,
             "is_best_trade_qualified": is_best_trading,
+            "is_classification_best": "classification_best" in selection_roles,
+            "is_calibration_best": "calibration_best" in selection_roles,
             "trade_qualified": selection_status in {"raw_best_trade_qualified", "trade_qualified_selected", "trade_qualified_not_selected"},
+        },
+        "trial_accounting": {
+            "final_test_reuse_count": (trial.get("final_test_evaluation", {}) or {}).get("count", 0),
+            "validation_trades": _metric_value(trial, "metrics.validation.trades"),
+            "test_trades": _metric_value(trial, "metrics.test.trades"),
+            "failure_modes": _trial_failure_modes(
+                trial,
+                selection_role=selection_status,
+                min_trades=int((config.get("pipeline", {}) or {}).get("min_validation_trades", 1) or 0),
+                config=config,
+            ),
         },
     }
     log_trackio_run(
@@ -1122,7 +1709,7 @@ def _log_meta_label_trial_trackio(
         run_config=run_config,
         metrics=metrics,
         artifacts=artifacts,
-        status="success",
+        status=str(trial.get("status", "completed")),
     )
 
 
@@ -1151,6 +1738,8 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
         "best_trading_trial_id": selection.get("best_trading_trial_id"),
         "qualified_trial_count": selection.get("qualified_trial_count"),
         "report_paths": report_paths,
+        "run_identity": report.get("run_identity"),
+        "trial_accounting_path": report.get("trial_accounting_path"),
     }
     metrics = {
         "selection": selection,
@@ -1161,6 +1750,7 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
             "smoke": smoke,
             "has_trade_qualified_trial": bool(report.get("best_trading_trial")),
         },
+        "trial_accounting": report.get("trial_accounting", {}) or {},
     }
     log_trackio_run(
         config,
@@ -1233,14 +1823,30 @@ def run_meta_labeling_mvp(
     if artifact_root:
         config_for_search.setdefault("pipeline", {})["artifact_root"] = str(artifact_root)
 
+    enforce_trackio_policy(config_for_search, smoke=smoke)
+
     pipeline = config_for_search.get("pipeline", {}) or {}
     run_id = _run_id(str(pipeline.get("run_name", "meta_label_mvp")))
     run_dir = Path(pipeline.get("artifact_root", "artifacts/runs")) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     resolved_device = resolve_training_device(device, allow_cpu=allow_cpu)
+    trial_specs = expand_grid_search(config_for_search)
 
-    _write_yaml(run_dir / "resolved_config.yml", config_for_search)
-    _write_json(run_dir / "environment.json", _environment_manifest())
+    resolved_config_path = _write_yaml(run_dir / "resolved_config.yml", config_for_search)
+    environment_path = _write_json(run_dir / "environment.json", _environment_manifest())
+    run_identity = {
+        **_config_identity(config_for_search, resolved_config_path),
+        "source_config_path": config_path,
+        "run_id": run_id,
+        "run_dir": run_dir,
+        "raw_data": _raw_data_manifest(config_for_search),
+        "git": _git_manifest(),
+        "dependencies": _dependency_manifest(),
+        "device": _device_manifest(resolved_device),
+        "trial_count": len(trial_specs),
+        "environment_path": environment_path,
+    }
+    _write_json(run_dir / "run_identity.json", run_identity)
     stage0_dataset = build_multi_horizon_lighter_dataset(config_for_search, smoke=smoke)
     stage0 = _write_stage0(stage0_dataset, run_dir)
     benchmark_summary = None
@@ -1257,15 +1863,22 @@ def run_meta_labeling_mvp(
             run_id=run_id,
         )
 
-    trial_specs = expand_grid_search(config_for_search)
-    trial_manifests = [_run_one_trial(spec, run_dir, smoke=smoke, device=resolved_device) for spec in trial_specs]
-    best, best_trading, selection = select_trials_with_trade_floor(trial_manifests, config_for_search)
+    trial_manifests = [_run_trial_safe(spec, run_dir, smoke=smoke, device=resolved_device) for spec in trial_specs]
+    completed_trials = [trial for trial in trial_manifests if trial.get("status") == "completed"]
+    if not completed_trials:
+        trial_accounting = _trial_accounting(trial_manifests, {"min_validation_trades": int((config_for_search.get("pipeline", {}) or {}).get("min_validation_trades", 1) or 0)}, config_for_search)
+        _write_json(run_dir / "trial_accounting.json", trial_accounting)
+        raise RuntimeError("All v2 trial specs failed; see trial manifests for failure reasons")
+    best, best_trading, selection = select_trials_with_trade_floor(completed_trials, config_for_search)
     best_path = run_dir / "best_trial_manifest.json"
     _write_json(best_path, best)
     best_trading_path = None
     if best_trading is not None:
         best_trading_path = run_dir / "best_trade_qualified_trial_manifest.json"
         _write_json(best_trading_path, best_trading)
+
+    trial_accounting = _trial_accounting(trial_manifests, selection, config_for_search)
+    trial_accounting_path = _write_json(run_dir / "trial_accounting.json", trial_accounting)
 
     for trial in trial_manifests:
         _log_meta_label_trial_trackio(
@@ -1275,6 +1888,7 @@ def run_meta_labeling_mvp(
             selection_status=_selection_status_for_trial(trial, best, best_trading, selection),
             raw_best=best,
             best_trading=best_trading,
+            selection=selection,
             smoke=smoke,
         )
 
@@ -1286,6 +1900,9 @@ def run_meta_labeling_mvp(
         "config_path": config_path,
         "smoke": smoke,
         "device": str(resolved_device),
+        "run_identity": run_identity,
+        "raw_data": run_identity["raw_data"],
+        "trial_count": len(trial_specs),
         "stage0": stage0,
         "benchmark": benchmark_summary,
         "trials": trial_manifests,
@@ -1294,6 +1911,8 @@ def run_meta_labeling_mvp(
         "best_trading_trial": best_trading,
         "best_trading_trial_manifest_path": best_trading_path,
         "selection": selection,
+        "trial_accounting": trial_accounting,
+        "trial_accounting_path": trial_accounting_path,
         "status": "success",
         "report_json_path": report_dir / "report.json",
         "report_markdown_path": report_dir / "report.md",
