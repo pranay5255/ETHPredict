@@ -3,10 +3,12 @@ import sys
 import types
 from datetime import datetime
 
+import pytest
+
 import numpy as np
 import pandas as pd
 
-from src.utils.trackio_logging import flatten_numeric, json_ready, log_trackio_run, trackio_enabled
+from src.utils.trackio_logging import enforce_trackio_policy, flatten_numeric, json_ready, log_trackio_run, trackio_enabled
 
 
 def test_flatten_numeric_keeps_only_finite_scalars():
@@ -104,3 +106,12 @@ def test_log_trackio_run_uses_config_flattens_metrics_and_finishes(monkeypatch, 
 
 def test_trackio_disabled_by_default():
     assert trackio_enabled({}) is False
+
+
+def test_trackio_policy_requires_tracking_for_non_smoke_runs():
+    with pytest.raises(RuntimeError, match="Trackio is required"):
+        enforce_trackio_policy({}, smoke=False)
+
+    enforce_trackio_policy({}, smoke=True)
+    enforce_trackio_policy({"tracking": {"trackio": {"enabled": True}}}, smoke=False)
+    enforce_trackio_policy({"tracking": {"trackio": {"allow_local_debug_without_trackio": True}}}, smoke=False)
