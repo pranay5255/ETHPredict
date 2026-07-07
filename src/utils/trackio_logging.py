@@ -21,6 +21,20 @@ def trackio_enabled(config: Mapping[str, Any]) -> bool:
     return bool(trackio_settings(config).get("enabled", False))
 
 
+def trackio_local_debug_override(config: Mapping[str, Any]) -> bool:
+    settings = trackio_settings(config)
+    return bool(settings.get("allow_local_debug_without_trackio", settings.get("local_debug", False)))
+
+
+def enforce_trackio_policy(config: Mapping[str, Any], *, smoke: bool = False) -> None:
+    if smoke or trackio_enabled(config) or trackio_local_debug_override(config):
+        return
+    raise RuntimeError(
+        "Trackio is required for non-smoke research runs. "
+        "Set tracking.trackio.enabled=true or tracking.trackio.allow_local_debug_without_trackio=true for explicit local debugging."
+    )
+
+
 def json_ready(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
