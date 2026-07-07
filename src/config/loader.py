@@ -242,9 +242,31 @@ def iter_grid_overrides(search: Mapping[str, Any]) -> List[Dict[str, Any]]:
 
 
 def expand_grid_search(config: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    """Expand ``search.spaces`` into trial configs using dotted override paths."""
+    """Expand explicit trials or ``search.spaces`` into trial configs."""
 
     search = config.get("search", {}) if isinstance(config, Mapping) else {}
+    explicit_trials = search.get("trials") if isinstance(search, Mapping) else None
+    if explicit_trials:
+        trials: List[Dict[str, Any]] = []
+        max_trials = search.get("max_trials")
+        for idx, raw_trial in enumerate(list(explicit_trials)):
+            if max_trials is not None and idx >= int(max_trials):
+                break
+            trial = raw_trial if isinstance(raw_trial, Mapping) else {}
+            overrides = trial.get("overrides", {})
+            if not isinstance(overrides, Mapping):
+                overrides = {}
+            trial_id = str(trial.get("id", f"grid_{idx:03d}"))
+            trials.append(
+                {
+                    "trial_index": idx,
+                    "trial_id": trial_id,
+                    "overrides": dict(overrides),
+                    "config": apply_dotted_overrides(config, overrides),
+                }
+            )
+        return trials
+
     trials: List[Dict[str, Any]] = []
     for idx, overrides in enumerate(iter_grid_overrides(search)):
         trials.append(
