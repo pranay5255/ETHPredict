@@ -29,6 +29,216 @@
 - [x] Add CUDA environment, one-batch neural stack, CPU baseline, and end-to-end smoke tests.
 - [x] Verify `uv run pytest`, `uv lock --check`, and the Lighter compare smoke command.
 
+## Active AFML Review GitHub Issue Plan
+
+Source critique: `context/afml_pipeline_review.md`.
+GitHub label set: `afml-review`, `priority:*`, and `area:*`.
+
+These issues turn the AFML critique into the active research-hardening roadmap. Work
+through them in dependency order. Do not use final test PnL as the discovery loop;
+select features, thresholds, policies, and trial winners on purged validation evidence
+before any final test evaluation.
+
+### Phase 0: Make Runs Auditable Before Expanding Research
+
+- [ ] [#24 Harden artifacts, manifests, and test-set reuse guards](https://github.com/pranay5255/ETHPredict/issues/24)
+  - Tackle first because later issues need immutable run identity.
+  - Add raw data hashes, resolved config hash, git commit, dirty state, critical untracked files, dependency metadata, device metadata, split manifest hashes, and trial counts to v2 run manifests.
+  - Add a final-test reuse guard and counter so selected test evaluations are visible and cannot be silently repeated under the same research spec.
+  - Add a frozen-rerun comparison command that checks manifests, split boundaries, trial counts, and metric variance.
+  - Done when a changed raw file or changed config is detected by manifest comparison.
+
+- [ ] [#23 Make Trackio experiment accounting mandatory for research runs](https://github.com/pranay5255/ETHPredict/issues/23)
+  - Make Trackio mandatory for non-smoke runs, while keeping an explicit local-debug override.
+  - Log all trial statuses: completed, failed, skipped, no-trade, low-trade, raw best, trade-qualified best, classification best, and calibration best.
+  - Ensure local artifacts contain the same critical accounting fields as Trackio.
+  - Build dashboard-ready failure-mode metrics: no-trade winners, poor calibration, high turnover, unstable ranking, high cost sensitivity, and concentrated PnL.
+  - Done when every non-smoke run can answer how many trials were attempted and why the selected trial won.
+
+### Phase 1: Fix Upstream Data Clock and Feature Validity
+
+- [ ] [#8 Add activity-driven bars and validated side-data joins](https://github.com/pranay5255/ETHPredict/issues/8)
+  - Keep current 5-minute time bars as the baseline.
+  - Add volume-bar and dollar-bar construction where Lighter source coverage is adequate.
+  - Add side-data joins for funding, mark basis, open interest, exchange volume, order-book, and trade-flow features only behind coverage and leakage gates.
+  - Emit bar-clock diagnostics before model training: missingness, serial correlation, volatility distribution, label balance, and source coverage.
+  - Done when a frozen downstream config can compare time bars against at least one validated activity-driven clock or fail with a clear coverage report.
+
+- [ ] [#9 Fix feature reproducibility and fold-local preprocessing](https://github.com/pranay5255/ETHPredict/issues/9)
+  - Make `features.include` control the active v2 feature matrix.
+  - Respect configured fractional differentiation order and add fixed-width fracdiff as the reproducible AFML-oriented mode.
+  - Move scaling into fold-local preprocessing so train windows fit scalers and validation/test windows only transform.
+  - Add feature-family manifests and leakage tests.
+  - Done when feature ablations are real, reproducible, and not using future distributional information.
+
+- [ ] [#10 Add event-based sampling and candidate-time separation](https://github.com/pranay5255/ETHPredict/issues/10)
+  - Separate ML observation sampling from later trade-candidate filtering.
+  - Add dense, CUSUM, volatility-scaled CUSUM, and edge-triggered event modes.
+  - Persist event metadata and report event rate, average uniqueness, effective sample size, and class balance.
+  - Done when dense rolling samples and event-triggered samples can run under the same downstream labels, models, and policy.
+
+### Phase 2: Build Label-Span Metadata, Weights, and Real Purging
+
+- [ ] [#14 Implement label-span uniqueness weights and effective sample diagnostics](https://github.com/pranay5255/ETHPredict/issues/14)
+  - Add start time, horizon end, realized `t1`, and span indices for base observations and meta-label candidates.
+  - Compute concurrency, average uniqueness, and effective sample size.
+  - Add weighting modes: uniform, horizon-span uniqueness, triple-barrier `t1` uniqueness, return magnitude, and combined uniqueness-by-return.
+  - Wire weights into base training, meta-label training, and relevant metrics.
+  - Done when every labeled row has enough span metadata to prove how much it overlaps other rows.
+
+- [ ] [#15 Purge and embargo by exact label spans, then add CPCV](https://github.com/pranay5255/ETHPredict/issues/15)
+  - Replace fixed purge gaps with exact label-span overlap checks.
+  - Keep the existing fixed-gap walk-forward mode as a baseline.
+  - Add embargo modes based on max horizon, sequence length plus horizon, realized `t1`, and volatility-adaptive gaps.
+  - Add purged k-fold plus CPCV or grouped scenario CV, then report validation-to-test rank stability.
+  - Done when split manifests prove that train rows do not overlap validation or test label spans.
+
+- [ ] [#13 Audit triple-barrier geometry and meta-label definitions](https://github.com/pranay5255/ETHPredict/issues/13)
+  - Make profit/stop kappa, symmetric versus asymmetric barriers, vertical success mode, and ambiguous OHLC ordering configurable.
+  - Persist label diagnostics for each candidate: side, entry, volatility, barriers, first touch, `t1`, realized return, net return, and ambiguity flag.
+  - Compare positive-net-at-vertical success against profit-take-only success.
+  - Report class balance, precision, recall, F1, calibration, trade coverage, and PnL.
+  - Done when every meta label can be reconstructed from artifact metadata.
+
+### Phase 3: Strengthen Forecasting, Training, and Meta Models
+
+- [ ] [#11 Expand base forecast calibration and edge-ranking diagnostics](https://github.com/pranay5255/ETHPredict/issues/11)
+  - Extend forecast reports beyond MAE/MSE/direction into calibration, rank correlation, and edge-bucket realized performance.
+  - Add forecast-to-candidate mapping variants: raw sign, probability sign, expected edge after costs, volatility-scaled edge, and horizon agreement.
+  - Keep zero-return and momentum baselines prominent.
+  - Done when forecast quality can be judged separately from trading PnL.
+
+- [ ] [#12 Add early stopping, uniqueness weighting, and ensemble diagnostics](https://github.com/pranay5255/ETHPredict/issues/12)
+  - Add purged-validation early stopping.
+  - Add seed ensembles with prediction dispersion and per-seed metrics.
+  - Integrate uniqueness weights from #14.
+  - Add simple non-neural baselines so LSTM complexity is justified by evidence.
+  - Done when model instability is visible before using a larger neural setup.
+
+- [ ] [#18 Calibrate and benchmark meta-labeler models](https://github.com/pranay5255/ETHPredict/issues/18)
+  - Add constant, logistic regression, calibrated tree ensemble, and MLP meta-labeler options.
+  - Add validation-only probability calibration and threshold sweep tables.
+  - Report precision, recall, F1, trade count, coverage, validation net PnL, and calibration error by threshold.
+  - Done when the selected meta model and threshold are chosen on validation evidence and are reproducible from artifacts.
+
+- [ ] [#22 Deepen forecast benchmark diagnostics and TimesFM parity](https://github.com/pranay5255/ETHPredict/issues/22)
+  - Route benchmark models through identical split, cost, candidate, meta-label, and backtest logic when trading comparison is enabled.
+  - Add TimesFM context, scaling, horizon mapping, skip reason, and failure metadata.
+  - Compare forecast-only ranking against trading ranking.
+  - Done when zero, momentum, LSTM, TimesFM, and future benchmark models share one auditable schema.
+
+### Phase 4: Stop Using Backtests as Feature and Trial Discovery
+
+- [ ] [#17 Add purged feature-importance and ablation reports](https://github.com/pranay5255/ETHPredict/issues/17)
+  - Add purged permutation importance for meta-labeler features using F1 and negative log loss.
+  - Add single-feature importance, grouped feature-family ablations, and random-noise controls.
+  - Report base forecaster and meta-labeler importance separately.
+  - Done when feature decisions can be made from purged validation importance and ablations before final test PnL.
+
+- [ ] [#16 Make hyperparameter search trial-aware and meta-label scored](https://github.com/pranay5255/ETHPredict/issues/16)
+  - Add deterministic grid, shuffled grid, random search, and log-uniform search.
+  - Add selectors for F1, negative log loss, calibration, edge-rank correlation, validation net PnL, and composite minimum-trade metrics.
+  - Record full search space, executed subset, trial count, skipped runs, failed runs, no-trade runs, and selection role.
+  - Done when trial selection can be audited without looking at final test PnL.
+
+### Phase 5: Upgrade Policy, Execution Assumptions, and Backtest Evidence
+
+- [ ] [#19 Add probability and concurrency-aware bet sizing](https://github.com/pranay5255/ETHPredict/issues/19)
+  - Add fixed, probability-scaled, edge-scaled, probability-times-edge, and concurrency-budgeted sizing.
+  - Track active bet concurrency across holding periods and horizons.
+  - Report turnover, exposure, PnL per turnover, return on execution costs, drawdown, and concentration.
+  - Done when fixed notional is only the baseline, not the final sizing assumption.
+
+- [ ] [#20 Upgrade dynamic cost and execution modeling](https://github.com/pranay5255/ETHPredict/issues/20)
+  - Add static, stressed, dynamic funding, dynamic spread, and dynamic slippage cost models.
+  - Align historical funding to candidate holding periods where coverage is valid.
+  - Add execution assumptions: taker, maker with fill haircut, hybrid, delayed entry, missed fills, and slippage stress.
+  - Done when candidate filtering, labels, and PnL all consume the same explicit cost model.
+
+- [ ] [#21 Add backtest statistics, PBO, PSR, DSR, and path dispersion](https://github.com/pranay5255/ETHPredict/issues/21)
+  - Add holding period, bet frequency, independent-bet proxy, HHI concentration, time under water, PnL per turnover, return on execution costs, and drawdown duration.
+  - Add PSR and DSR with explicit assumptions and trial-count inputs.
+  - Add PBO once CPCV or grouped scenario paths exist.
+  - Done when the backtest report distinguishes debugging evidence from alpha-claim-grade evidence.
+
+### AFML Backlog Verification Commands
+
+```bash
+gh api --method GET repos/pranay5255/ETHPredict/issues -f state=open -f labels=afml-review -f per_page=100 --paginate --jq ".[] | \"#\(.number) \(.title)\""
+uv run pytest tests/test_config.py tests/test_lighter_preprocessor.py tests/test_lighter_5m_labels.py tests/test_forecast_benchmark.py tests/test_staged_trial.py tests/test_trackio_logging.py
+python runner.py configs/config.yml
+```
+
+## AFML Experiment Follow-Up Issues
+
+Run these after their parent implementation issues are complete and after the required
+backtest/accounting prerequisites listed in each experiment issue body exist. The goal
+is to freeze everything except the implemented feature, run a controlled backtest, and
+keep or reject the feature based on validation-first evidence and AFML backtest stats.
+
+### Phase 0 Experiment Gate
+
+- [x] After #24, run [#25 Validate manifest reproducibility and test-set guard value](https://github.com/pranay5255/ETHPredict/issues/25).
+  - Proves frozen reruns, data-hash checks, config-hash checks, git dirty-state capture, and final-test reuse counters work before trusting later experiments.
+  - Evidence: `/tmp/ethpredict-afml-freeze/reports/manifest_diff.json` and `/tmp/ethpredict-afml-freeze/reports/reproducibility_report.md`; identical reruns passed, the changed-config control failed config equality while raw data and split hashes stayed fixed, and the final-test reuse counter reached 2 for the frozen baseline.
+- [x] After #23, run [#26 Audit Trackio trial accounting and failure-mode panels](https://github.com/pranay5255/ETHPredict/issues/26).
+  - Proves every attempted, skipped, failed, no-trade, low-trade, and selected trial is visible in Trackio and local artifacts.
+  - Evidence: `/tmp/ethpredict-afml-freeze/26_accounting_matrix_v3_20260707T202829Z/trial_accounting.json`, `/tmp/ethpredict-afml-freeze/reports/failure_mode_panels.json`, and `/tmp/ethpredict-afml-freeze/reports/trackio_parity_report.md`; counts covered 3 completed, 1 failed, 1 skipped, 1 no-trade, 2 low-trade, and 1 trade-qualified trial.
+
+### Phase 1 Data and Feature Experiments
+
+- [x] After #8, run [#27 Compare time, volume, dollar bars, and side-data joins](https://github.com/pranay5255/ETHPredict/issues/27).
+  - Freezes downstream settings and varies only bar clock or validated side-data groups.
+  - Evidence: `/tmp/ethpredict-afml-freeze/reports/bar_clock_comparison.json` and `/tmp/ethpredict-afml-freeze/reports/side_data_coverage_report.md`; time, volume, and dollar bar clocks ran on GPU, while side-data joins remained disabled pending validated historical coverage.
+- [x] After #9, run [#28 Measure feature-family, fracdiff, and scaler value](https://github.com/pranay5255/ETHPredict/issues/28).
+  - Freezes model, labels, split, costs, and policy while varying feature families, fracdiff mode, and scaler discipline.
+  - Evidence: `/tmp/ethpredict-afml-freeze/reports/feature_ablation_matrix.json`, `/tmp/ethpredict-afml-freeze/reports/fracdiff_diagnostics.json`, and `/tmp/ethpredict-afml-freeze/reports/scaler_leakage_report.md`; OHLCV-only, full-no-fracdiff, and fixed-width-fracdiff variants ran with fold-local scaler fitting.
+- [x] After #10, run [#29 Compare dense, CUSUM, volatility-CUSUM, and edge events](https://github.com/pranay5255/ETHPredict/issues/29).
+  - Freezes labels and policy while testing whether event sampling improves uniqueness, precision, turnover, and net PnL per trade.
+  - Evidence: `/tmp/ethpredict-afml-freeze/reports/event_sampling_comparison.json` and `/tmp/ethpredict-afml-freeze/reports/event_rate_report.md`; dense, CUSUM, volatility-CUSUM, and edge-triggered variants ran on GPU and showed higher uniqueness for event sampling, but the frozen 0.55 meta-threshold policy still produced no trades.
+
+### Phase 2 Label and Validation Experiments
+
+- [ ] After #14, run [#30 Compare uniform, uniqueness, return, and combined weights](https://github.com/pranay5255/ETHPredict/issues/30).
+  - Tests whether uniqueness and return-aware weights improve validation classification quality and OOS trading evidence.
+- [ ] After #15, run [#31 Compare fixed-gap, exact-span, purged k-fold, and CPCV validation](https://github.com/pranay5255/ETHPredict/issues/31).
+  - Tests whether exact-span purging and CPCV change trial ranking, path dispersion, or alpha credibility.
+- [ ] After #13, run [#32 Compare triple-barrier geometry and success definitions](https://github.com/pranay5255/ETHPredict/issues/32).
+  - Re-labels a frozen candidate set to compare barrier geometry, vertical success rules, and ambiguous OHLC handling.
+
+### Phase 3 Modeling Experiments
+
+- [ ] After #11, run [#33 Compare forecast calibration and candidate mapping value](https://github.com/pranay5255/ETHPredict/issues/33).
+  - Tests whether forecast calibration and edge-rank mappings improve candidate quality after costs.
+- [ ] After #12, run [#34 Compare early stopping, seed ensembles, weights, and baselines](https://github.com/pranay5255/ETHPredict/issues/34).
+  - Tests whether training discipline and simpler baselines beat the current single LSTM under the same split and policy.
+- [ ] After #18, run [#35 Compare meta-labeler models, calibration, and thresholds](https://github.com/pranay5255/ETHPredict/issues/35).
+  - Tests constant, logistic, calibrated tree, and MLP meta-labelers with validation-only threshold selection.
+- [ ] After #22, run [#36 Route benchmark forecasters through identical trading logic](https://github.com/pranay5255/ETHPredict/issues/36).
+  - Tests zero, momentum, LSTM, TimesFM, and future benchmark forecasters under one trading schema.
+
+### Phase 4 Research-Discipline Experiments
+
+- [ ] After #17, run [#37 Validate feature importance with purged ablations and noise controls](https://github.com/pranay5255/ETHPredict/issues/37).
+  - Confirms feature-importance output predicts ablation value and does not rank random noise as useful.
+- [ ] After #16, run [#38 Compare search modes and selection metrics under fixed trial budgets](https://github.com/pranay5255/ETHPredict/issues/38).
+  - Tests deterministic grid, shuffled grid, random search, log-uniform search, and classification-first selection metrics under equal budgets.
+
+### Phase 5 Execution and Backtest Evidence Experiments
+
+- [ ] After #19, run [#39 Compare fixed, probability, edge, and concurrency sizing](https://github.com/pranay5255/ETHPredict/issues/39).
+  - Tests whether variable sizing improves capital efficiency without amplifying poor calibration.
+- [ ] After #20, run [#40 Stress static, dynamic, maker, taker, and delayed execution costs](https://github.com/pranay5255/ETHPredict/issues/40).
+  - Tests whether strategy value survives dynamic funding, spread, slippage, maker/taker, delayed-entry, and missed-fill assumptions.
+- [ ] After #21, run [#41 Evaluate alpha claims with richer stats, DSR, PBO, and path dispersion](https://github.com/pranay5255/ETHPredict/issues/41).
+  - Uses the richer backtest module to decide whether an apparently profitable strategy is debugging-only, validation-promising, or alpha-claim-grade.
+
+### Experiment Backlog Verification Command
+
+```bash
+gh api --method GET repos/pranay5255/ETHPredict/issues -f state=open -f labels=afml-experiment -f per_page=100 --paginate --jq ".[] | \"#\(.number) \(.title)\""
+```
+
 ## Active Near-Term Tasks
 
 - [ ] Add `next_5m_return` and multi-horizon model outputs for 5m and 1h returns/direction.
