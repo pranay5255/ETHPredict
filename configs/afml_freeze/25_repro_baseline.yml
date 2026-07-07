@@ -1,0 +1,154 @@
+version: 2
+experiment:
+  id: afml_freeze_25_repro_baseline
+  name: ETHPredict hierarchical meta-labeling MVP
+  seed: 42
+  trials: 1
+data:
+  dir: data
+  granularity: 5m
+  sources:
+  - lighter
+  lighter:
+    base_url: https://mainnet.zklighter.elliot.ai
+    symbol: ETH
+    market_type: perp
+    market_id: 0
+    pipeline_symbol: ETHUSDT
+    resolution: 5m
+    funding_resolution: 1h
+    start_date: '2026-03-28'
+    end_date: '2026-06-28'
+    count_back: 500
+    request_pause_seconds: 0.1
+bars:
+  type: time
+  time_interval: 5m
+features:
+  frac_diff_order: 0.5
+  frac_diff_mode: fixed_width
+  frac_diff_threshold: 0.01
+  include:
+  - ohlcv
+  - returns
+  - realized_volatility
+  - volume
+  - fracdiff
+  - entropy
+  - event_flags
+  - structural_break
+  - volatility_regime
+targets:
+  horizons:
+    next_5m:
+      bars: 1
+    next_hour:
+      bars: 12
+validation:
+  method: purged_walk_forward
+  folds: 2
+  test_fraction: 0.2
+  purge_bars: 12
+  embargo_bars: 12
+sampling:
+  mode: dense
+  cusum_threshold_bps: 10.0
+  volatility_multiplier: 1.0
+  min_threshold_bps: 1.0
+research:
+  final_test_guard:
+    do_not_reuse_test: false
+labels:
+  meta_triple_barrier:
+    profit_kappa: 1.5
+    stop_kappa: 1.0
+    vertical_barriers:
+      next_5m: 1
+      next_hour: 12
+    volatility_window: 288
+    min_edge_bps: 5.0
+    cost_mode: configured
+model:
+  type: hierarchical_meta_labeling
+  base:
+    type: lstm
+    hidden_size: 16
+    num_layers: 1
+    dropout: 0.0
+  meta_labeler:
+    type: mlp
+    hidden_size: 16
+    num_layers: 1
+    dropout: 0.1
+    enabled: true
+  confidence_head:
+    enabled: false
+    report_as: event_confidence
+training:
+  sequence_length: 48
+  epochs: 1
+  batch_size: 512
+  learning_rate: 0.001
+  weight_decay: 1.0e-05
+  loss_weights:
+    return: 1.0
+    direction: 0.25
+  prediction_batch_size: 1024
+costs:
+  fee_bps: 4.0
+  spread_bps: 2.0
+  slippage_bps: 1.0
+  funding_bps_per_hour: 0.0
+alpha_backtest:
+  initial_capital: 100000.0
+  horizon: best
+  meta_threshold: 0.55
+  edge_threshold_bps: 5.0
+  position_sizing: fixed_notional
+  position_notional: 10000.0
+  max_position_notional: 10000.0
+  edge_safety_margin_bps: 0.0
+  cooldown_bars: 0
+  max_trades_per_day: 288
+benchmark:
+  enabled: false
+  models:
+  - zero_return
+  - momentum
+  - lstm
+  - timesfm
+  route_to_meta_backtest: true
+  timesfm:
+    enabled: true
+    checkpoint: google/timesfm-2.5-200m-pytorch
+    input_series: log_close
+    context_length: 1024
+    batch_size: 16
+tracking:
+  trackio:
+    enabled: true
+    project: ethpredict
+    auto_log_gpu: true
+    gpu_log_interval: 10.0
+    auto_log_cpu: false
+execution:
+  glft:
+    enabled: false
+pipeline:
+  artifact_root: /tmp/ethpredict-afml-freeze
+  run_name: afml_freeze_25_repro_baseline
+  selection_metric: metrics.validation.net_pnl
+  selection_mode: max
+  min_validation_trades: 1
+search:
+  mode: grid
+  max_trials: 1
+  spaces: {}
+smoke:
+  max_rows: 420
+  max_trials: 1
+  folds: 2
+  sequence_length: 24
+  epochs: 1
+  hidden_size: 8
+  batch_size: 16
