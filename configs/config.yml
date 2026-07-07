@@ -30,11 +30,17 @@ bars:
 
 features:
   frac_diff_order: 0.5
+  frac_diff_mode: fixed_width
+  frac_diff_threshold: 0.01
   include:
     - ohlcv
     - returns
     - realized_volatility
+    - volume
+    - fracdiff
     - entropy
+    - event_flags
+    - structural_break
     - volatility_regime
 
 targets:
@@ -50,6 +56,16 @@ validation:
   test_fraction: 0.2
   purge_bars: 12
   embargo_bars: 12
+
+sampling:
+  mode: dense
+  cusum_threshold_bps: 10.0
+  volatility_multiplier: 1.0
+  min_threshold_bps: 1.0
+
+research:
+  final_test_guard:
+    do_not_reuse_test: false
 
 labels:
   meta_triple_barrier:
