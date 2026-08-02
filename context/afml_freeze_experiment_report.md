@@ -1,5 +1,7 @@
 # AFML Freeze Experiment Report
 
+Update 2026-08-02: the original `/tmp/ethpredict-afml-freeze` artifacts referenced below were regenerated into `artifacts/afml_freeze_regen_20260802`. Use `context/afml_freeze_regen_20260802_report.md` as the current evidence summary for GitHub issues #25-#29.
+
 Generated from local GPU freeze runs for GitHub issues #25-#29. All experiment artifacts are under `/tmp/ethpredict-afml-freeze`; derived reports are under `/tmp/ethpredict-afml-freeze/reports`.
 
 ## Executive Result

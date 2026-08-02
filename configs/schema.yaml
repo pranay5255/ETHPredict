@@ -95,6 +95,21 @@ oneOf:
           embargo_bars:
             type: integer
             minimum: 0
+      sample_weights:
+        type: object
+        properties:
+          base_mode:
+            type: string
+            enum: [uniform, horizon_span_uniqueness, triple_barrier_t1_uniqueness, return_magnitude, combined_uniqueness_return]
+          meta_mode:
+            type: string
+            enum: [uniform, horizon_span_uniqueness, triple_barrier_t1_uniqueness, return_magnitude, combined_uniqueness_return]
+          normalize:
+            anyOf:
+              - type: string
+                enum: [sum_one, mean_one, none, raw, sum, unit_sum, mean, unit_mean]
+              - type: boolean
+
       labels:
         type: object
         required: [meta_triple_barrier]

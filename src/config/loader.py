@@ -66,6 +66,7 @@ class Config:
     alpha_backtest: Optional[Dict[str, Any]] = None
     search: Optional[Dict[str, Any]] = None
     tracking: Optional[Dict[str, Any]] = None
+    sample_weights: Optional[Dict[str, Any]] = None
 
 
 class ConfigManager:
@@ -188,6 +189,7 @@ class ConfigManager:
             alpha_backtest=config.get("alpha_backtest"),
             search=config.get("search"),
             tracking=config.get("tracking"),
+            sample_weights=config.get("sample_weights"),
         )
 
 

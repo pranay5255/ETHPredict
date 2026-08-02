@@ -63,6 +63,11 @@ sampling:
   volatility_multiplier: 1.0
   min_threshold_bps: 1.0
 
+sample_weights:
+  base_mode: uniform
+  meta_mode: uniform
+  normalize: sum_one
+
 research:
   final_test_guard:
     do_not_reuse_test: false

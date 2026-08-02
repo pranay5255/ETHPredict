@@ -17,6 +17,8 @@ def test_v2_config_validates_and_loads_active_sections():
     assert cfg.alpha_backtest["meta_threshold"] == 0.55
     assert cfg.tracking["trackio"]["project"] == "ethpredict"
     assert cfg.raw_config["tracking"]["trackio"]["auto_log_gpu"] is True
+    assert cfg.sample_weights["base_mode"] == "uniform"
+    assert cfg.sample_weights["meta_mode"] == "uniform"
 
 
 def test_legacy_config_is_preserved_with_deprecation_header():

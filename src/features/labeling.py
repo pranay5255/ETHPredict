@@ -1,7 +1,9 @@
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional
+from typing import Any, Tuple, Optional
 import torch
+
+from src.features.sample_weights import build_label_spans
 
 
 def triple_barrier_labels(
@@ -384,7 +386,18 @@ def meta_triple_barrier_labels(
 
     if signals.empty:
         out = signals.copy()
-        out["meta_label"] = pd.Series(dtype="float64")
+        for column in [
+            "meta_label",
+            "t1_idx",
+            "t1_timestamp",
+            "vertical_barrier_idx",
+            "vertical_barrier_timestamp",
+            "label_span_start_idx",
+            "label_span_end_idx",
+            "label_span_start_timestamp",
+            "label_span_end_timestamp",
+        ]:
+            out[column] = pd.Series(dtype="float64")
         return out
 
     path_df = price_path.reset_index(drop=True).copy()
@@ -396,10 +409,47 @@ def meta_triple_barrier_labels(
     profit_kappa = float(barrier_config.get("profit_kappa", 1.5))
     stop_kappa = float(barrier_config.get("stop_kappa", 1.0))
     min_edge_ret = float(barrier_config.get("min_edge_bps", 0.0)) / 10_000.0
+    timestamps = path_df["timestamp"].tolist() if "timestamp" in path_df.columns else list(path_df.index)
+
+    def _coerce_index(value: Any, default: int = -1) -> int:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        return int(number) if np.isfinite(number) else default
+
+    def _timestamp_at(idx: int) -> Any:
+        return timestamps[idx] if 0 <= int(idx) < len(timestamps) else pd.NaT
+
+    def _vertical_barrier_index(sample_index: int, horizon_bars: int) -> int:
+        if sample_index < 0:
+            return -1
+        if sample_index >= len(path_df):
+            return sample_index
+        return min(int(sample_index) + max(0, int(horizon_bars)), len(path_df) - 1)
+
+    def _span_metadata(sample_index: int, horizon_bars: int, t1_idx: int) -> dict:
+        vertical_idx = _vertical_barrier_index(sample_index, horizon_bars)
+        end_idx = _coerce_index(t1_idx, default=vertical_idx)
+        spans = build_label_spans([sample_index], [vertical_idx], timestamps=timestamps, t1_idx=[end_idx])
+        span = spans.iloc[0]
+        return {
+            "vertical_barrier_idx": int(vertical_idx) if vertical_idx >= 0 else np.nan,
+            "vertical_barrier_timestamp": _timestamp_at(vertical_idx),
+            "t1_idx": int(span["label_span_end_idx"]) if int(span["label_span_end_idx"]) >= 0 else np.nan,
+            "t1_timestamp": span["label_span_end_timestamp"],
+            "label_span_start_idx": int(span["label_span_start_idx"]) if int(span["label_span_start_idx"]) >= 0 else np.nan,
+            "label_span_end_idx": int(span["label_span_end_idx"]) if int(span["label_span_end_idx"]) >= 0 else np.nan,
+            "label_span_start_timestamp": span["label_span_start_timestamp"],
+            "label_span_end_timestamp": span["label_span_end_timestamp"],
+        }
 
     labeled_rows = []
     for _, row in signals.iterrows():
         out = row.to_dict()
+        sample_index = _coerce_index(row.get("sample_index", -1))
+        horizon_bars = max(0, _coerce_index(row.get("horizon_bars", 1), default=1))
+        vertical_barrier_idx = _vertical_barrier_index(sample_index, horizon_bars)
         is_candidate = bool(row.get("is_candidate", False)) and int(row.get("side", 0)) != 0
         if not is_candidate:
             out.update(
@@ -411,12 +461,12 @@ def meta_triple_barrier_labels(
                     "label_holding_bars": 0,
                     "profit_barrier": np.nan,
                     "stop_barrier": np.nan,
+                    **_span_metadata(sample_index, horizon_bars, vertical_barrier_idx),
                 }
             )
             labeled_rows.append(out)
             continue
 
-        sample_index = int(row["sample_index"])
         if sample_index < 0 or sample_index >= len(path_df) - 1:
             out.update(
                 {
@@ -427,13 +477,13 @@ def meta_triple_barrier_labels(
                     "label_holding_bars": 0,
                     "profit_barrier": np.nan,
                     "stop_barrier": np.nan,
+                    **_span_metadata(sample_index, horizon_bars, sample_index),
                 }
             )
             labeled_rows.append(out)
             continue
 
         side = int(row["side"])
-        horizon_bars = int(row.get("horizon_bars", 1))
         vertical = min(horizon_bars, len(path_df) - sample_index - 1)
         total_cost_bps = float(row.get("total_cost_bps", _meta_label_total_cost_bps(costs, horizon_bars, granularity)))
         cost_ret = total_cost_bps / 10_000.0
@@ -481,6 +531,7 @@ def meta_triple_barrier_labels(
                 "label_holding_bars": int(holding_bars),
                 "profit_barrier": float(profit_barrier),
                 "stop_barrier": float(stop_barrier),
+                **_span_metadata(sample_index, horizon_bars, sample_index + holding_bars),
             }
         )
         labeled_rows.append(out)
