@@ -479,6 +479,11 @@ def test_v2_staged_trial_runs_meta_labeling_alpha_smoke(tmp_path):
     assert json.loads((checkpoint_path.parent / "trackio_receipt.json").read_text())["delivery"] == "disabled"
     assert trial_manifest["split_manifest_hash"]
     assert trial_manifest["final_test_evaluation"]["count"] >= 1
+    assert trial_manifest["test_evaluation"]["status"] == "evaluated"
+    assert "net_pnl" in trial_manifest["metrics"]["test"]
+    assert trial_manifest["dataset"]["feature_manifest"]["code_identity"]["hash"]
+    assert result["run_identity"]["research_spec_hash"]
+    assert result["run_identity"]["raw_data_guard"]["status"] in {"first_seen", "unchanged", "changed"}
     assert trial_manifest["dataset"]["feature_manifest"]["columns"]
     assert result["stage0"]["sample_weight_diagnostics"]["base_mode"] == "uniform"
     assert np.isclose(result["stage0"]["sample_weight_diagnostics"]["weights"]["sum"], 1.0)
