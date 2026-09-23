@@ -8,7 +8,14 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from src.utils.trackio_logging import enforce_trackio_policy, flatten_numeric, json_ready, log_trackio_run, trackio_enabled
+from src.utils.trackio_logging import (
+    TrackioLoggingError,
+    enforce_trackio_policy,
+    flatten_numeric,
+    json_ready,
+    log_trackio_run,
+    trackio_enabled,
+)
 
 
 def test_flatten_numeric_keeps_only_finite_scalars():
@@ -86,6 +93,8 @@ def test_log_trackio_run_uses_config_flattens_metrics_and_finishes(monkeypatch, 
         run_config={"model_id": "momentum", "status": "success"},
         metrics={"forecast": {"mae": np.float64(0.1), "buckets": [{"count": 1}]}, "backtest": {"net_pnl": 3.0}},
         artifacts={"predictions": tmp_path / "predictions.parquet"},
+        smoke=True,
+        receipt_path=tmp_path / "receipt.json",
     )
 
     assert logged is True
@@ -102,6 +111,42 @@ def test_log_trackio_run_uses_config_flattens_metrics_and_finishes(monkeypatch, 
         "backtest.net_pnl": 3.0,
         "trackio.status.success": 1.0,
     }
+    receipt = json.loads((tmp_path / "receipt.json").read_text())
+    assert receipt["delivery"] == "logged"
+    assert receipt["verification"] == "not_required"
+
+
+def test_required_trackio_readback_failure_is_recorded_and_raises(monkeypatch, tmp_path):
+    calls = {"finish": 0}
+
+    def finish():
+        calls["finish"] += 1
+
+    monkeypatch.setitem(sys.modules, "trackio", types.SimpleNamespace(init=lambda **_: None, log=lambda _: None, finish=finish))
+    monkeypatch.setattr("src.utils.trackio_logging._verify_local_run", lambda *_: (_ for _ in ()).throw(ValueError("missing metrics")))
+    config = {"tracking": {"trackio": {"enabled": True, "project": "ethpredict"}}}
+    receipt_path = tmp_path / "receipt.json"
+
+    with pytest.raises(TrackioLoggingError, match="missing metrics"):
+        log_trackio_run(config, name="run/check", group="research", receipt_path=receipt_path)
+
+    assert calls["finish"] == 1
+    assert json.loads(receipt_path.read_text())["delivery"] == "failed"
+
+
+def test_required_trackio_init_failure_raises_but_debug_override_allows_it(monkeypatch, tmp_path):
+    def fail_init(**_):
+        raise OSError("local store unavailable")
+
+    monkeypatch.setitem(sys.modules, "trackio", types.SimpleNamespace(init=fail_init, log=lambda _: None, finish=lambda: None))
+    config = {"tracking": {"trackio": {"enabled": True}}}
+    with pytest.raises(TrackioLoggingError, match="local store unavailable"):
+        log_trackio_run(config, name="run/check", group="research", receipt_path=tmp_path / "required.json")
+    assert json.loads((tmp_path / "required.json").read_text())["delivery"] == "failed"
+
+    config["tracking"]["trackio"]["allow_local_debug_without_trackio"] = True
+    with pytest.warns(RuntimeWarning, match="local store unavailable"):
+        assert not log_trackio_run(config, name="run/debug", group="research")
 
 
 def test_trackio_disabled_by_default():

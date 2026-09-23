@@ -297,7 +297,13 @@ The top-level runner takes a config path:
 python runner.py configs/config.yml
 ```
 
-The runner currently uses the Lighter-only feature stack, existing model/training components, GLFT market-making setup, and price-data backtesting. Full model-prediction integration in backtesting remains a follow-up item.
+This is the legacy top-level runner. It uses the Lighter-only feature stack and GLFT backtesting, and its model-prediction integration still needs verification. The primary v2 research path is:
+
+```bash
+uv run python -m src.experiments.staged_trial --config configs/config.yml
+```
+
+The v2 path writes multi-horizon predictions, meta-label candidates, directional alpha backtests, and per-trial artifacts. Its research validity work remains tracked in `TASKS.md`.
 
 ## Run Lighter Experiments
 
@@ -328,7 +334,7 @@ ARIMA and SARIMAX baselines remain CPU-bound.
 
 ## Run Staged Trials
 
-Use the staged runner when you want Stage 1 model/hyperparameter trials to produce frozen artifacts and Stage 2 backtests to consume the selected Stage 1 predictions. The starter smoke config runs one model trial and a small GLFT strategy grid; expand `staged_trial.stage1.search_space` or `staged_trial.stage2.strategy_search` for longer searches.
+The older staged GLFT configuration remains an exploratory path. It makes Stage 1 model/hyperparameter artifacts and Stage 2 backtests from selected Stage 1 predictions. The starter smoke config runs one model trial and a small GLFT strategy grid; expand `staged_trial.stage1.search_space` or `staged_trial.stage2.strategy_search` for longer searches.
 
 ```bash
 uv run python -m src.experiments.staged_trial --config configs/staged_trial_smoke.yml --smoke
@@ -360,7 +366,15 @@ Stage 2 intentionally consumes the best Stage 1 `predictions_test.parquet` and m
 
 ## Trackio Dashboard
 
-Trackio logging is enabled in `configs/config.yml` for the active v2 research path and writes to the local Trackio store by default. Launch the local dashboard with the Python entry point when CLI networking is awkward in sandboxed shells:
+Trackio logging is enabled in `configs/config.yml` for the active v2 research path and writes to the local `ethpredict` project by default. Non-smoke runs now write a local delivery receipt and verify that their finished run can be read back. Check the local setup without training or trading:
+
+```bash
+uv run python -m scripts.trackio_doctor
+```
+
+The command prints a unique run name and receipt path. Inspect that run with `uv run trackio get run --project ethpredict --run <printed-run-name> --json`. The v2 trial records include checkpoint identity and path, out-of-fold forecast metrics by fold, separate simulated validation/test backtest metrics, and trial status. Trackio mirrors local run artifacts; it is not the source of truth for model promotion.
+
+Launch the local dashboard with the Python entry point when CLI networking is awkward in sandboxed shells:
 
 ```bash
 uv run python -c "import trackio; trackio.show(project='ethpredict', open_browser=False, host='127.0.0.1', server_port=7860)"

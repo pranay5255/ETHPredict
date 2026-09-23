@@ -22,6 +22,9 @@ from src.experiments.meta_labeling_mvp import (
     _load_yaml,
     _prediction_metrics,
     _run_id,
+    _sha256_path,
+    _split_manifest,
+    _stable_hash,
     _total_cost_bps,
     _write_json,
     _write_yaml,
@@ -481,6 +484,13 @@ def _log_benchmark_trackio_model(
         "smoke": smoke,
         "config_path": config_path,
         "manifest_path": manifest.get("manifest_path"),
+        "checkpoint_id": manifest.get("checkpoint_id"),
+        "model_path": manifest.get("model_path"),
+        "config_hash": manifest.get("config_hash"),
+        "split_manifest_hash": manifest.get("split_manifest_hash"),
+        "feature_families": manifest.get("feature_families", []),
+        "costs": (config.get("costs", {}) or {}),
+        "alpha_policy": (config.get("alpha_backtest", {}) or {}),
         **groups,
     }
     if manifest.get("reason"):
@@ -494,6 +504,8 @@ def _log_benchmark_trackio_model(
         metrics=manifest.get("metrics", {}) or {},
         artifacts=artifacts,
         status=str(manifest.get("status", "success")),
+        smoke=smoke,
+        receipt_path=Path(manifest["manifest_path"]).parent / "trackio_receipt.json",
     )
 
 
@@ -509,8 +521,11 @@ def run_forecast_benchmark_from_dataset(
 ) -> Dict[str, Any]:
     bench_cfg = _benchmark_config(config)
     run_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(run_dir / "split_manifest.json", {"note": "indices match v2 purged walk-forward split"})
     splits = purged_walk_forward_splits(int(dataset["X"].shape[0]), config.get("validation", {}))
+    split_manifest = _split_manifest(dataset, splits)
+    _write_json(run_dir / "split_manifest.json", split_manifest)
+    split_manifest_hash = _stable_hash(split_manifest)
+    config_hash = _stable_hash(config)
     batch_size = int(bench_cfg.get("prediction_batch_size", 512))
     resolved_device = device or torch.device("cpu")
 
@@ -570,6 +585,7 @@ def run_forecast_benchmark_from_dataset(
             device=resolved_device,
         )
         manifest["model_path"] = lstm_dir / "base_multi_horizon_lstm.pt"
+        manifest["checkpoint_id"] = _sha256_path(Path(manifest["model_path"]))
         _write_json(lstm_dir / "manifest.json", manifest)
         model_manifests.append(manifest)
 
@@ -624,6 +640,10 @@ def run_forecast_benchmark_from_dataset(
         model_manifests.append(manifest)
 
     for manifest in model_manifests:
+        manifest["config_hash"] = config_hash
+        manifest["split_manifest_hash"] = split_manifest_hash
+        manifest["feature_families"] = (dataset.get("feature_manifest", {}) or {}).get("families", [])
+        _write_json(Path(manifest["manifest_path"]), manifest)
         _log_benchmark_trackio_model(
             config,
             run_id=tracking_run_id,
@@ -637,6 +657,8 @@ def run_forecast_benchmark_from_dataset(
         "path": run_dir,
         "smoke": smoke,
         "models": model_manifests,
+        "config_hash": config_hash,
+        "split_manifest_hash": split_manifest_hash,
         "forecast_metrics_are_primary": True,
         "backtest_metrics_are_secondary": True,
         "manifest_path": run_dir / "manifest.json",

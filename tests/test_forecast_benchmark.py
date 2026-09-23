@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -161,3 +162,6 @@ def test_forecast_benchmark_smoke_writes_forecast_and_backtest_metrics(tmp_path)
     assert "forecast" in models["momentum"]["metrics"]
     assert "backtest" in models["momentum"]["metrics"]
     assert "next_5m_pred_return" in models["momentum"]["prediction_schema"]["required_columns"]
+    assert models["momentum"]["config_hash"]
+    assert models["momentum"]["split_manifest_hash"] == result["benchmark"]["split_manifest_hash"]
+    assert json.loads((Path(models["momentum"]["manifest_path"]).parent / "trackio_receipt.json").read_text())["delivery"] == "disabled"
