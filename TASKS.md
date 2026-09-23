@@ -1,5 +1,20 @@
 # ETHPredict Lighter-Only Task List
 
+## Product Goal and Source of Truth
+
+ETHPredict is a local decision-support application for a discretionary Lighter ETH perpetual trader. It should show refreshed public market data, aggregated feature values, model outputs with evidence for interpreting them, checkpoint comparisons, and simulated backtest results. The trader places any real order separately in Lighter. The v2 artifact-backed pipeline in `configs/config.yml` is the primary path for future research and manually frozen models; `lighter_compare` and legacy staged GLFT runs remain exploratory history.
+
+GitHub issue state is authoritative for the linked backlog below. This file was reconciled with GitHub on 2026-09-23; a closed experiment issue does not close its parent implementation issue.
+
+## Local Decision-Support Delivery
+
+- [ ] [#43 Collect refreshed Lighter ETH feature snapshots with provenance](https://github.com/pranay5255/ETHPredict/issues/43): refresh after each completed 5-minute candle, retain immutable data/feature snapshots, and show provenance, coverage, and stale status. Public read-only data only.
+- [ ] [#44 Freeze reviewed v2 checkpoints and emit read-only current model outputs](https://github.com/pranay5255/ETHPredict/issues/44): keep retraining separate from 5-minute refresh; explicitly promote a complete model and preprocessing package; show predicted returns and direction probabilities by horizon with as-of times and calibration/error context. No automatic promotion or order generation.
+- [ ] [#45 Build a local read-only Lighter research and current-state dashboard](https://github.com/pranay5255/ETHPredict/issues/45): show current feature/model outputs, a checkpoint performance summary linked to Trackio, run-level data/features/models/backtest stages with duration/resource/failure metrics, and AFML phase progress. Keep validation/test and simulated/real activity distinct; display unavailable evidence clearly.
+- [ ] Complete [#23 Trackio research accounting](https://github.com/pranay5255/ETHPredict/issues/23) and [#24 artifact reproducibility](https://github.com/pranay5255/ETHPredict/issues/24) as shared prerequisites. Local Trackio delivery/readback and per-checkpoint model metrics are being hardened; the full issue acceptance criteria remain open.
+
+Feature importance from [#17](https://github.com/pranay5255/ETHPredict/issues/17) and richer backtest statistics from [#21](https://github.com/pranay5255/ETHPredict/issues/21) enrich the dashboard when implemented. Their absence must be shown instead of inferred.
+
 ## Completed in Lighter-Only Refactor
 
 - [x] Set `configs/config.yml` to `data.sources: [lighter]`.
@@ -79,7 +94,7 @@ before any final test evaluation.
 
 ### Phase 2: Build Label-Span Metadata, Weights, and Real Purging
 
-- [ ] [#14 Implement label-span uniqueness weights and effective sample diagnostics](https://github.com/pranay5255/ETHPredict/issues/14)
+- [x] [#14 Implement label-span uniqueness weights and effective sample diagnostics](https://github.com/pranay5255/ETHPredict/issues/14)
   - Add start time, horizon end, realized `t1`, and span indices for base observations and meta-label candidates.
   - Compute concurrency, average uniqueness, and effective sample size.
   - Add weighting modes: uniform, horizon-span uniqueness, triple-barrier `t1` uniqueness, return magnitude, and combined uniqueness-by-return.
@@ -241,16 +256,11 @@ gh api --method GET repos/pranay5255/ETHPredict/issues -f state=open -f labels=a
 
 ## Active Near-Term Tasks
 
-- [ ] Add `next_5m_return` and multi-horizon model outputs for 5m and 1h returns/direction.
-- [ ] Add purged walk-forward CV that stores out-of-sample base predictions for each fold.
-- [ ] Implement triple-barrier meta-label generation for proposed long/short signals using profit-taking, stop-loss, and vertical barriers after estimated costs.
-- [ ] Train a true meta-label classifier from out-of-sample base predictions, replacing or separating the current `y_dir != 0` confidence target.
-- [ ] Report meta-label threshold performance: coverage, directional accuracy, hit ratio, gross/net PnL, fees, turnover, and drawdown.
-- [ ] Replace Stage 2's GLFT-first ranking with a validation-selected directional alpha backtest.
-- [ ] Add Stage 0 funding and mark-price joins first; add historical order-book/trade-flow features only when time-indexed history is available.
-- [ ] Keep GLFT as an optional passive execution layer after alpha validation, using policy target inventory or reservation-price skew.
-- [ ] Run `python runner.py configs/config.yml` end to end after deciding whether current model/training changes should be kept.
-- [ ] Add a small fixture-backed integration test for `runner.py` using Lighter-only raw data.
+- [ ] Finish [#23](https://github.com/pranay5255/ETHPredict/issues/23) and [#24](https://github.com/pranay5255/ETHPredict/issues/24), then use their local artifacts as the dashboard's source of truth.
+- [ ] Deliver [#43](https://github.com/pranay5255/ETHPredict/issues/43), [#44](https://github.com/pranay5255/ETHPredict/issues/44), and [#45](https://github.com/pranay5255/ETHPredict/issues/45) in that order, while continuing the AFML issue dependencies above.
+- [ ] Complete feature validity [#8](https://github.com/pranay5255/ETHPredict/issues/8) and [#9](https://github.com/pranay5255/ETHPredict/issues/9) before displaying side-data or feature-family claims as validated.
+- [ ] Complete forecast diagnostics [#11](https://github.com/pranay5255/ETHPredict/issues/11), feature importance [#17](https://github.com/pranay5255/ETHPredict/issues/17), and backtest evidence [#21](https://github.com/pranay5255/ETHPredict/issues/21) before interpreting a model as reliable for trading decisions.
+- [ ] Verify the legacy `python runner.py configs/config.yml` path separately; the v2 research runner is the primary path.
 - [ ] Decide whether to migrate legacy `requirements.txt` users fully to uv in a later cleanup.
 
 ## Deferred / Archived for Later
@@ -261,7 +271,7 @@ gh api --method GET repos/pranay5255/ETHPredict/issues -f state=open -f labels=a
 - [ ] Treat GLFT parameter search as deferred alpha evaluation; use it only for passive execution research after directional alpha validation.
 - [ ] Reintroduce bribe/MEV optimization only as a separate execution research track.
 - [ ] Reintroduce parameter sweeps only after the base Lighter-only run is reproducible.
-- [ ] Add signed Lighter trading or live execution only after offline experiments are reproducible.
+- [ ] Reconsider signed Lighter trading or live execution only as a separate future product decision; the decision-support dashboard does not submit orders.
 
 ## Useful Commands
 

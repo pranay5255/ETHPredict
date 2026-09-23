@@ -1426,6 +1426,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
 
     model_path = trial_dir / "base_multi_horizon_lstm.pt"
     torch.save(final_model.state_dict(), model_path)
+    checkpoint_id = _sha256_path(model_path)
     paths = {
         "oof_predictions": trial_dir / "predictions_oof.parquet",
         "test_predictions": trial_dir / "predictions_test.parquet",
@@ -1472,6 +1473,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
         "meta_labeler": meta_model.manifest(),
         "meta_sample_weight_diagnostics": meta_sample_weight_diagnostics,
         "model_path": model_path,
+        "checkpoint_id": checkpoint_id,
         "artifact_paths": paths,
         "metrics": {"validation": validation_metrics, "test": test_metrics},
         "diagnostics": diagnostics,
@@ -1807,6 +1809,7 @@ def _log_meta_label_trial_trackio(
     raw_best: Mapping[str, Any],
     best_trading: Optional[Mapping[str, Any]],
     selection: Mapping[str, Any],
+    trial_count: int,
     smoke: bool,
 ) -> None:
     trial_id = str(trial.get("trial_id", "unknown"))
@@ -1822,6 +1825,9 @@ def _log_meta_label_trial_trackio(
         "run_id": run_id,
         "trial_id": trial_id,
         "trial_index": trial.get("trial_index"),
+        "trial_count": trial_count,
+        "checkpoint_id": trial.get("checkpoint_id"),
+        "config_hash": (trial.get("run_identity", {}) or {}).get("config_hash"),
         "selection_status": selection_status,
         "selection_roles": selection_roles,
         "is_raw_best": is_raw_best,
@@ -1833,6 +1839,9 @@ def _log_meta_label_trial_trackio(
         "model_path": trial.get("model_path"),
         "trial_status": trial.get("status", "completed"),
         "split_manifest_hash": trial.get("split_manifest_hash"),
+        "feature_families": ((trial.get("dataset", {}) or {}).get("feature_manifest", {}) or {}).get("families", []),
+        "costs": (trial.get("config", {}) or {}).get("costs", {}),
+        "alpha_policy": (trial.get("config", {}) or {}).get("alpha_backtest", {}),
         "final_test_evaluation": trial.get("final_test_evaluation"),
         "feature_manifest": (trial.get("dataset", {}) or {}).get("feature_manifest"),
         "bar_manifest": (trial.get("dataset", {}) or {}).get("bar_manifest"),
@@ -1843,6 +1852,14 @@ def _log_meta_label_trial_trackio(
     }
     metrics = {
         "alpha": trial.get("metrics", {}) or {},
+        "forecast_oof_by_fold": {
+            f"fold_{fold.get('fold')}": fold.get("metrics", {})
+            for fold in trial.get("folds", []) or []
+        },
+        "training_final": {
+            f"epoch_{index + 1}_loss": loss
+            for index, loss in enumerate((trial.get("final_training_history", {}) or {}).get("training_losses", []))
+        },
         "selection": {
             "is_raw_best": is_raw_best,
             "is_best_trade_qualified": is_best_trading,
@@ -1870,6 +1887,8 @@ def _log_meta_label_trial_trackio(
         metrics=metrics,
         artifacts=artifacts,
         status=str(trial.get("status", "completed")),
+        smoke=smoke,
+        receipt_path=Path(trial["manifest_path"]).parent / "trackio_receipt.json",
     )
 
 
@@ -1890,6 +1909,7 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
     run_config = {
         "stage": "meta_label_mvp_summary",
         "run_id": run_id,
+        "trial_count": report.get("trial_count"),
         "smoke": smoke,
         "config_path": report.get("config_path"),
         "run_dir": report.get("run_dir"),
@@ -1920,6 +1940,8 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
         metrics=metrics,
         artifacts=artifacts,
         status=str(report.get("status", "success")),
+        smoke=smoke,
+        receipt_path=Path(report["run_dir"]) / "tracking" / "summary.json",
     )
 
 
@@ -2049,6 +2071,7 @@ def run_meta_labeling_mvp(
             raw_best=best,
             best_trading=best_trading,
             selection=selection,
+            trial_count=len(trial_manifests),
             smoke=smoke,
         )
 
