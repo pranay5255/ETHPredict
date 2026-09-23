@@ -477,6 +477,10 @@ def test_v2_staged_trial_runs_meta_labeling_alpha_smoke(tmp_path):
     checkpoint_path = Path(trial_manifest["model_path"])
     assert trial_manifest["checkpoint_id"] == hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
     assert json.loads((checkpoint_path.parent / "trackio_receipt.json").read_text())["delivery"] == "disabled"
+    assert str(trial_manifest["trackio_receipt_path"]).endswith("trackio_receipt.json")
+    accounting = json.loads(Path(result["trial_accounting_path"]).read_text(encoding="utf-8"))
+    assert str(accounting["trials"][0]["trackio_receipt_path"]).endswith("trackio_receipt.json")
+    assert accounting["trials"][0]["failure_modes"]["flags"] == trial_manifest["failure_modes"]["flags"]
     assert trial_manifest["split_manifest_hash"]
     assert trial_manifest["final_test_evaluation"]["count"] >= 1
     assert trial_manifest["test_evaluation"]["status"] == "evaluated"
