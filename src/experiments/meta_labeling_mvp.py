@@ -15,6 +15,7 @@ import math
 import platform
 import subprocess
 import traceback
+import warnings
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -181,13 +182,69 @@ def _command_output(args: Sequence[str]) -> Optional[str]:
     return result.stdout.strip()
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CRITICAL_PATH_PREFIXES = (
+    "configs/",
+    "src/",
+    "tests/",
+    "context/",
+    "scripts/",
+    "TASKS.md",
+    "pyproject.toml",
+    "uv.lock",
+)
+FEATURE_CODE_FILES = (
+    "src/data/features_all.py",
+    "src/features/labeling.py",
+    "src/features/sample_weights.py",
+)
+# Config sections that define a research specification. Naming and storage keys
+# (pipeline.run_name, pipeline.artifact_root, experiment.id/name, tracking) are
+# deliberately excluded so renaming a run cannot bypass the final-test guard.
+RESEARCH_SPEC_SECTIONS = (
+    "version",
+    "data",
+    "bars",
+    "features",
+    "sampling",
+    "sample_weights",
+    "targets",
+    "labels",
+    "model",
+    "training",
+    "validation",
+    "costs",
+    "alpha_backtest",
+)
+FINAL_TEST_SELECTION_ROLES = ("raw_best", "trade_qualified_best", "classification_best", "calibration_best")
+DEFAULT_FINAL_TEST_ROLES = ("raw_best", "trade_qualified_best")
+RAW_DATA_CHANGE_POLICIES = ("warn", "fail", "ignore")
+
+
+def _git_status_entry(line: str) -> Tuple[str, str]:
+    """Parse one ``git status --porcelain`` line into ``(status, path)``.
+
+    Leading whitespace is significant in porcelain output (`` M path``), so the
+    status column is split on the first run of whitespace instead of by offset.
+    """
+
+    stripped = line.strip()
+    if not stripped:
+        return "", ""
+    parts = stripped.split(None, 1)
+    status, path = (parts[0], parts[1]) if len(parts) == 2 else ("", parts[0])
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return status, path.strip().strip('"')
+
+
 def _git_manifest() -> Dict[str, Any]:
-    status = _command_output(["git", "status", "--short"])
+    status = _command_output(["git", "status", "--porcelain"])
     critical = []
     for line in (status or "").splitlines():
-        path = line[3:] if len(line) > 3 else line
-        if path.startswith(("configs/", "src/", "tests/", "context/", "TASKS.md")):
-            critical.append({"status": line[:2].strip(), "path": path})
+        entry_status, path = _git_status_entry(line)
+        if path.startswith(CRITICAL_PATH_PREFIXES):
+            critical.append({"status": entry_status, "path": path})
     return {
         "commit": _command_output(["git", "rev-parse", "HEAD"]),
         "dirty": bool(status),
@@ -240,26 +297,230 @@ def _config_identity(config: Mapping[str, Any], config_path: Path) -> Dict[str, 
     }
 
 
-def _record_final_test_evaluation(config: Mapping[str, Any], run_dir: Path, *, trial_id: str, split_hash: str, smoke: bool) -> Dict[str, Any]:
-    guard_cfg = ((config.get("research", {}) or {}).get("final_test_guard", {}) or {})
-    spec_hash = _stable_hash({"config": config, "split_hash": split_hash})
-    ledger_path = run_dir.parent / "_final_test_reuse_ledger.json"
-    ledger: Dict[str, Any] = {}
-    if ledger_path.exists():
-        try:
-            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            ledger = {}
+def research_spec(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the research-relevant part of a config.
+
+    Only data, features, labels, model, split, costs, policy, and seed are kept.
+    Run names, artifact roots, experiment labels, tracking, and search metadata
+    are excluded so they cannot change the identity of a research specification.
+    """
+
+    spec = {key: deepcopy(config[key]) for key in RESEARCH_SPEC_SECTIONS if key in config}
+    spec["seed"] = (config.get("experiment", {}) or {}).get("seed")
+    spec["selection_policy"] = _selection_policy(config)
+    return spec
+
+
+def _selection_policy(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """Trading-selection policy, without run names or artifact locations."""
+
+    pipeline = config.get("pipeline") or {}
+    min_trades = pipeline.get("min_validation_trades", pipeline.get("selection_min_trades", 1))
+    return {
+        "selection_metric": pipeline.get("selection_metric", "metrics.validation.net_pnl"),
+        "selection_mode": pipeline.get("selection_mode", "max"),
+        "min_validation_trades": min_trades,
+    }
+
+
+def research_spec_hash(config: Mapping[str, Any], **extra: Any) -> str:
+    return _stable_hash({"research_spec": research_spec(config), **extra})
+
+
+def _research_cfg(config: Mapping[str, Any], key: str) -> Dict[str, Any]:
+    return dict(((config.get("research", {}) or {}).get(key, {}) or {}))
+
+
+def _read_json_file(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _final_test_ledger_path(config: Mapping[str, Any], run_dir: Path) -> Path:
+    configured = _research_cfg(config, "final_test_guard").get("ledger_path")
+    return Path(configured) if configured else run_dir.parent / "_final_test_reuse_ledger.json"
+
+
+def final_test_selection_roles(config: Mapping[str, Any]) -> List[str]:
+    """Selection roles whose trials may be evaluated on the final test split."""
+
+    roles = _research_cfg(config, "final_test_guard").get("evaluate_selection_roles", list(DEFAULT_FINAL_TEST_ROLES))
+    roles = [str(role) for role in (roles or [])]
+    unknown = sorted(set(roles) - set(FINAL_TEST_SELECTION_ROLES))
+    if unknown:
+        raise ValueError(f"Unknown research.final_test_guard.evaluate_selection_roles {unknown}; allowed={list(FINAL_TEST_SELECTION_ROLES)}")
+    if not roles:
+        raise ValueError("research.final_test_guard.evaluate_selection_roles must name at least one selection role")
+    return roles
+
+
+def _record_final_test_evaluation(
+    config: Mapping[str, Any],
+    run_dir: Path,
+    *,
+    trial_id: str,
+    split_hash: str,
+    smoke: bool,
+    scope: str = "meta_label_trial",
+) -> Dict[str, Any]:
+    """Count one final-test query for a research spec and enforce the reuse guard.
+
+    Call this before test data is scored. The spec hash covers only the research
+    specification (see ``research_spec``), the split identity, and the evaluation
+    scope, so renaming a run or moving its artifact directory is still reuse.
+    """
+
+    guard_cfg = _research_cfg(config, "final_test_guard")
+    spec_hash = research_spec_hash(config, split_hash=split_hash, scope=scope)
+    ledger_path = _final_test_ledger_path(config, run_dir)
+    ledger = _read_json_file(ledger_path)
     record = dict(ledger.get(spec_hash, {}))
     count = int(record.get("count", 0)) + 1
-    blocked = bool(guard_cfg.get("do_not_reuse_test", config.get("do_not_reuse_test", False))) and count > 1 and not smoke
-    record.update({"count": count, "last_trial_id": trial_id, "last_run_dir": str(run_dir), "split_hash": split_hash})
+    do_not_reuse = bool(guard_cfg.get("do_not_reuse_test", config.get("do_not_reuse_test", False)))
+    blocked = do_not_reuse and count > 1 and not smoke
+    evaluated_at = _utc_now().isoformat()
+    history = list(record.get("history", []) or [])
+    history.append({"trial_id": trial_id, "run_dir": str(run_dir), "evaluated_at_utc": evaluated_at, "smoke": bool(smoke), "blocked": blocked})
+    record.update(
+        {
+            "count": count,
+            "scope": scope,
+            "last_trial_id": trial_id,
+            "last_run_dir": str(run_dir),
+            "split_hash": split_hash,
+            "history": history,
+        }
+    )
     ledger[spec_hash] = record
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
     ledger_path.write_text(json.dumps(ledger, indent=2, sort_keys=True), encoding="utf-8")
-    payload = {"spec_hash": spec_hash, "count": count, "ledger_path": ledger_path, "blocked": blocked}
+    payload = {
+        "spec_hash": spec_hash,
+        "scope": scope,
+        "count": count,
+        "ledger_path": ledger_path,
+        "blocked": blocked,
+        "do_not_reuse_test": do_not_reuse,
+        "evaluated_at_utc": evaluated_at,
+    }
     if blocked:
-        raise RuntimeError(f"Final test set reuse blocked for research spec {spec_hash}; ledger count={count}")
+        raise RuntimeError(
+            f"Final test set reuse blocked for research spec {spec_hash} ({scope}); ledger count={count}. "
+            "Declare a new research specification before evaluating the final test split again."
+        )
     return payload
+
+
+def raw_data_fingerprint(raw_manifest: Mapping[str, Any]) -> str:
+    files = raw_manifest.get("files", []) or []
+    return _stable_hash(sorted((str(item.get("path")), str(item.get("sha256"))) for item in files))
+
+
+def check_raw_data_registry(
+    config: Mapping[str, Any],
+    artifact_root: Path,
+    *,
+    run_id: str,
+    raw_manifest: Mapping[str, Any],
+    smoke: bool,
+) -> Dict[str, Any]:
+    """Detect raw-data changes under an unchanged research spec at run start.
+
+    ``research.raw_data_guard.on_change`` selects ``warn`` (default), ``fail``, or
+    ``ignore``. Smoke runs never fail; they record the change as a warning.
+    """
+
+    guard_cfg = _research_cfg(config, "raw_data_guard")
+    policy = str(guard_cfg.get("on_change", "warn"))
+    if policy not in RAW_DATA_CHANGE_POLICIES:
+        raise ValueError(f"research.raw_data_guard.on_change must be one of {list(RAW_DATA_CHANGE_POLICIES)}; got {policy!r}")
+    registry_path = Path(guard_cfg["registry_path"]) if guard_cfg.get("registry_path") else Path(artifact_root) / "_raw_data_registry.json"
+    spec_hash = research_spec_hash(config, scope="raw_data")
+    fingerprint = raw_data_fingerprint(raw_manifest)
+    registry = _read_json_file(registry_path)
+    record = dict(registry.get(spec_hash, {}))
+    previous = record.get("fingerprint")
+    if previous is None:
+        status = "first_seen"
+    elif previous == fingerprint:
+        status = "unchanged"
+    else:
+        status = "changed"
+    effective_policy = "warn" if smoke and policy == "fail" else policy
+    result = {
+        "status": status,
+        "policy": policy,
+        "effective_policy": effective_policy,
+        "spec_hash": spec_hash,
+        "fingerprint": fingerprint,
+        "previous_fingerprint": previous,
+        "previous_run_id": record.get("last_run_id"),
+        "registry_path": registry_path,
+    }
+    if status == "changed" and effective_policy == "fail":
+        raise RuntimeError(
+            f"Raw data changed under research spec {spec_hash}: fingerprint {previous} -> {fingerprint} "
+            f"(previous run {record.get('last_run_id')}). Declare a new research spec or set "
+            "research.raw_data_guard.on_change to warn."
+        )
+    if status == "changed" and effective_policy == "warn":
+        warnings.warn(
+            f"Raw data changed under research spec {spec_hash} since run {record.get('last_run_id')}; "
+            "results are not comparable with earlier runs of this spec.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    history = list(record.get("history", []) or [])
+    history.append({"run_id": run_id, "fingerprint": fingerprint, "status": status, "checked_at_utc": _utc_now().isoformat()})
+    record.update({"fingerprint": fingerprint, "last_run_id": run_id, "history": history, "files": raw_manifest.get("files", [])})
+    registry[spec_hash] = record
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_text(json.dumps(_json_ready(registry), indent=2, sort_keys=True), encoding="utf-8")
+    return result
+
+
+def feature_code_identity(root: Optional[Path] = None) -> Dict[str, Any]:
+    """Hash the source files that define v2 features, labels, and sample weights."""
+
+    base = Path(root) if root is not None else REPO_ROOT
+    files: Dict[str, Optional[str]] = {}
+    for relative in FEATURE_CODE_FILES:
+        path = base / relative
+        files[relative] = _sha256_path(path) if path.exists() else None
+    return {"files": files, "hash": _stable_hash(files)}
+
+
+def _feature_manifest_with_identity(feature_manifest: Mapping[str, Any]) -> Dict[str, Any]:
+    manifest = dict(feature_manifest)
+    fracdiff = manifest.get("fracdiff", {}) or {}
+    # Only configuration-level fracdiff fields; data-dependent diagnostics
+    # (ADF p-value, row counts) must not change the family identity.
+    manifest["family_identity_hash"] = _stable_hash(
+        {
+            "families": manifest.get("families", []),
+            "columns": manifest.get("columns", []),
+            "fracdiff": {key: fracdiff.get(key) for key in ("mode", "order", "threshold")},
+        }
+    )
+    manifest["code_identity"] = feature_code_identity()
+    return manifest
+
+
+def validate_selection_metric(config: Mapping[str, Any]) -> str:
+    """Reject selection metrics that read final-test results."""
+
+    metric = str((config.get("pipeline", {}) or {}).get("selection_metric", "metrics.validation.net_pnl"))
+    parts = metric.split(".")
+    if "test" in parts:
+        raise ValueError(
+            f"pipeline.selection_metric={metric!r} reads final-test metrics; trial selection must use validation evidence only"
+        )
+    return metric
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -656,7 +917,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         "max_horizon_bars": max_horizon,
         "feature_columns": preprocessor.get_feature_cols(),
         "feature_window_bars": preprocessor.feature_window_bars(granularity),
-        "feature_manifest": preprocessor.feature_manifest(),
+        "feature_manifest": _feature_manifest_with_identity(preprocessor.feature_manifest()),
         "bar_manifest": preprocessor.bar_manifest(),
         "event_diagnostics": event_diagnostics,
         "sample_weight_diagnostics": sample_weight_diag,
@@ -1370,7 +1631,14 @@ def _write_stage0(dataset: Mapping[str, Any], run_dir: Path) -> Dict[str, Any]:
     return manifest
 
 
-def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, device: torch.device) -> Dict[str, Any]:
+def _run_one_trial(
+    spec: Mapping[str, Any],
+    run_dir: Path,
+    *,
+    smoke: bool,
+    device: torch.device,
+    test_contexts: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     config = dict(spec["config"])
     if smoke:
         config = apply_smoke_overrides(config)
@@ -1407,41 +1675,31 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
 
     oof_predictions = pd.concat(oof_frames, ignore_index=True).sort_values("timestamp")
     final_model, final_history = train_base_model(dataset, splits["development"], config, device)
-    test_predictions = predict_base_model(final_model, dataset, splits["test"], device, batch_size=batch_size)
 
+    # Only validation (out-of-fold) evidence is produced here. The final test
+    # split is scored later, and only for trials selected on validation.
     oof_candidates = add_meta_labels(candidate_signals(oof_predictions, dataset, config), dataset, config)
-    test_candidates = add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config)
     meta_sample_weight_diagnostics = {
         "validation": oof_candidates.attrs.get("sample_weight_diagnostics", {}),
-        "test": test_candidates.attrs.get("sample_weight_diagnostics", {}),
     }
     meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device)
     oof_candidates = add_meta_probabilities(oof_candidates, meta_model)
-    test_candidates = add_meta_probabilities(test_candidates, meta_model)
 
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
-    test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
-    diagnostics = {"validation": alpha_diagnostics(oof_candidates, config), "test": alpha_diagnostics(test_candidates, config)}
-    final_test_evaluation = _record_final_test_evaluation(config, run_dir, trial_id=trial_id, split_hash=split_manifest_hash, smoke=smoke)
+    diagnostics = {"validation": alpha_diagnostics(oof_candidates, config)}
 
     model_path = trial_dir / "base_multi_horizon_lstm.pt"
     torch.save(final_model.state_dict(), model_path)
     checkpoint_id = _sha256_path(model_path)
     paths = {
         "oof_predictions": trial_dir / "predictions_oof.parquet",
-        "test_predictions": trial_dir / "predictions_test.parquet",
         "oof_candidates": trial_dir / "meta_candidates_oof.parquet",
-        "test_candidates": trial_dir / "meta_candidates_test.parquet",
         "validation_trades": trial_dir / "alpha_trades_validation.parquet",
-        "test_trades": trial_dir / "alpha_trades_test.parquet",
         "diagnostics": trial_dir / "alpha_diagnostics.json",
     }
     oof_predictions.to_parquet(paths["oof_predictions"], index=False)
-    test_predictions.to_parquet(paths["test_predictions"], index=False)
     oof_candidates.to_parquet(paths["oof_candidates"], index=False)
-    test_candidates.to_parquet(paths["test_candidates"], index=False)
     validation_trades.to_parquet(paths["validation_trades"], index=False)
-    test_trades.to_parquet(paths["test_trades"], index=False)
     _write_json(paths["diagnostics"], diagnostics)
 
     manifest = {
@@ -1467,7 +1725,8 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
         "raw_data": _raw_data_manifest(config),
         "split_manifest_path": split_manifest_path,
         "split_manifest_hash": split_manifest_hash,
-        "final_test_evaluation": final_test_evaluation,
+        "final_test_evaluation": None,
+        "test_evaluation": {"status": "pending_selection", "reason": "final test is scored only after validation-based selection"},
         "folds": fold_manifests,
         "final_training_history": final_history,
         "meta_labeler": meta_model.manifest(),
@@ -1475,13 +1734,174 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
         "model_path": model_path,
         "checkpoint_id": checkpoint_id,
         "artifact_paths": paths,
-        "metrics": {"validation": validation_metrics, "test": test_metrics},
+        "metrics": {"validation": validation_metrics, "test": {}},
         "diagnostics": diagnostics,
         "diagnostics_path": paths["diagnostics"],
         "manifest_path": trial_dir / "manifest.json",
     }
     _write_json(trial_dir / "manifest.json", manifest)
+    if test_contexts is not None:
+        _move_meta_model(meta_model, torch.device("cpu"))
+        test_contexts[trial_id] = {
+            "final_model": final_model.to("cpu"),
+            "meta_model": meta_model,
+            "dataset": dataset,
+            "splits": splits,
+            "batch_size": batch_size,
+            "config": config,
+        }
     return manifest
+
+
+def _move_meta_model(meta_model: Any, device: torch.device) -> None:
+    if isinstance(meta_model, TorchMetaModel):
+        meta_model.model.to(device)
+        meta_model.device = device
+
+
+def _score_trial_on_test(
+    manifest: Mapping[str, Any],
+    context: Mapping[str, Any],
+    *,
+    run_dir: Path,
+    smoke: bool,
+    device: torch.device,
+    selection_roles: Sequence[str],
+) -> Dict[str, Any]:
+    """Backtest the final test split for one validation-selected trial.
+
+    The reuse ledger is updated before any test prediction is computed.
+    """
+
+    config = context["config"]
+    dataset = context["dataset"]
+    splits = context["splits"]
+    trial_id = str(manifest["trial_id"])
+    final_test_evaluation = _record_final_test_evaluation(
+        config,
+        run_dir,
+        trial_id=trial_id,
+        split_hash=str(manifest["split_manifest_hash"]),
+        smoke=smoke,
+        scope="meta_label_trial",
+    )
+    final_model = context["final_model"].to(device)
+    meta_model = context["meta_model"]
+    _move_meta_model(meta_model, device)
+    test_predictions = predict_base_model(
+        final_model,
+        dataset,
+        splits["test"],
+        device,
+        batch_size=int(context["batch_size"]),
+    )
+    test_candidates = add_meta_probabilities(
+        add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config),
+        meta_model,
+    )
+    test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
+    diagnostics = dict(manifest.get("diagnostics") or {})
+    diagnostics["test"] = alpha_diagnostics(test_candidates, config)
+    meta_diagnostics = dict(manifest.get("meta_sample_weight_diagnostics") or {})
+    meta_diagnostics["test"] = test_candidates.attrs.get("sample_weight_diagnostics", {})
+
+    trial_dir = Path(manifest["manifest_path"]).parent
+    paths = dict(manifest.get("artifact_paths") or {})
+    paths["test_predictions"] = trial_dir / "predictions_test.parquet"
+    paths["test_candidates"] = trial_dir / "meta_candidates_test.parquet"
+    paths["test_trades"] = trial_dir / "alpha_trades_test.parquet"
+    paths["diagnostics"] = trial_dir / "alpha_diagnostics.json"
+    test_predictions.to_parquet(paths["test_predictions"], index=False)
+    test_candidates.to_parquet(paths["test_candidates"], index=False)
+    test_trades.to_parquet(paths["test_trades"], index=False)
+    _write_json(paths["diagnostics"], diagnostics)
+
+    updated = dict(manifest)
+    metrics = dict(updated.get("metrics") or {})
+    metrics["test"] = test_metrics
+    updated["metrics"] = metrics
+    updated["diagnostics"] = diagnostics
+    updated["diagnostics_path"] = paths["diagnostics"]
+    updated["artifact_paths"] = paths
+    updated["meta_sample_weight_diagnostics"] = meta_diagnostics
+    updated["final_test_evaluation"] = final_test_evaluation
+    updated["test_evaluation"] = {
+        "status": "evaluated",
+        "reason": "trial selected on validation evidence",
+        "selection_roles": list(selection_roles),
+    }
+    _write_json(trial_dir / "manifest.json", updated)
+    final_model.to("cpu")
+    _move_meta_model(meta_model, torch.device("cpu"))
+    return updated
+
+
+def _apply_selected_test_evaluations(
+    trial_manifests: Sequence[Mapping[str, Any]],
+    selection: Mapping[str, Any],
+    contexts: Mapping[str, Mapping[str, Any]],
+    *,
+    config: Mapping[str, Any],
+    run_dir: Path,
+    smoke: bool,
+    device: torch.device,
+) -> List[Dict[str, Any]]:
+    """Score only trials chosen by validation roles, and record each one in the ledger."""
+
+    roles = set(final_test_selection_roles(config))
+    updated: List[Dict[str, Any]] = []
+    for trial in trial_manifests:
+        current = dict(trial)
+        if current.get("status") != "completed":
+            updated.append(current)
+            continue
+        trial_roles = _selection_roles_for_trial(current, selection)
+        if not (set(trial_roles) & roles):
+            current["test_evaluation"] = {
+                "status": "not_selected",
+                "reason": "final test is scored only for trials selected on validation",
+                "selection_roles": trial_roles,
+            }
+            current["final_test_evaluation"] = None
+            metrics = dict(current.get("metrics") or {})
+            metrics["test"] = {}
+            current["metrics"] = metrics
+            manifest_path = current.get("manifest_path")
+            if manifest_path:
+                _write_json(Path(manifest_path), current)
+            updated.append(current)
+            continue
+        context = contexts.get(str(current.get("trial_id")))
+        if context is None:
+            raise RuntimeError(f"Selected trial {current.get('trial_id')} is missing its test-evaluation context")
+        updated.append(
+            _score_trial_on_test(
+                current,
+                context,
+                run_dir=run_dir,
+                smoke=smoke,
+                device=device,
+                selection_roles=trial_roles,
+            )
+        )
+    return updated
+
+
+def _carry_selection_annotations(
+    annotated: Optional[Mapping[str, Any]],
+    manifests: Sequence[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not annotated:
+        return None
+    match = next((item for item in manifests if item.get("trial_id") == annotated.get("trial_id")), None)
+    if match is None:
+        return dict(annotated)
+    merged = dict(match)
+    if "selected_by" in annotated:
+        merged["selected_by"] = annotated["selected_by"]
+    if "selection_status" in annotated:
+        merged["selection_status"] = annotated["selection_status"]
+    return merged
 
 
 def _failed_trial_manifest(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, error: BaseException) -> Dict[str, Any]:
@@ -1538,7 +1958,14 @@ def _skipped_trial_manifest(spec: Mapping[str, Any], run_dir: Path, *, smoke: bo
     return manifest
 
 
-def _run_trial_safe(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, device: torch.device) -> Dict[str, Any]:
+def _run_trial_safe(
+    spec: Mapping[str, Any],
+    run_dir: Path,
+    *,
+    smoke: bool,
+    device: torch.device,
+    test_contexts: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     trial_cfg = (spec.get("config", {}) or {}).get("trial", {})
     if isinstance(trial_cfg, Mapping) and bool(trial_cfg.get("skip", False)):
         return _skipped_trial_manifest(
@@ -1548,7 +1975,7 @@ def _run_trial_safe(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devi
             reason=str(trial_cfg.get("skip_reason", "trial marked skipped by config")),
         )
     try:
-        return _run_one_trial(spec, run_dir, smoke=smoke, device=device)
+        return _run_one_trial(spec, run_dir, smoke=smoke, device=device, test_contexts=test_contexts)
     except RuntimeError as exc:
         if "Final test set reuse blocked" in str(exc):
             raise
@@ -1617,6 +2044,7 @@ def select_trials_with_trade_floor(
     trials: Sequence[Mapping[str, Any]],
     config: Mapping[str, Any],
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Dict[str, Any]]:
+    validate_selection_metric(config)
     pipeline = config.get("pipeline", {}) or {}
     metric = str(pipeline.get("selection_metric", "metrics.validation.net_pnl"))
     mode = str(pipeline.get("selection_mode", "max"))
@@ -1958,9 +2386,9 @@ def _report_markdown(report: Mapping[str, Any]) -> str:
         "- Raw best status: `{}`".format(best.get("selection_status", "unknown")),
         "- Raw validation net PnL: `{}`".format(best["metrics"]["validation"]["net_pnl"]),
         "- Raw validation trades: `{}`".format(best["metrics"]["validation"]["trades"]),
-        "- Test net PnL: `{}`".format(best["metrics"]["test"]["net_pnl"]),
-        "- Test trades: `{}`".format(best["metrics"]["test"]["trades"]),
-        "- Test coverage: `{}`".format(best["metrics"]["test"]["coverage"]),
+        "- Test net PnL: `{}`".format((best["metrics"].get("test") or {}).get("net_pnl", "not_evaluated")),
+        "- Test trades: `{}`".format((best["metrics"].get("test") or {}).get("trades", "not_evaluated")),
+        "- Test coverage: `{}`".format((best["metrics"].get("test") or {}).get("coverage", "not_evaluated")),
         "- Minimum validation trades for trading selection: `{}`".format(selection.get("min_validation_trades")),
     ]
     if best_trading:
@@ -2005,6 +2433,7 @@ def run_meta_labeling_mvp(
     if artifact_root:
         config_for_search.setdefault("pipeline", {})["artifact_root"] = str(artifact_root)
 
+    validate_selection_metric(config_for_search)
     enforce_trackio_policy(config_for_search, smoke=smoke)
 
     pipeline = config_for_search.get("pipeline", {}) or {}
@@ -2016,12 +2445,23 @@ def run_meta_labeling_mvp(
 
     resolved_config_path = _write_yaml(run_dir / "resolved_config.yml", config_for_search)
     environment_path = _write_json(run_dir / "environment.json", _environment_manifest())
+    raw_data = _raw_data_manifest(config_for_search)
+    artifact_root_path = Path(pipeline.get("artifact_root", "artifacts/runs"))
+    raw_data_guard = check_raw_data_registry(
+        config_for_search,
+        artifact_root_path,
+        run_id=run_id,
+        raw_manifest=raw_data,
+        smoke=smoke,
+    )
     run_identity = {
         **_config_identity(config_for_search, resolved_config_path),
         "source_config_path": config_path,
         "run_id": run_id,
         "run_dir": run_dir,
-        "raw_data": _raw_data_manifest(config_for_search),
+        "research_spec_hash": research_spec_hash(config_for_search),
+        "raw_data": raw_data,
+        "raw_data_guard": raw_data_guard,
         "git": _git_manifest(),
         "dependencies": _dependency_manifest(),
         "device": _device_manifest(resolved_device),
@@ -2045,13 +2485,27 @@ def run_meta_labeling_mvp(
             run_id=run_id,
         )
 
-    trial_manifests = [_run_trial_safe(spec, run_dir, smoke=smoke, device=resolved_device) for spec in trial_specs]
+    test_contexts: Dict[str, Dict[str, Any]] = {}
+    trial_manifests = [
+        _run_trial_safe(spec, run_dir, smoke=smoke, device=resolved_device, test_contexts=test_contexts) for spec in trial_specs
+    ]
     completed_trials = [trial for trial in trial_manifests if trial.get("status") == "completed"]
     if not completed_trials:
         trial_accounting = _trial_accounting(trial_manifests, {"min_validation_trades": int((config_for_search.get("pipeline", {}) or {}).get("min_validation_trades", 1) or 0)}, config_for_search)
         _write_json(run_dir / "trial_accounting.json", trial_accounting)
         raise RuntimeError("All v2 trial specs failed; see trial manifests for failure reasons")
     best, best_trading, selection = select_trials_with_trade_floor(completed_trials, config_for_search)
+    trial_manifests = _apply_selected_test_evaluations(
+        trial_manifests,
+        selection,
+        test_contexts,
+        config=config_for_search,
+        run_dir=run_dir,
+        smoke=smoke,
+        device=resolved_device,
+    )
+    best = _carry_selection_annotations(best, trial_manifests)
+    best_trading = _carry_selection_annotations(best_trading, trial_manifests)
     best_path = run_dir / "best_trial_manifest.json"
     _write_json(best_path, best)
     best_trading_path = None
