@@ -136,3 +136,29 @@ walk-forward boundaries it actually used (development, gap, test, and each
 fold). Each benchmark model that reads the test split increments the same
 final-test guard under the `forecast_benchmark` scope before its test metrics
 are computed.
+
+## Backtest Statistics And Evidence Grade
+
+Validation and test summaries report a single path (`path_type: single_path`).
+Per-period Sharpe is the mean period return divided by its sample standard
+deviation. Annualised Sharpe multiplies that by `sqrt(105192)`. The factor is
+a 5-minute 24/7 clock: 365.25 days times 288 bars per day. It is not a 252-day
+equity factor.
+
+PSR is the Bailey and López de Prado normal CDF. Skewness is the sample
+skewness and kurtosis is non-excess (a normal distribution has kurtosis 3), so
+the variance term uses `(kurtosis - 1) / 4`. DSR is that PSR at the
+Euler-Mascheroni expected-maximum Sharpe. The null mean is zero. The hurdle
+uses the recorded trial count and the variance of the trials' per-period
+Sharpes. DSR is `unavailable` with a reason when the trial count is below 2 or
+that variance cannot be computed.
+
+PBO is a separate CSCV estimate on the validation trial-by-period return
+matrix. Its `path_type` is `multi_path`. When the matrix is too small, PBO is
+`unavailable` with a reason. Full CPCV is not part of this control.
+
+`evidence_grade` is `alpha_claim_grade` only when the selected test has at
+least `max(min_validation_trades, 1)` trades, DSR is available, the final-test
+ledger count is exactly one, and the run is not smoke. Every other run is
+`debugging_only`. `failure_modes.concentrated_pnl` uses the positive-return
+HHI (default threshold 0.5), not trade coverage.
