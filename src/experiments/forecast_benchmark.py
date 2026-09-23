@@ -21,6 +21,7 @@ from src.experiments.meta_labeling_mvp import (
     _json_ready,
     _load_yaml,
     _prediction_metrics,
+    _record_final_test_evaluation,
     _run_id,
     _sha256_path,
     _split_manifest,
@@ -457,6 +458,31 @@ def _infer_benchmark_run_id(run_dir: Path, run_id: Optional[str]) -> str:
     return str(run_id or run_dir.parent.name or run_dir.name)
 
 
+def _count_benchmark_test_use(
+    config: Mapping[str, Any],
+    run_dir: Path,
+    *,
+    model_id: str,
+    split_hash: str,
+    smoke: bool,
+) -> Dict[str, Any]:
+    """Count one forecast-benchmark read of the final test split.
+
+    Nested benchmark directories live under the run folder. The ledger stays next
+    to the run, in the same file the meta-label guard uses.
+    """
+
+    anchor = run_dir.parent if run_dir.name == "forecast_benchmark" else run_dir
+    return _record_final_test_evaluation(
+        config,
+        anchor,
+        trial_id=str(model_id),
+        split_hash=split_hash,
+        smoke=smoke,
+        scope="forecast_benchmark",
+    )
+
+
 def _log_benchmark_trackio_model(
     config: Mapping[str, Any],
     *,
@@ -534,32 +560,46 @@ def run_forecast_benchmark_from_dataset(
     tracking_run_id = _infer_benchmark_run_id(run_dir, run_id)
 
     if "zero_return" in model_ids or "naive" in model_ids:
-        model_manifests.append(
-            _write_model_result(
-                "zero_return",
-                run_dir / "models" / "zero_return",
-                zero_return_predictions(dataset, _concat_fold_indices(splits["folds"], "validation")),
-                zero_return_predictions(dataset, splits["test"]),
-                dataset,
-                config,
-                kind="baseline",
-                device=resolved_device,
-            )
+        zero_evaluation = _count_benchmark_test_use(
+            config,
+            run_dir,
+            model_id="zero_return",
+            split_hash=split_manifest_hash,
+            smoke=smoke,
         )
+        zero_manifest = _write_model_result(
+            "zero_return",
+            run_dir / "models" / "zero_return",
+            zero_return_predictions(dataset, _concat_fold_indices(splits["folds"], "validation")),
+            zero_return_predictions(dataset, splits["test"]),
+            dataset,
+            config,
+            kind="baseline",
+            device=resolved_device,
+        )
+        zero_manifest["final_test_evaluation"] = zero_evaluation
+        model_manifests.append(zero_manifest)
 
     if "momentum" in model_ids:
-        model_manifests.append(
-            _write_model_result(
-                "momentum",
-                run_dir / "models" / "momentum",
-                momentum_predictions(dataset, _concat_fold_indices(splits["folds"], "validation")),
-                momentum_predictions(dataset, splits["test"]),
-                dataset,
-                config,
-                kind="baseline",
-                device=resolved_device,
-            )
+        momentum_evaluation = _count_benchmark_test_use(
+            config,
+            run_dir,
+            model_id="momentum",
+            split_hash=split_manifest_hash,
+            smoke=smoke,
         )
+        momentum_manifest = _write_model_result(
+            "momentum",
+            run_dir / "models" / "momentum",
+            momentum_predictions(dataset, _concat_fold_indices(splits["folds"], "validation")),
+            momentum_predictions(dataset, splits["test"]),
+            dataset,
+            config,
+            kind="baseline",
+            device=resolved_device,
+        )
+        momentum_manifest["final_test_evaluation"] = momentum_evaluation
+        model_manifests.append(momentum_manifest)
 
     if "lstm" in model_ids:
         lstm_dir = run_dir / "models" / "lstm"
@@ -573,6 +613,13 @@ def run_forecast_benchmark_from_dataset(
         oof_predictions = pd.concat(oof_frames, ignore_index=True).sort_values("timestamp")
         final_model, _ = train_base_model(dataset, splits["development"], config, resolved_device)
         torch.save(final_model.state_dict(), lstm_dir / "base_multi_horizon_lstm.pt")
+        lstm_evaluation = _count_benchmark_test_use(
+            config,
+            run_dir,
+            model_id="lstm",
+            split_hash=split_manifest_hash,
+            smoke=smoke,
+        )
         test_predictions = predict_base_model(final_model, dataset, splits["test"], resolved_device, batch_size=batch_size)
         manifest = _write_model_result(
             "lstm",
@@ -586,6 +633,7 @@ def run_forecast_benchmark_from_dataset(
         )
         manifest["model_path"] = lstm_dir / "base_multi_horizon_lstm.pt"
         manifest["checkpoint_id"] = _sha256_path(Path(manifest["model_path"]))
+        manifest["final_test_evaluation"] = lstm_evaluation
         _write_json(lstm_dir / "manifest.json", manifest)
         model_manifests.append(manifest)
 
@@ -602,20 +650,29 @@ def run_forecast_benchmark_from_dataset(
                 compile_kwargs=timesfm_cfg.get("compile_kwargs", {}) or {},
             )
             oof_predictions = timesfm_predictions(dataset, _concat_fold_indices(splits["folds"], "validation"), adapter)
-            test_predictions = timesfm_predictions(dataset, splits["test"], adapter)
-            model_manifests.append(
-                _write_model_result(
-                    "timesfm",
-                    timesfm_dir,
-                    oof_predictions,
-                    test_predictions,
-                    dataset,
-                    config,
-                    kind="timesfm_zero_shot",
-                    device=resolved_device,
-                )
+            timesfm_evaluation = _count_benchmark_test_use(
+                config,
+                run_dir,
+                model_id="timesfm",
+                split_hash=split_manifest_hash,
+                smoke=smoke,
             )
+            test_predictions = timesfm_predictions(dataset, splits["test"], adapter)
+            timesfm_manifest = _write_model_result(
+                "timesfm",
+                timesfm_dir,
+                oof_predictions,
+                test_predictions,
+                dataset,
+                config,
+                kind="timesfm_zero_shot",
+                device=resolved_device,
+            )
+            timesfm_manifest["final_test_evaluation"] = timesfm_evaluation
+            model_manifests.append(timesfm_manifest)
         except Exception as exc:
+            if "Final test set reuse blocked" in str(exc):
+                raise
             timesfm_dir.mkdir(parents=True, exist_ok=True)
             manifest = {
                 "model_id": "timesfm",
@@ -652,13 +709,17 @@ def run_forecast_benchmark_from_dataset(
             smoke=smoke,
         )
 
+    final_test_evaluations = [item["final_test_evaluation"] for item in model_manifests if item.get("final_test_evaluation")]
     summary = {
         "stage": "forecast_benchmark",
         "path": run_dir,
         "smoke": smoke,
         "models": model_manifests,
         "config_hash": config_hash,
+        "split_manifest_path": run_dir / "split_manifest.json",
         "split_manifest_hash": split_manifest_hash,
+        "final_test_evaluations": final_test_evaluations,
+        "test_evaluation_count": len(final_test_evaluations),
         "forecast_metrics_are_primary": True,
         "backtest_metrics_are_secondary": True,
         "manifest_path": run_dir / "manifest.json",
