@@ -236,7 +236,7 @@ oneOf:
             minimum: 0
       search:
         type: object
-        required: [mode, spaces]
+        required: [mode]
         properties:
           mode:
             const: grid
@@ -245,6 +245,35 @@ oneOf:
             minimum: 1
           spaces:
             type: object
+          trials:
+            type: array
+            items:
+              type: object
+      research:
+        type: object
+        properties:
+          final_test_guard:
+            type: object
+            properties:
+              do_not_reuse_test:
+                type: boolean
+              ledger_path:
+                type: string
+              evaluate_selection_roles:
+                type: array
+                items:
+                  type: string
+          raw_data_guard:
+            type: object
+            properties:
+              on_change:
+                type: string
+                enum:
+                  - warn
+                  - fail
+                  - ignore
+              registry_path:
+                type: string
       tracking:
         type: object
         properties:
@@ -252,6 +281,8 @@ oneOf:
             type: object
             properties:
               enabled:
+                type: boolean
+              allow_local_debug_without_trackio:
                 type: boolean
               project:
                 type: string
