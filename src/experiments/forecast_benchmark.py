@@ -42,7 +42,7 @@ from src.experiments.meta_labeling_mvp import (
     train_base_model,
 )
 from src.training.devices import resolve_training_device
-from src.utils.trackio_logging import log_trackio_run
+from src.utils.trackio_logging import enforce_trackio_policy, log_trackio_run
 
 
 DEFAULT_BENCHMARK_MODELS = ["zero_return", "momentum", "lstm"]
@@ -519,8 +519,10 @@ def _log_benchmark_trackio_model(
         "alpha_policy": (config.get("alpha_backtest", {}) or {}),
         **groups,
     }
-    if manifest.get("reason"):
-        run_config["skip_reason"] = manifest.get("reason")
+    run_config["reason"] = manifest.get("reason")
+    run_config["skip_reason"] = manifest.get("skip_reason") or (
+        manifest.get("reason") if manifest.get("status") in {"failed", "skipped"} else None
+    )
 
     log_trackio_run(
         config,
@@ -679,6 +681,7 @@ def run_forecast_benchmark_from_dataset(
                 "kind": "timesfm_zero_shot",
                 "status": "skipped",
                 "reason": str(exc),
+                "skip_reason": str(exc),
                 "manifest_path": timesfm_dir / "manifest.json",
             }
             _write_json(timesfm_dir / "manifest.json", manifest)
@@ -691,6 +694,7 @@ def run_forecast_benchmark_from_dataset(
             "kind": "timesfm_zero_shot",
             "status": "skipped",
             "reason": "TimesFM benchmark disabled in config",
+            "skip_reason": "TimesFM benchmark disabled in config",
             "manifest_path": timesfm_dir / "manifest.json",
         }
         _write_json(timesfm_dir / "manifest.json", manifest)
@@ -749,6 +753,8 @@ def run_forecast_benchmark(
         config.setdefault("pipeline", {})["run_name"] = run_name
     if artifact_root:
         config.setdefault("pipeline", {})["artifact_root"] = str(artifact_root)
+
+    enforce_trackio_policy(config, smoke=smoke)
 
     pipeline = config.get("pipeline", {}) or {}
     run_id = _run_id(str(pipeline.get("run_name", "forecast_benchmark")))

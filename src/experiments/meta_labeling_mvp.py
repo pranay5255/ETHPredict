@@ -2163,6 +2163,8 @@ def _trial_accounting(trials: Sequence[Mapping[str, Any]], selection: Mapping[st
         selection_roles = _selection_roles_for_trial(trial, selection)
         selection_role = selection_roles[0]
         failure_modes = _trial_failure_modes(trial, selection_role=selection_role, min_trades=min_trades, config=config)
+        if isinstance(trial, dict):
+            trial["failure_modes"] = failure_modes
         for flag, value in failure_modes["flags"].items():
             flag_counts[flag] = flag_counts.get(flag, 0) + int(bool(value))
         counts[status] = counts.get(status, 0) + 1
@@ -2181,6 +2183,7 @@ def _trial_accounting(trials: Sequence[Mapping[str, Any]], selection: Mapping[st
                 "test_trades": test_trades,
                 "selection_role": selection_role,
                 "selection_roles": selection_roles,
+                "reason": trial.get("reason"),
                 "skip_reason": trial.get("skip_reason"),
                 "artifact_paths": trial.get("artifact_paths", {}),
                 "split_manifest_hash": trial.get("split_manifest_hash"),
@@ -2244,9 +2247,12 @@ def _log_meta_label_trial_trackio(
     artifacts = {"manifest": trial.get("manifest_path"), "diagnostics": trial.get("diagnostics_path"), "model": trial.get("model_path")}
     artifacts.update(trial.get("artifact_paths", {}) or {})
     artifacts = {key: value for key, value in artifacts.items() if value is not None}
-    is_raw_best = trial_id == raw_best.get("trial_id")
-    is_best_trading = bool(best_trading and trial_id == best_trading.get("trial_id"))
+    raw_best_id = raw_best.get("trial_id") if isinstance(raw_best, Mapping) else None
+    trading_id = best_trading.get("trial_id") if isinstance(best_trading, Mapping) else None
+    is_raw_best = raw_best_id is not None and trial_id == raw_best_id
+    is_best_trading = trading_id is not None and trial_id == trading_id
     selection_roles = _selection_roles_for_trial(trial, selection)
+    failure_modes = trial.get("failure_modes") or {"flags": {}, "metrics": {}}
 
     run_config = {
         "stage": "meta_label_mvp_trial",
@@ -2266,6 +2272,8 @@ def _log_meta_label_trial_trackio(
         "diagnostics_path": trial.get("diagnostics_path"),
         "model_path": trial.get("model_path"),
         "trial_status": trial.get("status", "completed"),
+        "reason": trial.get("reason"),
+        "skip_reason": trial.get("skip_reason"),
         "split_manifest_hash": trial.get("split_manifest_hash"),
         "feature_families": ((trial.get("dataset", {}) or {}).get("feature_manifest", {}) or {}).get("families", []),
         "costs": (trial.get("config", {}) or {}).get("costs", {}),
@@ -2299,12 +2307,7 @@ def _log_meta_label_trial_trackio(
             "final_test_reuse_count": (trial.get("final_test_evaluation", {}) or {}).get("count", 0),
             "validation_trades": _metric_value(trial, "metrics.validation.trades"),
             "test_trades": _metric_value(trial, "metrics.test.trades"),
-            "failure_modes": _trial_failure_modes(
-                trial,
-                selection_role=selection_status,
-                min_trades=int((config.get("pipeline", {}) or {}).get("min_validation_trades", 1) or 0),
-                config=config,
-            ),
+            "failure_modes": failure_modes,
         },
     }
     log_trackio_run(
@@ -2371,6 +2374,133 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
         smoke=smoke,
         receipt_path=Path(report["run_dir"]) / "tracking" / "summary.json",
     )
+
+
+def _trial_receipt_path(trial: Mapping[str, Any]) -> Optional[Path]:
+    manifest_path = trial.get("manifest_path")
+    if not manifest_path:
+        return None
+    return Path(manifest_path).parent / "trackio_receipt.json"
+
+
+def _write_trial_manifests(trials: Sequence[Mapping[str, Any]]) -> None:
+    for trial in trials:
+        manifest_path = trial.get("manifest_path")
+        if manifest_path:
+            _write_json(Path(manifest_path), trial)
+
+
+def _stamp_trackio_receipts(
+    trials: Sequence[Dict[str, Any]],
+    accounting: Dict[str, Any],
+    *,
+    accounting_path: Path,
+    summary_receipt: Optional[Path] = None,
+) -> None:
+    """Point local trial manifests and the accounting file at Trackio receipt files."""
+
+    by_id = {row.get("trial_id"): row for row in accounting.get("trials", []) if isinstance(row, dict)}
+    for trial in trials:
+        receipt = _trial_receipt_path(trial)
+        if receipt is None:
+            continue
+        trial["trackio_receipt_path"] = receipt
+        row = by_id.get(trial.get("trial_id"))
+        if isinstance(row, dict):
+            row["trackio_receipt_path"] = receipt
+    if summary_receipt is not None:
+        accounting["summary_trackio_receipt_path"] = summary_receipt
+    _write_trial_manifests(trials)
+    _write_json(accounting_path, accounting)
+
+
+def _log_saved_trial_trackio(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    trials: Sequence[Mapping[str, Any]],
+    selection: Mapping[str, Any],
+    smoke: bool,
+    raw_best: Optional[Mapping[str, Any]] = None,
+    best_trading: Optional[Mapping[str, Any]] = None,
+) -> None:
+    for trial in trials:
+        if raw_best is None:
+            selection_status = str(trial.get("status", "failed"))
+        else:
+            selection_status = _selection_status_for_trial(trial, raw_best, best_trading, selection)
+        _log_meta_label_trial_trackio(
+            config,
+            run_id=run_id,
+            trial=trial,
+            selection_status=selection_status,
+            raw_best=raw_best or {},
+            best_trading=best_trading,
+            selection=selection,
+            trial_count=len(trials),
+            smoke=smoke,
+        )
+
+
+def _log_accounting_summary_trackio(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    run_dir: Path,
+    accounting: Mapping[str, Any],
+    smoke: bool,
+    status: str,
+) -> Path:
+    receipt_path = run_dir / "tracking" / "accounting.json"
+    log_trackio_run(
+        config,
+        name=f"meta_label/{run_id}/accounting",
+        group="meta_label_mvp",
+        run_config={
+            "stage": "meta_label_mvp_accounting",
+            "run_id": run_id,
+            "trial_count": accounting.get("trial_count"),
+            "counts": accounting.get("counts", {}),
+            "failure_modes": accounting.get("failure_modes", {}),
+            "smoke": smoke,
+        },
+        metrics={
+            "trial_accounting": accounting.get("failure_modes", {}),
+            "counts": accounting.get("counts", {}),
+        },
+        status=status,
+        smoke=smoke,
+        receipt_path=receipt_path,
+    )
+    return receipt_path
+
+
+def _raise_after_logging_failed_trials(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    run_dir: Path,
+    trials: Sequence[Dict[str, Any]],
+    smoke: bool,
+) -> None:
+    """Persist and log the accounting summary, then raise."""
+
+    min_trades = int((config.get("pipeline", {}) or {}).get("min_validation_trades", 1) or 0)
+    selection = {"min_validation_trades": min_trades}
+    accounting = _trial_accounting(trials, selection, config)
+    accounting_path = _write_json(run_dir / "trial_accounting.json", accounting)
+    _write_trial_manifests(trials)
+    summary_receipt = _log_accounting_summary_trackio(
+        config,
+        run_id=run_id,
+        run_dir=run_dir,
+        accounting=accounting,
+        smoke=smoke,
+        status="failed",
+    )
+    _log_saved_trial_trackio(config, run_id=run_id, trials=trials, selection=selection, smoke=smoke)
+    _stamp_trackio_receipts(trials, accounting, accounting_path=accounting_path, summary_receipt=summary_receipt)
+    raise RuntimeError("All v2 trial specs failed; see trial manifests for failure reasons")
 
 
 def _report_markdown(report: Mapping[str, Any]) -> str:
@@ -2491,9 +2621,13 @@ def run_meta_labeling_mvp(
     ]
     completed_trials = [trial for trial in trial_manifests if trial.get("status") == "completed"]
     if not completed_trials:
-        trial_accounting = _trial_accounting(trial_manifests, {"min_validation_trades": int((config_for_search.get("pipeline", {}) or {}).get("min_validation_trades", 1) or 0)}, config_for_search)
-        _write_json(run_dir / "trial_accounting.json", trial_accounting)
-        raise RuntimeError("All v2 trial specs failed; see trial manifests for failure reasons")
+        _raise_after_logging_failed_trials(
+            config_for_search,
+            run_id=run_id,
+            run_dir=run_dir,
+            trials=trial_manifests,
+            smoke=smoke,
+        )
     best, best_trading, selection = select_trials_with_trade_floor(completed_trials, config_for_search)
     trial_manifests = _apply_selected_test_evaluations(
         trial_manifests,
@@ -2515,19 +2649,7 @@ def run_meta_labeling_mvp(
 
     trial_accounting = _trial_accounting(trial_manifests, selection, config_for_search)
     trial_accounting_path = _write_json(run_dir / "trial_accounting.json", trial_accounting)
-
-    for trial in trial_manifests:
-        _log_meta_label_trial_trackio(
-            config_for_search,
-            run_id=run_id,
-            trial=trial,
-            selection_status=_selection_status_for_trial(trial, best, best_trading, selection),
-            raw_best=best,
-            best_trading=best_trading,
-            selection=selection,
-            trial_count=len(trial_manifests),
-            smoke=smoke,
-        )
+    _write_trial_manifests(trial_manifests)
 
     report_dir = run_dir / "report"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -2557,5 +2679,39 @@ def run_meta_labeling_mvp(
     _write_json(report["report_json_path"], report)
     Path(report["report_markdown_path"]).write_text(_report_markdown(report), encoding="utf-8")
     _write_json(run_dir / "manifest.json", report)
+    _log_saved_trial_trackio(
+        config_for_search,
+        run_id=run_id,
+        trials=trial_manifests,
+        selection=selection,
+        smoke=smoke,
+        raw_best=best,
+        best_trading=best_trading,
+    )
     _log_meta_label_summary_trackio(config_for_search, run_id=run_id, report=report, smoke=smoke)
+    summary_receipt = _log_accounting_summary_trackio(
+        config_for_search,
+        run_id=run_id,
+        run_dir=run_dir,
+        accounting=trial_accounting,
+        smoke=smoke,
+        status="success",
+    )
+    _stamp_trackio_receipts(
+        trial_manifests,
+        trial_accounting,
+        accounting_path=trial_accounting_path,
+        summary_receipt=summary_receipt,
+    )
+    best = _carry_selection_annotations(best, trial_manifests)
+    best_trading = _carry_selection_annotations(best_trading, trial_manifests)
+    if best is not None:
+        _write_json(best_path, best)
+        report["best_trial"] = best
+    if best_trading is not None and best_trading_path is not None:
+        _write_json(best_trading_path, best_trading)
+        report["best_trading_trial"] = best_trading
+    report["trial_accounting"] = trial_accounting
+    _write_json(report["report_json_path"], report)
+    _write_json(run_dir / "manifest.json", report)
     return _json_ready(report)

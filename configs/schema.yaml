@@ -282,6 +282,8 @@ oneOf:
             properties:
               enabled:
                 type: boolean
+              allow_local_debug_without_trackio:
+                type: boolean
               project:
                 type: string
               auto_log_gpu:
