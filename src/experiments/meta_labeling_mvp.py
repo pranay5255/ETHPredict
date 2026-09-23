@@ -31,6 +31,13 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.config.loader import expand_grid_search
 from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_for_duration
 from src.features.labeling import meta_triple_barrier_labels
+from src.features.sample_weights import (
+    average_uniqueness,
+    build_label_spans,
+    sample_weight_config,
+    sample_weight_diagnostics,
+    sample_weights_and_diagnostics,
+)
 from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics
 from src.utils.trackio_logging import enforce_trackio_policy, log_trackio_run
@@ -564,6 +571,11 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         y_ret.append(ret_row)
         y_dir.append(dir_row)
         feature_row = features_df.iloc[label_idx]
+        horizon_span_meta: Dict[str, Any] = {}
+        for horizon_name, horizon_bars in horizons:
+            horizon_end_idx = int(label_idx + horizon_bars)
+            horizon_span_meta[f"{horizon_name}_label_span_end_idx"] = horizon_end_idx
+            horizon_span_meta[f"{horizon_name}_label_span_end_timestamp"] = prices.index[horizon_end_idx]
         sample_rows.append(
             {
                 "timestamp": prices.index[label_idx],
@@ -579,6 +591,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
                 "event_trigger_threshold": event_metadata.get(label_idx, {}).get("trigger_threshold", 0.0),
                 "event_reference_volatility": event_metadata.get(label_idx, {}).get("reference_volatility", float(realized_vol.iloc[label_idx])),
                 "event_time": prices.index[label_idx],
+                **horizon_span_meta,
                 "source_bar_index": label_idx,
             }
         )
@@ -591,14 +604,40 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         price_path["vol_regime"] = features_df["vol_regime"].to_numpy(dtype=float)
     price_path = price_path.reset_index(drop=True)
 
-    sample_weights = torch.full((len(X),), 1.0 / max(len(X), 1), dtype=torch.float32)
+    sample_df = pd.DataFrame(sample_rows)
+    span_frame = build_label_spans(
+        sample_df["sample_index"],
+        pd.to_numeric(sample_df["sample_index"], errors="coerce") + max_horizon,
+        timestamps=prices.index,
+    )
+    for column in span_frame.columns:
+        sample_df[column] = span_frame[column].to_numpy()
+    sample_df["average_uniqueness"] = average_uniqueness(sample_df["label_span_start_idx"], sample_df["label_span_end_idx"])
+
+    weight_cfg = sample_weight_config(config)
+    sample_weights_series, sample_weight_diag = sample_weights_and_diagnostics(
+        sample_df,
+        mode=weight_cfg["base_mode"],
+        normalize=weight_cfg["normalize"],
+        return_values=np.asarray(y_ret, dtype=float),
+    )
+    sample_df["sample_weight"] = sample_weights_series.to_numpy(dtype=float)
+    sample_weight_diag = {
+        **sample_weight_diag,
+        "base_mode": weight_cfg["base_mode"],
+        "meta_mode": weight_cfg["meta_mode"],
+    }
+    sample_weights = torch.tensor(sample_df["sample_weight"].to_numpy(dtype=float), dtype=torch.float32)
     y_dir_array = np.asarray(y_dir, dtype=float) if y_dir else np.empty((0, len(horizons)))
     event_diagnostics = dict(event_diagnostics)
     event_diagnostics["class_balance"] = {
         name: float(y_dir_array[:, idx].mean()) if len(y_dir_array) else 0.0
         for idx, (name, _) in enumerate(horizons)
     }
-    event_diagnostics.update(_span_uniqueness(event_indices, max_horizon))
+    event_diagnostics.update({
+        "average_uniqueness": sample_weight_diag["average_uniqueness"],
+        "effective_sample_size": sample_weight_diag["effective_sample_size"],
+    })
     bar_clock_diagnostics = _bar_clock_diagnostics(features_df, log_returns, realized_vol, y_dir_array, horizons)
     return {
         "target": "multi_horizon",
@@ -606,9 +645,9 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         "y_ret": torch.tensor(y_ret, dtype=torch.float32),
         "y_dir": torch.tensor(y_dir, dtype=torch.float32),
         "sample_weights": sample_weights,
-        "samples": pd.DataFrame(sample_rows),
+        "samples": sample_df,
         "price_path": price_path,
-        "close": pd.Series([row["close"] for row in sample_rows], index=pd.Index([row["timestamp"] for row in sample_rows], name="timestamp")),
+        "close": pd.Series(sample_df["close"].to_numpy(dtype=float), index=pd.Index(sample_df["timestamp"], name="timestamp")),
         "input_size": int(raw_features.shape[1]),
         "granularity": granularity,
         "sequence_length": sequence_length,
@@ -620,6 +659,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         "feature_manifest": preprocessor.feature_manifest(),
         "bar_manifest": preprocessor.bar_manifest(),
         "event_diagnostics": event_diagnostics,
+        "sample_weight_diagnostics": sample_weight_diag,
         "bar_clock_diagnostics": bar_clock_diagnostics,
         "side_data_manifest": {"enabled_groups": [], "coverage": {}, "status": "disabled"},
     }
@@ -766,6 +806,44 @@ def predict_base_model(model: MultiHorizonLSTM, dataset: Mapping[str, Any], indi
     return frame
 
 
+def _weighted_binary_classification_summary(y_true: Sequence[Any], y_prob: Sequence[Any], weights: Sequence[Any]) -> Dict[str, float]:
+    truth = pd.to_numeric(pd.Series(y_true), errors="coerce").fillna(0.0).to_numpy(dtype=float) >= 0.5
+    prob = pd.to_numeric(pd.Series(y_prob), errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    pred = prob >= 0.5
+    w = pd.to_numeric(pd.Series(weights), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=float)
+    w = np.where(w > 0.0, w, 0.0)
+    if len(w) != len(truth) or not np.any(w > 0.0):
+        w = np.ones(len(truth), dtype=float)
+    total = max(float(w.sum()), 1e-12)
+    tp = float(w[truth & pred].sum())
+    fp = float(w[~truth & pred].sum())
+    fn = float(w[truth & ~pred].sum())
+    accuracy = float(w[truth == pred].sum() / total)
+    precision = tp / max(tp + fp, 1e-12)
+    recall = tp / max(tp + fn, 1e-12)
+    f1 = 2.0 * precision * recall / max(precision + recall, 1e-12)
+    epsilon = 1e-15
+    clipped = np.clip(prob, epsilon, 1.0 - epsilon)
+    log_loss = -float((w * (truth.astype(float) * np.log(clipped) + (1.0 - truth.astype(float)) * np.log(1.0 - clipped))).sum() / total)
+    return {
+        "weight_sum": total,
+        "accuracy": accuracy,
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1": float(f1),
+        "log_loss": log_loss,
+    }
+
+
+def _weighted_average(values: Sequence[Any], weights: Sequence[Any], default: float = 0.0) -> float:
+    clean_values = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(dtype=float)
+    clean_weights = pd.to_numeric(pd.Series(weights), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=float)
+    mask = np.isfinite(clean_values) & np.isfinite(clean_weights) & (clean_weights > 0.0)
+    if not np.any(mask):
+        return float(default)
+    return float(np.average(clean_values[mask], weights=clean_weights[mask]))
+
+
 def _prediction_metrics(frame: pd.DataFrame, horizons: Sequence[str]) -> Dict[str, Any]:
     metrics: Dict[str, Any] = {}
     for horizon in horizons:
@@ -785,6 +863,13 @@ def _prediction_metrics(frame: pd.DataFrame, horizons: Sequence[str]) -> Dict[st
                 )
             ),
         }
+    if "sample_weight" in frame.columns:
+        for horizon in horizons:
+            metrics[horizon]["direction_weighted"] = _weighted_binary_classification_summary(
+                frame[f"{horizon}_true_direction"],
+                frame[f"{horizon}_direction_prob"],
+                frame["sample_weight"],
+            )
     return metrics
 
 
@@ -827,14 +912,52 @@ def candidate_signals(predictions: pd.DataFrame, dataset: Mapping[str, Any], con
     return pd.DataFrame(rows)
 
 
+def _candidate_weight_mask(frame: pd.DataFrame) -> pd.Series:
+    if frame.empty:
+        return pd.Series([], index=frame.index, dtype=bool)
+    if "is_candidate" not in frame.columns:
+        return pd.Series(True, index=frame.index, dtype=bool)
+    mask = frame["is_candidate"].fillna(False).astype(bool)
+    if "meta_label" in frame.columns:
+        mask = mask & frame["meta_label"].notna()
+    return mask
+
+
+def _apply_meta_sample_weights(candidates: pd.DataFrame, config: Mapping[str, Any]) -> pd.DataFrame:
+    out = candidates.copy()
+    if "sample_weight" in out.columns and "base_sample_weight" not in out.columns:
+        out["base_sample_weight"] = pd.to_numeric(out["sample_weight"], errors="coerce")
+    out["sample_weight"] = 0.0
+    weight_cfg = sample_weight_config(config)
+    mask = _candidate_weight_mask(out)
+    if bool(mask.any()):
+        weights, diagnostics = sample_weights_and_diagnostics(
+            out.loc[mask],
+            mode=weight_cfg["meta_mode"],
+            normalize=weight_cfg["normalize"],
+        )
+        out.loc[mask, "sample_weight"] = weights.to_numpy(dtype=float)
+    else:
+        diagnostics = sample_weight_diagnostics([], [], [], mode=weight_cfg["meta_mode"], normalize=weight_cfg["normalize"])
+    out.attrs["sample_weight_diagnostics"] = {
+        **diagnostics,
+        "base_mode": weight_cfg["base_mode"],
+        "meta_mode": weight_cfg["meta_mode"],
+        "weighted_rows": int(mask.sum()),
+        "total_rows": int(len(out)),
+    }
+    return out
+
+
 def add_meta_labels(candidates: pd.DataFrame, dataset: Mapping[str, Any], config: Mapping[str, Any]) -> pd.DataFrame:
-    return meta_triple_barrier_labels(
+    labeled = meta_triple_barrier_labels(
         candidates,
         dataset["price_path"],
         config.get("labels", {}).get("meta_triple_barrier", {}),
         config.get("costs", {}),
         granularity=str(dataset["granularity"]),
     )
+    return _apply_meta_sample_weights(labeled, config)
 
 
 def _meta_feature_columns(frame: pd.DataFrame, horizons: Sequence[str]) -> List[str]:
@@ -861,8 +984,16 @@ def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizo
     if train.empty:
         return ConstantMetaModel(0.0, feature_columns)
     y = train["meta_label"].astype(float).to_numpy()
+    if "sample_weight" in train.columns:
+        raw_weights = pd.to_numeric(train["sample_weight"], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=float)
+        raw_weights = np.where(raw_weights > 0.0, raw_weights, 0.0)
+    else:
+        raw_weights = np.ones(len(train), dtype=float)
+    if not np.any(raw_weights > 0.0):
+        raw_weights = np.ones(len(train), dtype=float)
+    train_weights = raw_weights / max(float(raw_weights.mean()), 1e-12)
     if len(np.unique(y)) < 2:
-        return ConstantMetaModel(float(np.mean(y)), feature_columns)
+        return ConstantMetaModel(float(np.average(y, weights=raw_weights)), feature_columns)
     X = train.reindex(columns=feature_columns).replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=float)
     mean = X.mean(axis=0)
     std = X.std(axis=0) + 1e-8
@@ -876,19 +1007,24 @@ def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizo
         dropout=float(meta_cfg.get("dropout", 0.0)),
     ).to(device)
     optimizer = optim.Adam(model.parameters(), lr=float(training.get("learning_rate", 0.001)))
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.BCEWithLogitsLoss(reduction="none")
     loader = DataLoader(
-        TensorDataset(torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)),
+        TensorDataset(
+            torch.tensor(X, dtype=torch.float32),
+            torch.tensor(y, dtype=torch.float32),
+            torch.tensor(train_weights, dtype=torch.float32),
+        ),
         batch_size=int(training.get("batch_size", 32)),
         shuffle=True,
     )
     for _ in range(int(training.get("epochs", 1))):
         model.train()
-        for batch_X, batch_y in loader:
+        for batch_X, batch_y, batch_w in loader:
             batch_X = batch_X.to(device)
             batch_y = batch_y.to(device)
+            batch_w = batch_w.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(batch_X), batch_y)
+            loss = (criterion(model(batch_X), batch_y) * batch_w).mean()
             loss.backward()
             optimizer.step()
     return TorchMetaModel(model, mean, std, feature_columns, device)
@@ -1097,6 +1233,7 @@ def probability_bucket_table(candidates: pd.DataFrame, bins: Optional[Sequence[f
                 "count": int(len(part)),
                 "mean_meta_prob": float(part["meta_prob"].mean()) if len(part) else 0.0,
                 "observed_success_rate": float(labeled["meta_label"].mean()) if len(labeled) else 0.0,
+                "weighted_observed_success_rate": _weighted_average(labeled["meta_label"], labeled["sample_weight"]) if "sample_weight" in labeled and len(labeled) else 0.0,
                 "mean_expected_edge_bps": float(part["expected_edge_bps"].mean()) if "expected_edge_bps" in part and len(part) else 0.0,
             }
         )
@@ -1120,6 +1257,7 @@ def predicted_edge_bucket_table(candidates: pd.DataFrame, bins: Optional[Sequenc
                 "count": int(len(part)),
                 "mean_expected_edge_bps": float(part["expected_edge_bps"].mean()) if len(part) else 0.0,
                 "observed_success_rate": float(labeled["meta_label"].mean()) if len(labeled) else 0.0,
+                "weighted_observed_success_rate": _weighted_average(labeled["meta_label"], labeled["sample_weight"]) if "sample_weight" in labeled and len(labeled) else 0.0,
                 "mean_label_net_return": float(part["label_net_return"].mean()) if "label_net_return" in part and len(part) else 0.0,
             }
         )
@@ -1133,10 +1271,22 @@ def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence
     base = candidates[candidates["is_candidate"]].copy() if "is_candidate" in candidates else candidates.copy()
     labeled = base[base["meta_label"].notna()].copy()
     positives = float((labeled["meta_label"] == 1.0).sum())
+    if "sample_weight" in labeled.columns:
+        label_weights = pd.to_numeric(labeled["sample_weight"], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=float)
+        label_weights = np.where(label_weights > 0.0, label_weights, 0.0)
+        if not np.any(label_weights > 0.0):
+            label_weights = np.ones(len(labeled), dtype=float)
+    else:
+        label_weights = np.ones(len(labeled), dtype=float)
+    labeled = labeled.copy()
+    labeled["_threshold_weight"] = label_weights
+    positive_weight = float(labeled.loc[labeled["meta_label"] == 1.0, "_threshold_weight"].sum())
     rows: List[Dict[str, Any]] = []
     for threshold in thresholds:
         selected = labeled[labeled["meta_prob"] >= float(threshold)]
         tp = float((selected["meta_label"] == 1.0).sum())
+        selected_weight = float(selected["_threshold_weight"].sum()) if len(selected) else 0.0
+        selected_positive_weight = float(selected.loc[selected["meta_label"] == 1.0, "_threshold_weight"].sum()) if len(selected) else 0.0
         rows.append(
             {
                 "threshold": float(threshold),
@@ -1144,6 +1294,8 @@ def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence
                 "coverage": float(len(selected) / max(len(labeled), 1)),
                 "precision": float(tp / max(len(selected), 1)),
                 "recall": float(tp / max(positives, 1.0)),
+                "weighted_precision": float(selected_positive_weight / max(selected_weight, 1e-12)),
+                "weighted_recall": float(selected_positive_weight / max(positive_weight, 1e-12)),
             }
         )
     return rows
@@ -1205,6 +1357,7 @@ def _write_stage0(dataset: Mapping[str, Any], run_dir: Path) -> Dict[str, Any]:
         "feature_manifest": dataset.get("feature_manifest", {}),
         "bar_manifest": dataset.get("bar_manifest", {}),
         "event_diagnostics": dataset.get("event_diagnostics", {}),
+        "sample_weight_diagnostics": dataset.get("sample_weight_diagnostics", {}),
         "bar_clock_diagnostics": dataset.get("bar_clock_diagnostics", {}),
         "side_data_manifest": dataset.get("side_data_manifest", {}),
         "input_size": int(dataset["input_size"]),
@@ -1258,6 +1411,10 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
 
     oof_candidates = add_meta_labels(candidate_signals(oof_predictions, dataset, config), dataset, config)
     test_candidates = add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config)
+    meta_sample_weight_diagnostics = {
+        "validation": oof_candidates.attrs.get("sample_weight_diagnostics", {}),
+        "test": test_candidates.attrs.get("sample_weight_diagnostics", {}),
+    }
     meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device)
     oof_candidates = add_meta_probabilities(oof_candidates, meta_model)
     test_candidates = add_meta_probabilities(test_candidates, meta_model)
@@ -1301,6 +1458,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
             "feature_manifest": dataset.get("feature_manifest", {}),
             "bar_manifest": dataset.get("bar_manifest", {}),
             "event_diagnostics": dataset.get("event_diagnostics", {}),
+            "sample_weight_diagnostics": dataset.get("sample_weight_diagnostics", {}),
             "bar_clock_diagnostics": dataset.get("bar_clock_diagnostics", {}),
             "side_data_manifest": dataset.get("side_data_manifest", {}),
         },
@@ -1312,6 +1470,7 @@ def _run_one_trial(spec: Mapping[str, Any], run_dir: Path, *, smoke: bool, devic
         "folds": fold_manifests,
         "final_training_history": final_history,
         "meta_labeler": meta_model.manifest(),
+        "meta_sample_weight_diagnostics": meta_sample_weight_diagnostics,
         "model_path": model_path,
         "artifact_paths": paths,
         "metrics": {"validation": validation_metrics, "test": test_metrics},
@@ -1678,6 +1837,7 @@ def _log_meta_label_trial_trackio(
         "feature_manifest": (trial.get("dataset", {}) or {}).get("feature_manifest"),
         "bar_manifest": (trial.get("dataset", {}) or {}).get("bar_manifest"),
         "event_diagnostics": (trial.get("dataset", {}) or {}).get("event_diagnostics"),
+        "sample_weight_diagnostics": (trial.get("dataset", {}) or {}).get("sample_weight_diagnostics"),
         "bar_clock_diagnostics": (trial.get("dataset", {}) or {}).get("bar_clock_diagnostics"),
         "side_data_manifest": (trial.get("dataset", {}) or {}).get("side_data_manifest"),
     }

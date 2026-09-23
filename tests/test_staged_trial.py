@@ -10,6 +10,7 @@ from src.experiments.meta_labeling_mvp import (
     _run_trial_safe,
     _trial_accounting,
     build_multi_horizon_lighter_dataset,
+    fit_meta_labeler,
     purged_walk_forward_splits,
     run_alpha_backtest,
     train_base_model,
@@ -193,7 +194,13 @@ def test_meta_triple_barrier_labels_profit_stop_vertical_and_no_signal():
     labeled = meta_triple_barrier_labels(signals, path, {"profit_kappa": 1.0, "stop_kappa": 1.0, "min_edge_bps": 0}, {}, granularity="5m")
     assert labeled.iloc[0]["exit_reason"] == "profit_take"
     assert labeled.iloc[0]["meta_label"] == 1.0
+    assert int(labeled.iloc[0]["vertical_barrier_idx"]) == 2
+    assert int(labeled.iloc[0]["t1_idx"]) == 1
+    assert int(labeled.iloc[0]["label_span_end_idx"]) == 1
     assert np.isnan(labeled.iloc[1]["meta_label"])
+    assert int(labeled.iloc[1]["vertical_barrier_idx"]) == 2
+    assert int(labeled.iloc[1]["t1_idx"]) == 2
+    assert int(labeled.iloc[1]["label_span_end_idx"]) == 2
 
     stop_path = path.copy()
     stop_path.loc[1, "high"] = 100.2
@@ -201,10 +208,25 @@ def test_meta_triple_barrier_labels_profit_stop_vertical_and_no_signal():
     stopped = meta_triple_barrier_labels(pd.DataFrame([{**base, "is_candidate": True}]), stop_path, {"profit_kappa": 1.0, "stop_kappa": 1.0}, {}, granularity="5m")
     assert stopped.iloc[0]["exit_reason"] == "stop_loss"
     assert stopped.iloc[0]["meta_label"] == 0.0
+    assert int(stopped.iloc[0]["t1_idx"]) == 1
+    assert int(stopped.iloc[0]["label_span_end_idx"]) == 1
 
     vertical = meta_triple_barrier_labels(pd.DataFrame([{**base, "is_candidate": True, "realized_vol": 0.10}]), path, {"profit_kappa": 2.0, "stop_kappa": 2.0}, {}, granularity="5m")
     assert vertical.iloc[0]["exit_reason"] == "vertical"
     assert vertical.iloc[0]["meta_label"] == 1.0
+    assert int(vertical.iloc[0]["t1_idx"]) == 2
+    assert int(vertical.iloc[0]["label_span_end_idx"]) == 2
+
+    incomplete = meta_triple_barrier_labels(
+        pd.DataFrame([{**base, "sample_index": 2, "is_candidate": True}]),
+        path,
+        {"profit_kappa": 1.0, "stop_kappa": 1.0},
+        {},
+        granularity="5m",
+    )
+    assert incomplete.iloc[0]["exit_reason"] == "incomplete_path"
+    assert int(incomplete.iloc[0]["t1_idx"]) == 2
+    assert int(incomplete.iloc[0]["label_span_end_idx"]) == 2
 
 
 def test_alpha_backtest_has_explicit_cost_accounting():
@@ -360,6 +382,76 @@ def test_base_model_scaler_is_fit_on_train_indices_only(tmp_path):
     assert history["preprocessing"]["fit_scope"] == "train_indices_only"
 
 
+def test_v2_dataset_emits_span_metadata_and_non_uniform_configured_weights(tmp_path):
+    data_dir = tmp_path / "data"
+    _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=64, step=0.002)
+    config = _v2_config(data_dir, tmp_path / "runs")
+    config["training"]["sequence_length"] = 4
+    config["sample_weights"] = {
+        "base_mode": "horizon_span_uniqueness",
+        "meta_mode": "triple_barrier_t1_uniqueness",
+        "normalize": "sum_one",
+    }
+
+    dataset = build_multi_horizon_lighter_dataset(config, smoke=False)
+    samples = dataset["samples"]
+    required_columns = {
+        "label_span_start_idx",
+        "label_span_end_idx",
+        "label_span_start_timestamp",
+        "label_span_end_timestamp",
+        "next_5m_label_span_end_idx",
+        "next_5m_label_span_end_timestamp",
+        "next_hour_label_span_end_idx",
+        "next_hour_label_span_end_timestamp",
+        "average_uniqueness",
+        "sample_weight",
+    }
+
+    assert required_columns.issubset(samples.columns)
+    assert np.isclose(float(dataset["sample_weights"].sum()), 1.0)
+    assert not np.allclose(dataset["sample_weights"].numpy(), np.full(len(samples), 1.0 / len(samples)))
+    assert dataset["sample_weight_diagnostics"]["base_mode"] == "horizon_span_uniqueness"
+    assert dataset["sample_weight_diagnostics"]["concurrency"]["max"] > 1.0
+    assert dataset["sample_weight_diagnostics"]["weights"]["sum"] == 1.0
+
+    train_indices = np.arange(0, min(12, int(dataset["X"].shape[0])), dtype=int)
+    model, history = train_base_model(dataset, train_indices, config, torch.device("cpu"))
+
+    assert model.input_size == dataset["input_size"]
+    assert np.isfinite(history["final_loss"])
+
+
+def test_meta_labeler_training_accepts_non_uniform_candidate_weights():
+    candidates = pd.DataFrame(
+        {
+            "is_candidate": [True, True, True, True],
+            "meta_label": [1.0, 0.0, 1.0, 0.0],
+            "sample_weight": [0.05, 0.45, 0.10, 0.40],
+            "pred_return": [0.01, -0.01, 0.02, -0.02],
+            "direction_prob": [0.8, 0.2, 0.7, 0.3],
+            "direction_confidence": [0.8, 0.8, 0.7, 0.7],
+            "expected_edge_bps": [50.0, 30.0, 60.0, 20.0],
+            "total_cost_bps": [2.0, 2.0, 2.0, 2.0],
+            "realized_vol": [0.01, 0.01, 0.02, 0.02],
+            "vol_regime": [0.0, 0.0, 1.0, 1.0],
+            "horizon_bars": [3, 3, 3, 3],
+            "side": [1, -1, 1, -1],
+            "horizon_disagreement": [0.0, 0.0, 1.0, 1.0],
+            "next_5m_pred_return": [0.01, -0.01, 0.02, -0.02],
+            "next_5m_direction_prob": [0.8, 0.2, 0.7, 0.3],
+        }
+    )
+    config = {
+        "model": {"meta_labeler": {"hidden_size": 4, "num_layers": 1, "dropout": 0.0}},
+        "training": {"epochs": 1, "batch_size": 2, "learning_rate": 0.001},
+    }
+
+    model = fit_meta_labeler(candidates, config, ["next_5m"], torch.device("cpu"))
+
+    assert model.manifest()["kind"] == "mlp"
+
+
 def test_v2_staged_trial_runs_meta_labeling_alpha_smoke(tmp_path):
     data_dir = tmp_path / "data"
     _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=96, step=0.002)
@@ -384,6 +476,11 @@ def test_v2_staged_trial_runs_meta_labeling_alpha_smoke(tmp_path):
     assert trial_manifest["split_manifest_hash"]
     assert trial_manifest["final_test_evaluation"]["count"] >= 1
     assert trial_manifest["dataset"]["feature_manifest"]["columns"]
+    assert result["stage0"]["sample_weight_diagnostics"]["base_mode"] == "uniform"
+    assert np.isclose(result["stage0"]["sample_weight_diagnostics"]["weights"]["sum"], 1.0)
     assert trial_manifest["dataset"]["event_diagnostics"]["mode"] == "dense"
+    assert trial_manifest["dataset"]["sample_weight_diagnostics"]["base_mode"] == "uniform"
+    assert trial_manifest["dataset"]["sample_weight_diagnostics"]["concurrency"]["max"] >= 1.0
+    assert trial_manifest["meta_sample_weight_diagnostics"]["validation"]["meta_mode"] == "uniform"
     assert trial_manifest["dataset"]["bar_clock_diagnostics"]["serial_correlation"]
     assert trial_manifest["dataset"]["side_data_manifest"]["status"] == "disabled"

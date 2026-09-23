@@ -180,22 +180,22 @@ keep or reject the feature based on validation-first evidence and AFML backtest 
 
 - [x] After #24, run [#25 Validate manifest reproducibility and test-set guard value](https://github.com/pranay5255/ETHPredict/issues/25).
   - Proves frozen reruns, data-hash checks, config-hash checks, git dirty-state capture, and final-test reuse counters work before trusting later experiments.
-  - Evidence: `/tmp/ethpredict-afml-freeze/reports/manifest_diff.json` and `/tmp/ethpredict-afml-freeze/reports/reproducibility_report.md`; identical reruns passed, the changed-config control failed config equality while raw data and split hashes stayed fixed, and the final-test reuse counter reached 2 for the frozen baseline.
+  - Evidence: `context/afml_freeze_regen_20260802_report.md` and local artifacts under `artifacts/afml_freeze_regen_20260802`; identical reruns passed, the changed-config control failed config equality while raw data and split hashes stayed fixed, and the final-test reuse counter reached 2 for the frozen baseline.
 - [x] After #23, run [#26 Audit Trackio trial accounting and failure-mode panels](https://github.com/pranay5255/ETHPredict/issues/26).
   - Proves every attempted, skipped, failed, no-trade, low-trade, and selected trial is visible in Trackio and local artifacts.
-  - Evidence: `/tmp/ethpredict-afml-freeze/26_accounting_matrix_v3_20260707T202829Z/trial_accounting.json`, `/tmp/ethpredict-afml-freeze/reports/failure_mode_panels.json`, and `/tmp/ethpredict-afml-freeze/reports/trackio_parity_report.md`; counts covered 3 completed, 1 failed, 1 skipped, 1 no-trade, 2 low-trade, and 1 trade-qualified trial.
+  - Evidence: `context/afml_freeze_regen_20260802_report.md` and `artifacts/afml_freeze_regen_20260802/26_accounting_matrix_20260802_20260802T145622Z/trial_accounting.json`; counts covered 3 completed, 1 failed, 1 skipped, 1 no-trade, 2 low-trade, and 1 trade-qualified trial.
 
 ### Phase 1 Data and Feature Experiments
 
 - [x] After #8, run [#27 Compare time, volume, dollar bars, and side-data joins](https://github.com/pranay5255/ETHPredict/issues/27).
   - Freezes downstream settings and varies only bar clock or validated side-data groups.
-  - Evidence: `/tmp/ethpredict-afml-freeze/reports/bar_clock_comparison.json` and `/tmp/ethpredict-afml-freeze/reports/side_data_coverage_report.md`; time, volume, and dollar bar clocks ran on GPU, while side-data joins remained disabled pending validated historical coverage.
+  - Evidence: `context/afml_freeze_regen_20260802_report.md` and local run artifacts under `artifacts/afml_freeze_regen_20260802`; time, volume, and dollar bar clocks ran on GPU, while side-data joins remained disabled pending validated historical coverage.
 - [x] After #9, run [#28 Measure feature-family, fracdiff, and scaler value](https://github.com/pranay5255/ETHPredict/issues/28).
   - Freezes model, labels, split, costs, and policy while varying feature families, fracdiff mode, and scaler discipline.
-  - Evidence: `/tmp/ethpredict-afml-freeze/reports/feature_ablation_matrix.json`, `/tmp/ethpredict-afml-freeze/reports/fracdiff_diagnostics.json`, and `/tmp/ethpredict-afml-freeze/reports/scaler_leakage_report.md`; OHLCV-only, full-no-fracdiff, and fixed-width-fracdiff variants ran with fold-local scaler fitting.
+  - Evidence: `context/afml_freeze_regen_20260802_report.md` and local run artifacts under `artifacts/afml_freeze_regen_20260802`; OHLCV-only, full-no-fracdiff, and fixed-width-fracdiff variants ran with fold-local scaler fitting.
 - [x] After #10, run [#29 Compare dense, CUSUM, volatility-CUSUM, and edge events](https://github.com/pranay5255/ETHPredict/issues/29).
   - Freezes labels and policy while testing whether event sampling improves uniqueness, precision, turnover, and net PnL per trade.
-  - Evidence: `/tmp/ethpredict-afml-freeze/reports/event_sampling_comparison.json` and `/tmp/ethpredict-afml-freeze/reports/event_rate_report.md`; dense, CUSUM, volatility-CUSUM, and edge-triggered variants ran on GPU and showed higher uniqueness for event sampling, but the frozen 0.55 meta-threshold policy still produced no trades.
+  - Evidence: `context/afml_freeze_regen_20260802_report.md` and local run artifacts under `artifacts/afml_freeze_regen_20260802`; dense, CUSUM, volatility-CUSUM, and edge-triggered variants ran on GPU and showed higher uniqueness for event sampling, but the frozen 0.55 meta-threshold policy still produced no trades.
 
 ### Phase 2 Label and Validation Experiments
 
