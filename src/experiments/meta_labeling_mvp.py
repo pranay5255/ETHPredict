@@ -353,6 +353,36 @@ def _final_test_ledger_path(config: Mapping[str, Any], run_dir: Path) -> Path:
     return Path(configured) if configured else run_dir.parent / "_final_test_reuse_ledger.json"
 
 
+def final_test_use_count(trials: Sequence[Mapping[str, Any]]) -> int:
+    """Highest ledger count of the specs evaluated in this run, read after scoring.
+
+    The count stored on the first selected trial is the value at that trial's
+    evaluation. A later selected trial of the same spec increments the ledger, so
+    the grade must read the ledger again.
+    """
+
+    seen = set()
+    counts: List[int] = []
+    for trial in trials:
+        evaluation = trial.get("final_test_evaluation") or {}
+        if not isinstance(evaluation, Mapping) or not evaluation.get("spec_hash"):
+            continue
+        spec_hash = str(evaluation["spec_hash"])
+        ledger_path = evaluation.get("ledger_path")
+        key = (spec_hash, str(ledger_path))
+        if key in seen:
+            continue
+        seen.add(key)
+        if ledger_path:
+            record = _read_json_file(Path(ledger_path)).get(spec_hash, {})
+            if isinstance(record, Mapping) and record.get("count") is not None:
+                counts.append(int(record["count"]))
+                continue
+        if evaluation.get("count") is not None:
+            counts.append(int(evaluation["count"]))
+    return max(counts) if counts else 0
+
+
 def final_test_selection_roles(config: Mapping[str, Any]) -> List[str]:
     """Selection roles whose trials may be evaluated on the final test split."""
 
@@ -2711,7 +2741,7 @@ def run_meta_labeling_mvp(
     cross_trial = attach_cross_trial_statistics(trial_manifests, trial_count=len(trial_manifests))
     test_metrics = (best or {}).get("metrics", {}).get("test", {}) if isinstance(best, Mapping) else {}
     test_dsr = ((test_metrics.get("statistics") or {}).get("dsr") or {})
-    final_test_uses = int(((best or {}).get("final_test_evaluation") or {}).get("count") or 0) if isinstance(best, Mapping) else 0
+    final_test_uses = final_test_use_count(trial_manifests)
     evidence_grade = classify_evidence_grade(
         trade_count=float(test_metrics.get("trades") or 0.0),
         dsr_available=bool(test_dsr.get("available")),

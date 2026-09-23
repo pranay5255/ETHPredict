@@ -154,8 +154,12 @@ Sharpes. DSR is `unavailable` with a reason when the trial count is below 2 or
 that variance cannot be computed.
 
 PBO is a separate CSCV estimate on the validation trial-by-period return
-matrix. Its `path_type` is `multi_path`. When the matrix is too small, PBO is
-`unavailable` with a reason. Full CPCV is not part of this control.
+matrix. A split is overfit when the in-sample winner's out-of-sample relative
+rank is below the median (negative logit), even if that out-of-sample mean is
+still positive. Its `path_type` is `multi_path`. When the matrix is too small,
+PBO is `unavailable` with a reason. Full CPCV is not part of this control.
+The evidence grade reads each evaluated spec's ledger count after every
+selected test, so a later selected trial of the same spec counts as reuse.
 
 `evidence_grade` is `alpha_claim_grade` only when the selected test has at
 least `max(min_validation_trades, 1)` trades, DSR is available, the final-test

@@ -5,6 +5,7 @@ import pytest
 import yaml
 
 import src.experiments.meta_labeling_mvp as mvp
+from src.evaluation.backtest_stats import classify_evidence_grade
 from src.experiments.meta_labeling_mvp import (
     _apply_selected_test_evaluations,
     _feature_manifest_with_identity,
@@ -12,6 +13,7 @@ from src.experiments.meta_labeling_mvp import (
     _record_final_test_evaluation,
     check_raw_data_registry,
     feature_code_identity,
+    final_test_use_count,
     research_spec_hash,
     select_trials_with_trade_floor,
     validate_selection_metric,
@@ -105,6 +107,24 @@ def test_research_spec_hash_ignores_run_name_and_artifact_root_and_blocks_rename
     assert first["count"] == 1
     with pytest.raises(RuntimeError, match="Final test set reuse blocked"):
         _record_final_test_evaluation(right, tmp_path / "b" / "run", trial_id="grid_001", split_hash="split", smoke=False)
+
+
+def test_evidence_grade_reads_the_ledger_after_every_selected_evaluation(tmp_path):
+    config = {"research": {"final_test_guard": {"do_not_reuse_test": False, "ledger_path": str(tmp_path / "ledger.json")}}}
+    first = _record_final_test_evaluation(config, tmp_path / "run_a", trial_id="raw_best", split_hash="split", smoke=False)
+    second = _record_final_test_evaluation(config, tmp_path / "run_a", trial_id="trade_qualified", split_hash="split", smoke=False)
+    trials = [
+        {"trial_id": "raw_best", "final_test_evaluation": {**first, "count": 1}},
+        {"trial_id": "trade_qualified", "final_test_evaluation": second},
+        {"trial_id": "ignored", "final_test_evaluation": None},
+    ]
+
+    uses = final_test_use_count(trials)
+
+    assert first["count"] == 1
+    assert second["count"] == 2
+    assert uses == 2
+    assert classify_evidence_grade(trade_count=10, dsr_available=True, final_test_uses=uses, smoke=False, min_trades=1) == "debugging_only"
 
 
 def test_selection_uses_validation_metrics_and_rejects_test_metric():
