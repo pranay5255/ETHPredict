@@ -96,3 +96,43 @@ uv run python -m src.experiments.reproducibility artifacts/runs/run_a artifacts/
 
 The comparison checks config hashes, raw data hashes, trial count, trial IDs, split
 manifest hashes, and metric variance.
+
+## Final-Test Reuse And Run Identity
+
+Trial selection reads validation metrics only. `pipeline.selection_metric` paths
+that contain `metrics.test` are rejected before any trial is trained. After
+selection, the test split is backtested only for the roles in
+`research.final_test_guard.evaluate_selection_roles` (default `raw_best` and
+`trade_qualified_best`). Each of those evaluations appends one entry to the
+final-test ledger. Unselected trials keep an empty `metrics.test` and do not
+touch the ledger.
+
+The ledger key is a hash of the research specification plus the split hash and
+an evaluation scope (`meta_label_trial` or `forecast_benchmark`). The research
+specification is data, bars, features, sampling, sample weights, targets,
+labels, model, training, validation, costs, alpha policy, selection policy, and
+seed. `pipeline.run_name`, `pipeline.artifact_root`, experiment labels, and
+tracking settings are not part of the hash, so renaming a run is still reuse.
+Set `research.final_test_guard.do_not_reuse_test: true` to refuse a second
+non-smoke evaluation of the same specification. Pin `ledger_path` when runs
+must share a ledger across different artifact directories. Smoke runs increment
+the counter and do not block.
+
+`research.raw_data_guard.on_change` controls what happens at run start when the
+raw-file hashes differ from the last run of the same research specification:
+`warn` (default), `fail`, or `ignore`. Smoke runs record a warning instead of
+failing. The comparison result is stored on `run_identity.raw_data_guard`.
+
+Every v2 `feature_manifest` includes `code_identity`, a hash of
+`src/data/features_all.py`, `src/features/labeling.py`, and
+`src/features/sample_weights.py`, plus a `family_identity_hash` of the configured
+feature families, columns, and fracdiff mode. Git summaries list the commit,
+dirty state, and critical untracked or modified paths. That critical set
+includes `configs/`, `src/`, `tests/`, `context/`, `scripts/`, `TASKS.md`,
+`pyproject.toml`, and `uv.lock`.
+
+The forecast benchmark writes `split_manifest.json` with the purged
+walk-forward boundaries it actually used (development, gap, test, and each
+fold). Each benchmark model that reads the test split increments the same
+final-test guard under the `forecast_benchmark` scope before its test metrics
+are computed.
