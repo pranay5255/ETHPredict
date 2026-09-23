@@ -31,6 +31,13 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.config.loader import expand_grid_search
 from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_for_duration
+from src.evaluation.backtest_stats import (
+    ANNUALISATION_NOTE,
+    attach_cross_trial_statistics,
+    classify_evidence_grade,
+    period_pnl_by_timestamp,
+    summarize_single_path,
+)
 from src.features.labeling import meta_triple_barrier_labels
 from src.features.sample_weights import (
     average_uniqueness,
@@ -1427,13 +1434,33 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
                 "meta_prob": float(row["meta_prob"]),
                 "expected_edge_bps": float(row["expected_edge_bps"]),
                 "exit_reason": row.get("exit_reason", "vertical"),
+                "label_holding_bars": row.get("label_holding_bars", 0),
+                "label_span_start_idx": row.get("label_span_start_idx", np.nan),
+                "label_span_end_idx": row.get("label_span_end_idx", np.nan),
+                "average_uniqueness": row.get("average_uniqueness", np.nan),
             }
         )
     trades_df = pd.DataFrame(trades)
     total_rows = max(1, int(candidates["timestamp"].nunique()) if "timestamp" in candidates else len(candidates))
     candidate_count = int(candidates["is_candidate"].sum()) if "is_candidate" in candidates else 0
+    granularity = str((config.get("data") or {}).get("granularity", "5m"))
+
+    def _statistics(net_pnl: float, turnover: float) -> Dict[str, Any]:
+        holding = trades_df["label_holding_bars"] if "label_holding_bars" in trades_df.columns else []
+        return summarize_single_path(
+            period_pnl_by_timestamp(candidates, trades_df),
+            initial_capital=initial_capital,
+            net_pnl=net_pnl,
+            turnover=turnover,
+            holding_bars=holding,
+            trades=trades_df,
+            granularity=granularity,
+        )
+
     if trades_df.empty:
-        return _empty_alpha_metrics(candidate_count, len(candidates), policy), pd.DataFrame(columns=["timestamp", "horizon", "side", "notional", "net_pnl"])
+        metrics = _empty_alpha_metrics(candidate_count, len(candidates), policy)
+        metrics["statistics"] = _statistics(0.0, 0.0)
+        return metrics, pd.DataFrame(columns=["timestamp", "horizon", "side", "notional", "net_pnl"])
 
     trades_df["cumulative_net_pnl"] = trades_df["net_pnl"].cumsum()
     equity = initial_capital + trades_df["cumulative_net_pnl"]
@@ -1475,6 +1502,7 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
         "horizon_distribution": horizon_distribution,
         "side_distribution": side_distribution,
         **policy,
+        "statistics": _statistics(float(trades_df["net_pnl"].sum()), float(trades_df["notional"].sum())),
     }
     return metrics, trades_df
 
@@ -2095,6 +2123,17 @@ def _expected_calibration_error(diagnostics: Mapping[str, Any]) -> float:
     return float(error / total)
 
 
+def _concentrated_pnl(validation: Mapping[str, Any], thresholds: Mapping[str, Any]) -> bool:
+    """Flag PnL concentration from the positive-return HHI, not from coverage."""
+
+    statistics = validation.get("statistics") if isinstance(validation, Mapping) else {}
+    hhi = (statistics or {}).get("hhi_positive_pnl") if isinstance(statistics, Mapping) else {}
+    value = hhi.get("value") if isinstance(hhi, Mapping) else None
+    if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+        return False
+    return float(value) >= float(thresholds.get("concentrated_pnl_hhi", 0.5))
+
+
 def _trial_failure_modes(
     trial: Mapping[str, Any],
     *,
@@ -2124,7 +2163,7 @@ def _trial_failure_modes(
         "high_turnover": bool(validation_turnover > initial_capital * float(thresholds.get("high_turnover_multiple", 10.0))),
         "unstable_validation_test": bool((validation_net > 0.0 and test_net < 0.0) or (validation_net < 0.0 and test_net > 0.0)),
         "high_cost_sensitivity": bool(cost_ratio > float(thresholds.get("high_cost_to_gross_ratio", 2.0))),
-        "concentrated_pnl": bool(validation_trades > 0 and _safe_float(validation.get("coverage")) < float(thresholds.get("min_trade_coverage", 0.01))),
+        "concentrated_pnl": _concentrated_pnl(validation, thresholds),
     }
     return {
         "flags": flags,
@@ -2351,6 +2390,10 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
         "report_paths": report_paths,
         "run_identity": report.get("run_identity"),
         "trial_accounting_path": report.get("trial_accounting_path"),
+        "evidence_grade": report.get("evidence_grade"),
+        "path_type": report.get("path_type"),
+        "pbo": report.get("pbo"),
+        "annualisation": ANNUALISATION_NOTE,
     }
     metrics = {
         "selection": selection,
@@ -2374,6 +2417,14 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
         smoke=smoke,
         receipt_path=Path(report["run_dir"]) / "tracking" / "summary.json",
     )
+
+
+def _statistic_value(trial: Mapping[str, Any], split: str, name: str) -> Any:
+    statistics = (((trial.get("metrics") or {}).get(split) or {}).get("statistics") or {})
+    payload = statistics.get(name) or {}
+    if isinstance(payload, Mapping):
+        return payload.get("value", "unavailable")
+    return "unavailable"
 
 
 def _trial_receipt_path(trial: Mapping[str, Any]) -> Optional[Path]:
@@ -2519,6 +2570,15 @@ def _report_markdown(report: Mapping[str, Any]) -> str:
         "- Test net PnL: `{}`".format((best["metrics"].get("test") or {}).get("net_pnl", "not_evaluated")),
         "- Test trades: `{}`".format((best["metrics"].get("test") or {}).get("trades", "not_evaluated")),
         "- Test coverage: `{}`".format((best["metrics"].get("test") or {}).get("coverage", "not_evaluated")),
+        "- Evidence grade: `{}`".format(report.get("evidence_grade", "debugging_only")),
+        "- Path type: `{}`".format(report.get("path_type", "single_path")),
+        "- Annualisation: `{}`".format(ANNUALISATION_NOTE),
+        "- Validation Sharpe (per period): `{}`".format(_statistic_value(best, "validation", "sharpe_per_period")),
+        "- Validation PSR: `{}`".format(_statistic_value(best, "validation", "psr")),
+        "- Validation DSR: `{}`".format(_statistic_value(best, "validation", "dsr")),
+        "- Test Sharpe (per period): `{}`".format(_statistic_value(best, "test", "sharpe_per_period")),
+        "- Test DSR: `{}`".format(_statistic_value(best, "test", "dsr")),
+        "- PBO: `{}`".format((report.get("pbo") or {}).get("value", "unavailable")),
         "- Minimum validation trades for trading selection: `{}`".format(selection.get("min_validation_trades")),
     ]
     if best_trading:
@@ -2648,6 +2708,17 @@ def run_meta_labeling_mvp(
         _write_json(best_trading_path, best_trading)
 
     trial_accounting = _trial_accounting(trial_manifests, selection, config_for_search)
+    cross_trial = attach_cross_trial_statistics(trial_manifests, trial_count=len(trial_manifests))
+    test_metrics = (best or {}).get("metrics", {}).get("test", {}) if isinstance(best, Mapping) else {}
+    test_dsr = ((test_metrics.get("statistics") or {}).get("dsr") or {})
+    final_test_uses = int(((best or {}).get("final_test_evaluation") or {}).get("count") or 0) if isinstance(best, Mapping) else 0
+    evidence_grade = classify_evidence_grade(
+        trade_count=float(test_metrics.get("trades") or 0.0),
+        dsr_available=bool(test_dsr.get("available")),
+        final_test_uses=final_test_uses,
+        smoke=smoke,
+        min_trades=int(selection.get("min_validation_trades", 0) or 0),
+    )
     trial_accounting_path = _write_json(run_dir / "trial_accounting.json", trial_accounting)
     _write_trial_manifests(trial_manifests)
 
@@ -2672,6 +2743,10 @@ def run_meta_labeling_mvp(
         "selection": selection,
         "trial_accounting": trial_accounting,
         "trial_accounting_path": trial_accounting_path,
+        "path_type": "single_path",
+        "evidence_grade": evidence_grade,
+        "pbo": cross_trial["pbo"],
+        "annualisation": ANNUALISATION_NOTE,
         "status": "success",
         "report_json_path": report_dir / "report.json",
         "report_markdown_path": report_dir / "report.md",
