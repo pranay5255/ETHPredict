@@ -103,10 +103,21 @@ def test_pbo_is_high_for_an_overfit_matrix_and_placeholder_when_too_small():
     column_a = np.array([1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0])
     column_b = -0.5 * column_a
     overfit = probability_of_backtest_overfitting(np.column_stack([column_a, column_b]), slices=4)
+    positive_but_below_median = probability_of_backtest_overfitting(
+        np.column_stack(
+            [
+                np.array([5.0, 5.0, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]),
+                np.array([0.0, 0.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0]),
+            ]
+        ),
+        slices=4,
+    )
     placeholder = probability_of_backtest_overfitting(np.ones((3, 2)))
 
     assert overfit["path_type"] == "multi_path"
+    assert overfit["method"] == "cscv_relative_rank"
     assert overfit["value"] > 0.5
+    assert positive_but_below_median["value"] == pytest.approx(1.0)
     assert placeholder["value"] == "unavailable"
     assert "too small" in placeholder["reason"]
     assert placeholder["path_type"] == "multi_path"

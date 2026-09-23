@@ -264,11 +264,27 @@ def equity_from_period_pnl(period_pnl: Sequence[Any], initial_capital: float) ->
     return float(initial_capital) + np.cumsum(pnl)
 
 
-def probability_of_backtest_overfitting(returns: Sequence[Sequence[Any]], *, slices: Optional[int] = None) -> Dict[str, Any]:
-    """CSCV probability that the in-sample winner has a negative out-of-sample mean.
+def _cscv_relative_rank_logit(out_of_sample: np.ndarray, winner: int) -> float:
+    """Logit of the in-sample winner's out-of-sample relative rank.
 
-    ``returns`` has shape ``(n_periods, n_trials)``. Full CPCV is not computed here.
-    Complementary partitions are not double-counted: slice 0 stays in-sample.
+    Rank counts trials whose out-of-sample mean is no better than the winner.
+    A negative logit means that rank is below the median (Bailey, Borwein,
+    López de Prado, and Zhu). A positive out-of-sample mean can still be overfit.
+    """
+
+    performance = np.asarray(out_of_sample, dtype=float)
+    rank = int(np.sum(performance <= performance[winner]))
+    relative = rank / (len(performance) + 1.0)
+    return float(math.log(relative / (1.0 - relative)))
+
+
+def probability_of_backtest_overfitting(returns: Sequence[Sequence[Any]], *, slices: Optional[int] = None) -> Dict[str, Any]:
+    """CSCV probability that the in-sample winner ranks below the out-of-sample median.
+
+    ``returns`` has shape ``(n_periods, n_trials)``. Overfit splits are those whose
+    relative-rank logit is negative, not those whose out-of-sample mean is negative.
+    Full CPCV is not computed here. Complementary partitions are not double-counted:
+    slice 0 stays in-sample.
     """
 
     matrix = np.asarray(returns, dtype=float)
@@ -294,23 +310,21 @@ def probability_of_backtest_overfitting(returns: Sequence[Sequence[Any]], *, sli
         in_returns = np.concatenate([groups[index] for index in in_sample], axis=0)
         out_returns = np.concatenate([groups[index] for index in out_sample], axis=0)
         in_mean = np.nanmean(in_returns, axis=0)
-        if not np.isfinite(in_mean).all():
+        out_mean = np.nanmean(out_returns, axis=0)
+        if not np.isfinite(in_mean).all() or not np.isfinite(out_mean).all():
             continue
         winner = int(np.argmax(in_mean))
         if int(np.sum(np.isclose(in_mean, in_mean[winner]))) != 1:
             continue
-        out_mean = float(np.nanmean(out_returns[:, winner]))
-        if not math.isfinite(out_mean):
-            continue
         decisive += 1
-        if out_mean < 0.0:
+        if _cscv_relative_rank_logit(out_mean, winner) < 0.0:
             overfit += 1
     if decisive == 0:
         return _unavailable("no CSCV split had a unique in-sample winner", path_type="multi_path")
     return _available(
         overfit / decisive,
         path_type="multi_path",
-        method="cscv",
+        method="cscv_relative_rank",
         splits=decisive,
         slices=slice_count,
         trials=int(n_trials),
