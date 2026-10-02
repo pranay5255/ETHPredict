@@ -2,6 +2,7 @@ import json
 import sys
 import types
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -160,3 +161,206 @@ def test_trackio_policy_requires_tracking_for_non_smoke_runs():
     enforce_trackio_policy({}, smoke=True)
     enforce_trackio_policy({"tracking": {"trackio": {"enabled": True}}}, smoke=False)
     enforce_trackio_policy({"tracking": {"trackio": {"allow_local_debug_without_trackio": True}}}, smoke=False)
+
+
+def _capture_trackio(monkeypatch):
+    calls = []
+
+    def capture(config, **kwargs):
+        calls.append(kwargs)
+        receipt = kwargs.get("receipt_path")
+        if receipt is not None:
+            Path(receipt).parent.mkdir(parents=True, exist_ok=True)
+            Path(receipt).write_text(json.dumps({"delivery": "logged", "run": kwargs.get("name")}), encoding="utf-8")
+        return True
+
+    monkeypatch.setattr("src.experiments.meta_labeling_mvp.log_trackio_run", capture)
+    return calls
+
+
+def test_schema_accepts_trackio_local_debug_override():
+    import jsonschema
+    import yaml
+
+    schema = yaml.safe_load(Path("configs/schema.yaml").read_text(encoding="utf-8"))
+    config = yaml.safe_load(Path("configs/config.yml").read_text(encoding="utf-8"))
+    config["tracking"]["trackio"]["allow_local_debug_without_trackio"] = True
+
+    jsonschema.validate(instance=config, schema=schema)
+
+
+def test_trackio_payload_uses_persisted_failure_modes_and_reasons(monkeypatch, tmp_path):
+    from src.experiments.meta_labeling_mvp import (
+        _failed_trial_manifest,
+        _log_meta_label_trial_trackio,
+        _skipped_trial_manifest,
+        _trial_accounting,
+    )
+
+    calls = _capture_trackio(monkeypatch)
+    both = {
+        "trial_id": "both",
+        "status": "completed",
+        "metrics": {
+            "validation": {"trades": 0, "net_pnl": 1.0, "coverage": 0.5, "turnover": 0.0, "fees": 0.0, "gross_pnl": 0.0},
+            "test": {},
+        },
+        "diagnostics": {"validation": {}},
+        "folds": [],
+        "manifest_path": tmp_path / "both" / "manifest.json",
+        "config": {"costs": {"fee_bps": 1.0}, "alpha_backtest": {"meta_threshold": 0.55}},
+        "dataset": {"feature_manifest": {"families": ["ohlcv"]}},
+        "split_manifest_hash": "split-hash",
+        "checkpoint_id": "checkpoint",
+    }
+    other = {
+        "trial_id": "other",
+        "status": "completed",
+        "metrics": {
+            "validation": {"trades": 3, "net_pnl": -1.0, "coverage": 0.2, "turnover": 10.0, "fees": 1.0, "gross_pnl": 2.0},
+            "test": {"net_pnl": 1.0, "trades": 1},
+        },
+        "diagnostics": {"validation": {}},
+        "folds": [],
+    }
+    selection = {
+        "min_validation_trades": 1,
+        "raw_best_trial_id": "other",
+        "best_trading_trial_id": "other",
+        "classification_best_trial_id": "both",
+        "calibration_best_trial_id": "both",
+    }
+    accounting = _trial_accounting([both, other], selection, {"pipeline": {"min_validation_trades": 1}, "alpha_backtest": {"initial_capital": 10000}})
+    persisted = accounting["trials"][0]["failure_modes"]
+    assert persisted["flags"]["no_trade_winner"] is True
+
+    _log_meta_label_trial_trackio(
+        {},
+        run_id="run",
+        trial=both,
+        selection_status="classification_calibration_best",
+        raw_best={"trial_id": "other"},
+        best_trading={"trial_id": "other"},
+        selection=selection,
+        trial_count=2,
+        smoke=True,
+    )
+
+    logged = calls[0]
+    assert logged["metrics"]["trial_accounting"]["failure_modes"]["flags"] == persisted["flags"]
+    assert logged["metrics"]["trial_accounting"]["failure_modes"] is persisted
+    assert logged["run_config"]["feature_families"] == ["ohlcv"]
+    assert logged["run_config"]["split_manifest_hash"] == "split-hash"
+    assert logged["run_config"]["costs"]["fee_bps"] == 1.0
+    assert logged["run_config"]["alpha_policy"]["meta_threshold"] == 0.55
+    assert logged["run_config"]["trial_count"] == 2
+    assert logged["run_config"]["checkpoint_id"] == "checkpoint"
+
+    failed = _failed_trial_manifest(
+        {"trial_id": "failed_one", "trial_index": 1, "config": {}},
+        tmp_path,
+        smoke=True,
+        error=RuntimeError("model diverged"),
+    )
+    skipped = _skipped_trial_manifest(
+        {"trial_id": "skipped_one", "trial_index": 0, "config": {}},
+        tmp_path,
+        smoke=True,
+        reason="held out",
+    )
+    _trial_accounting([failed, skipped], {"min_validation_trades": 1}, {})
+    _log_meta_label_trial_trackio(
+        {},
+        run_id="run",
+        trial=failed,
+        selection_status="failed",
+        raw_best={},
+        best_trading=None,
+        selection={"min_validation_trades": 1},
+        trial_count=2,
+        smoke=True,
+    )
+    _log_meta_label_trial_trackio(
+        {},
+        run_id="run",
+        trial=skipped,
+        selection_status="skipped",
+        raw_best={},
+        best_trading=None,
+        selection={"min_validation_trades": 1},
+        trial_count=2,
+        smoke=True,
+    )
+
+    assert calls[1]["run_config"]["reason"] == "model diverged"
+    assert calls[1]["run_config"]["skip_reason"] == "model diverged"
+    assert calls[2]["run_config"]["reason"] == "held out"
+    assert calls[2]["run_config"]["skip_reason"] == "held out"
+
+
+def test_all_failed_trials_log_accounting_before_raising(monkeypatch, tmp_path):
+    import yaml
+
+    from src.experiments.meta_labeling_mvp import run_meta_labeling_mvp
+    from tests.test_staged_trial import _v2_config, _write_5m_ohlcv
+
+    data_dir = tmp_path / "data"
+    _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=16)
+    artifact_root = tmp_path / "runs"
+    config = _v2_config(data_dir, artifact_root)
+    config["benchmark"] = {"enabled": False}
+    config["search"] = {
+        "mode": "grid",
+        "max_trials": 2,
+        "trials": [
+            {"id": "skipped_one", "overrides": {"trial.skip": True, "trial.skip_reason": "held out"}},
+            {"id": "failed_one", "overrides": {}},
+        ],
+    }
+    config["smoke"]["max_trials"] = 2
+    config_path = tmp_path / "v2.yml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    calls = _capture_trackio(monkeypatch)
+
+    def fail_trial(*args, **kwargs):
+        raise RuntimeError("model diverged")
+
+    monkeypatch.setattr("src.experiments.meta_labeling_mvp.build_multi_horizon_lighter_dataset", lambda *args, **kwargs: {})
+    monkeypatch.setattr("src.experiments.meta_labeling_mvp._write_stage0", lambda dataset, run_dir: {"stage": "stage0_features"})
+    monkeypatch.setattr("src.experiments.meta_labeling_mvp._run_one_trial", fail_trial)
+
+    with pytest.raises(RuntimeError, match="All v2 trial specs failed"):
+        run_meta_labeling_mvp(config_path, smoke=True, device="cpu", allow_cpu=True)
+
+    assert calls
+    assert calls[0]["name"].endswith("/accounting")
+    assert calls[0]["run_config"]["stage"] == "meta_label_mvp_accounting"
+    reasons = {call["run_config"].get("trial_id"): call["run_config"].get("skip_reason") for call in calls[1:]}
+    assert reasons["skipped_one"] == "held out"
+    assert reasons["failed_one"] == "model diverged"
+    accounting_files = list(artifact_root.rglob("trial_accounting.json"))
+    assert len(accounting_files) == 1
+    accounting = json.loads(accounting_files[0].read_text(encoding="utf-8"))
+    receipts = {row["trial_id"]: str(row["trackio_receipt_path"]) for row in accounting["trials"]}
+    assert receipts["failed_one"].endswith("trackio_receipt.json")
+    assert receipts["skipped_one"].endswith("trackio_receipt.json")
+    assert str(accounting["summary_trackio_receipt_path"]).endswith("tracking/accounting.json")
+    failed_manifest = json.loads(next(artifact_root.rglob("trials/failed_one/manifest.json")).read_text(encoding="utf-8"))
+    failed_row = next(row for row in accounting["trials"] if row["trial_id"] == "failed_one")
+    assert failed_manifest["reason"] == "model diverged"
+    assert failed_manifest["skip_reason"] == "model diverged"
+    assert failed_manifest["trackio_receipt_path"].endswith("trackio_receipt.json")
+    assert failed_manifest["failure_modes"]["flags"] == failed_row["failure_modes"]["flags"]
+
+
+def test_forecast_benchmark_requires_trackio_when_not_smoke(tmp_path):
+    import yaml
+
+    from src.experiments.forecast_benchmark import run_forecast_benchmark
+
+    config_path = tmp_path / "benchmark.yml"
+    config_path.write_text(yaml.safe_dump({"version": 2, "pipeline": {"run_name": "bench"}}), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Trackio is required"):
+        run_forecast_benchmark(config_path, smoke=False, allow_cpu=True)

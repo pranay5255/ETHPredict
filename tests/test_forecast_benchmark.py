@@ -11,7 +11,12 @@ from src.experiments.forecast_benchmark import (
     run_forecast_benchmark,
     timesfm_predictions,
 )
-from src.experiments.meta_labeling_mvp import select_trials_with_trade_floor
+from src.experiments.meta_labeling_mvp import (
+    _split_manifest,
+    build_multi_horizon_lighter_dataset,
+    purged_walk_forward_splits,
+    select_trials_with_trade_floor,
+)
 
 
 def _write_5m_ohlcv(path: Path, rows: int = 96, step: float = 0.001) -> np.ndarray:
@@ -164,4 +169,17 @@ def test_forecast_benchmark_smoke_writes_forecast_and_backtest_metrics(tmp_path)
     assert "next_5m_pred_return" in models["momentum"]["prediction_schema"]["required_columns"]
     assert models["momentum"]["config_hash"]
     assert models["momentum"]["split_manifest_hash"] == result["benchmark"]["split_manifest_hash"]
+    assert models["zero_return"]["final_test_evaluation"]["count"] == 1
+    assert models["momentum"]["final_test_evaluation"]["count"] == 2
+    assert result["benchmark"]["test_evaluation_count"] == 2
+    resolved = yaml.safe_load((Path(result["run_dir"]) / "resolved_config.yml").read_text(encoding="utf-8"))
+    dataset = build_multi_horizon_lighter_dataset(resolved, smoke=False)
+    expected = _split_manifest(dataset, purged_walk_forward_splits(int(dataset["X"].shape[0]), resolved["validation"]))
+    actual = json.loads(Path(result["benchmark"]["split_manifest_path"]).read_text(encoding="utf-8"))
+    for split_name in ("development", "gap", "test"):
+        assert actual[split_name]["samples"] == expected[split_name]["samples"]
+        if expected[split_name]["samples"]:
+            assert actual[split_name]["start_index"] == expected[split_name]["start_index"]
+            assert actual[split_name]["end_index"] == expected[split_name]["end_index"]
+    assert actual["method"] == "purged_walk_forward"
     assert json.loads((Path(models["momentum"]["manifest_path"]).parent / "trackio_receipt.json").read_text())["delivery"] == "disabled"
