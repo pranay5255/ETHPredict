@@ -843,8 +843,8 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     prices = targets_df["close"].astype(float)
     log_returns = np.log(prices.replace(0, np.nan)).diff().replace([np.inf, -np.inf], np.nan).fillna(0.0)
     realized_vol = log_returns.rolling(volatility_window, min_periods=2).std()
-    fill_vol = _safe_float(realized_vol.mean(), 0.001)
-    realized_vol = realized_vol.fillna(fill_vol).clip(lower=1e-8)
+    # Warmup must not depend on volatility observed later in the dataset.
+    realized_vol = realized_vol.fillna(0.001).clip(lower=1e-8)
 
     raw_features = torch.tensor(features_df.to_numpy(dtype=float), dtype=torch.float32)
     X: List[torch.Tensor] = []

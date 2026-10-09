@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.data.features_all import DataPreprocessor, bars_for_duration, join_side_data_asof, validate_side_data_coverage
 
@@ -142,3 +143,81 @@ def test_side_data_asof_join_reports_and_enforces_coverage():
         assert "below required threshold" in str(exc)
     else:
         raise AssertionError("expected side-data coverage gate to fail")
+
+
+def test_cusum_and_volatility_regime_ignore_future_returns():
+    rng = np.random.default_rng(9)
+    returns = pd.Series(np.r_[rng.normal(0, 0.001, 400), rng.normal(0.05, 0.1, 400)])
+    preprocessor = DataPreprocessor()
+    for transform in (preprocessor.cusum_flag, preprocessor.volatility_regime):
+        expected = transform(returns.iloc[:400])
+        pd.testing.assert_series_equal(expected, transform(returns).iloc[:400])
+        # Also mutate future rows without changing the available history.
+        changed = returns.copy()
+        changed.iloc[400:] = -10.0
+        pd.testing.assert_series_equal(expected, transform(changed).iloc[:400])
+
+
+@pytest.mark.parametrize("rows", [3, 400])
+@pytest.mark.parametrize("mode", ["fixed", "fixed_width", "none"])
+def test_entire_feature_frame_is_prefix_invariant(tmp_path, rows, mode):
+    path = tmp_path / "raw" / "ETHUSDT-5m-lighter-prefix.csv"
+    _write_ohlcv(path, 1774656000000, 800)
+    preprocessor = DataPreprocessor(
+        data_dir=str(tmp_path),
+        feature_config={"frac_diff_order": 0.4, "frac_diff_mode": mode},
+    )
+    price = preprocessor.load_price_data()["5m"]
+    # Deliberately append a very different price and volatility regime.
+    price.loc[400:, ["open", "high", "low", "close", "volume", "quote_asset_volume"]] *= 100.0
+    prefix = preprocessor._feature_frame(price.iloc[:rows], "5m")[preprocessor.get_feature_cols()]
+    full = preprocessor._feature_frame(price, "5m")[preprocessor.get_feature_cols()]
+    pd.testing.assert_frame_equal(prefix, full.iloc[:rows])
+
+
+@pytest.mark.parametrize("method", ["fracdiff", "fracdiff_fixed_width"])
+def test_fracdiff_width_does_not_depend_on_input_length_and_preserves_nan(method):
+    series = pd.Series(np.arange(1.0, 31.0), index=pd.date_range("2026-01-01", periods=30))
+    series.iloc[15] = np.nan
+    transform = getattr(DataPreprocessor(), method)
+    full = transform(series, d=0.5, thres=0.01)
+    assert len(full) == len(series)
+    assert full.iloc[:9].isna().all()
+    assert np.isfinite(full.iloc[9])
+    assert full.iloc[15:25].isna().all()
+    assert np.isfinite(full.iloc[25])
+    pd.testing.assert_series_equal(transform(series.iloc[:3], 0.5), full.iloc[:3])
+    pd.testing.assert_series_equal(transform(series.iloc[:14], 0.5), full.iloc[:14])
+    pd.testing.assert_series_equal(full, transform(series, 0.5))
+
+
+def test_auto_fracdiff_is_rejected_only_when_selected(tmp_path):
+    _write_ohlcv(tmp_path / "raw" / "ETHUSDT-5m-lighter-fixture.csv", 1774656000000, 80)
+    config = {"include": ["ohlcv", "fracdiff"], "frac_diff_mode": "auto"}
+    preprocessor = DataPreprocessor(data_dir=str(tmp_path), feature_config=config)
+    with pytest.raises(ValueError, match="future validation/test rows"):
+        preprocessor.get_base_dataset()
+    config["include"] = ["ohlcv"]
+    safe = DataPreprocessor(data_dir=str(tmp_path), feature_config=config)
+    features, _ = safe.get_base_dataset()
+    assert features.shape[1] == 6
+    assert safe.feature_manifest()["fracdiff"]["mode"] == "disabled"
+    assert safe.feature_manifest()["causality"]["diagnostics_scope"].startswith("full_frame_reporting_only")
+
+
+@pytest.mark.parametrize("include", [[], ["typo"], "ohlcv"])
+def test_invalid_feature_selection_fails_instead_of_silently_changing_matrix(include):
+    with pytest.raises(ValueError):
+        DataPreprocessor(feature_config={"include": include}).get_feature_cols()
+
+
+@pytest.mark.parametrize("config", [
+    {"frac_diff_mode": "typo"},
+    {"frac_diff_order": np.nan},
+    {"frac_diff_order": -0.1},
+    {"frac_diff_threshold": 0.0},
+])
+def test_unsafe_fracdiff_settings_fail(tmp_path, config):
+    _write_ohlcv(tmp_path / "raw" / "ETHUSDT-5m-lighter-fixture.csv", 1774656000000, 30)
+    with pytest.raises(ValueError):
+        DataPreprocessor(data_dir=str(tmp_path), feature_config=config).get_base_dataset()

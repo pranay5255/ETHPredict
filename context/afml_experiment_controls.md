@@ -45,8 +45,38 @@ block feature use instead of silently forward-filling sparse data.
 
 `features.include` is the authoritative v2 feature-family selector. Vary only this
 list for feature ablations. `features.frac_diff_mode: fixed_width` is the
-reproducible AFML-oriented baseline; `auto`, `fixed`, and `none` are comparison
-modes.
+reproducible AFML-oriented baseline; `fixed` retains the legacy truncated
+convolution entry point and `none` disables the transform. Both convolution
+modes now derive width from order and threshold, independently of dataset size.
+Short histories stay unavailable until that width is reached (the model matrix
+fills warmup NaNs with zero).
+
+Selected `frac_diff_mode: auto` is rejected because fitting its order on the
+complete dataset would use future validation/test observations. To compare an
+automatically selected order, call `DataPreprocessor.find_optimal_d` on a frozen
+training-only calibration series, then write that order into `frac_diff_order`
+with `fixed_width` or `fixed` before evaluation. Refit separately per training
+fold when studying adaptive orders; the runner does not do that automatically.
+An excluded fracdiff family is marked disabled and never fits an order. Missing
+feature config uses all baseline families with fixed-width order zero; empty
+or unknown selections fail instead of silently changing the input matrix.
+
+CUSUM flags use expanding historical mean and standard deviation. Volatility
+regimes use rolling volatility and expanding historical quantiles, with neutral
+warmup until two valid volatility observations. These remain AFML-inspired
+proxies. Observation sampling uses the separate `sampling.mode` configuration.
+Label volatility warmup uses a fixed 0.001 fallback instead of a full-dataset
+mean. Appending or changing later observations cannot change historical model
+features or that volatility warmup.
+
+`feature_manifest.causality` identifies the observation-time transform scope,
+the training-window scaler scope, and full-frame diagnostics that are used only
+for reporting. ADF and memory diagnostics are never inputs to feature fitting.
+Regression tests recompute complete feature frames on short and long prefixes,
+append a different future regime, and verify scaler invariance for every fold
+and the final development fit. Old experiment reports remain historical
+evidence; the causal transforms change feature values and require new runs
+before comparing performance or promoting any feature family.
 
 ## Observation Sampling
 
