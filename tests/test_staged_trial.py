@@ -383,6 +383,43 @@ def test_base_model_scaler_is_fit_on_train_indices_only(tmp_path):
     assert history["preprocessing"]["fit_scope"] == "train_indices_only"
 
 
+def test_v2_features_and_volatility_warmup_ignore_appended_future_rows(tmp_path):
+    path = tmp_path / "data" / "raw" / "ETHUSDT-5m-lighter-fixture.csv"
+    _write_5m_ohlcv(path, rows=80, step=0.002)
+    config = _v2_config(tmp_path / "data", tmp_path / "runs")
+    config["features"] = {"frac_diff_order": 0.5, "frac_diff_mode": "fixed_width"}
+    prefix = build_multi_horizon_lighter_dataset(config)
+    original = pd.read_csv(path, header=None)
+    _write_5m_ohlcv(path, rows=160, step=0.05)
+    future = pd.read_csv(path, header=None)
+    future.iloc[:80] = original
+    future.to_csv(path, header=False, index=False)
+    full = build_multi_horizon_lighter_dataset(config)
+    n = len(prefix["X"])
+    assert torch.equal(prefix["X"], full["X"][:n])
+    assert torch.equal(prefix["y_ret"], full["y_ret"][:n])
+    pd.testing.assert_series_equal(prefix["samples"]["realized_vol"], full["samples"]["realized_vol"].iloc[:n])
+    pd.testing.assert_series_equal(prefix["price_path"]["realized_vol"], full["price_path"]["realized_vol"].iloc[:80])
+
+
+def test_every_fold_and_final_fit_ignore_nontraining_windows(tmp_path):
+    data_dir = tmp_path / "data"
+    _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-fixture.csv", rows=80, step=0.002)
+    config = _v2_config(data_dir, tmp_path / "runs")
+    config["training"]["epochs"] = 0
+    dataset = build_multi_horizon_lighter_dataset(config)
+    splits = purged_walk_forward_splits(len(dataset["X"]), config["validation"])
+    for train in [fold["train"] for fold in splits["folds"]] + [splits["development"]]:
+        changed = dict(dataset)
+        changed["X"] = dataset["X"].clone()
+        outside = np.setdiff1d(np.arange(len(dataset["X"])), train)
+        changed["X"][outside] = 1e8
+        model, _ = train_base_model(dataset, train, config, torch.device("cpu"))
+        changed_model, _ = train_base_model(changed, train, config, torch.device("cpu"))
+        assert torch.equal(model.feature_mean, changed_model.feature_mean)
+        assert torch.equal(model.feature_std, changed_model.feature_std)
+
+
 def test_v2_dataset_emits_span_metadata_and_non_uniform_configured_weights(tmp_path):
     data_dir = tmp_path / "data"
     _write_5m_ohlcv(data_dir / "raw" / "ETHUSDT-5m-lighter-20260328-20260628.csv", rows=64, step=0.002)

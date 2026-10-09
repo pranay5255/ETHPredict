@@ -114,13 +114,19 @@ def _unique_columns(columns: Sequence[str]) -> List[str]:
 
 
 def feature_columns_for_families(include: Optional[Sequence[str]]) -> List[str]:
-    families = list(include or DEFAULT_FEATURE_FAMILIES)
+    if isinstance(include, str):
+        raise ValueError("features.include must be a list of feature families or columns")
+    families = list(DEFAULT_FEATURE_FAMILIES if include is None else include)
+    if not families:
+        raise ValueError("features.include must select at least one feature family or column")
     columns: List[str] = []
     for family in families:
         if family in FEATURE_FAMILY_COLUMNS:
             columns.extend(FEATURE_FAMILY_COLUMNS[family])
         elif family in LIGHTER_FEATURE_COLUMNS:
             columns.append(family)
+        else:
+            raise ValueError(f"Unknown feature family or column: {family}")
     return [column for column in _unique_columns(columns) if column in LIGHTER_FEATURE_COLUMNS]
 
 
@@ -335,33 +341,27 @@ class DataPreprocessor:
         return data
 
     def fracdiff(self, series: pd.Series, d: float, thres: float = 0.01) -> pd.Series:
+        # Keep the legacy entry point, but never shorten the convolution width
+        # to the dataset length: that would change early values after appends.
+        return self.fracdiff_fixed_width(series, d, thres)
+
+    def fracdiff_fixed_width(self, series: pd.Series, d: float, thres: float = 0.01) -> pd.Series:
+        if not np.isfinite(d) or not 0 <= d <= 1:
+            raise ValueError("Fracdiff order must be finite and between 0 and 1")
+        if not np.isfinite(thres) or thres <= 0:
+            raise ValueError("Fracdiff threshold must be finite and positive")
         w = [1.0]
-        for k in range(1, len(series)):
+        for k in range(1, 100_001):
             w_ = -w[-1] * (d - k + 1) / k
             if abs(w_) < thres:
                 break
             w.append(w_)
+        else:
+            raise ValueError("Fracdiff width exceeds 100000; increase frac_diff_threshold")
         weights = np.array(w[::-1])
         output = series.copy() * np.nan
         for idx in range(len(weights) - 1, len(series)):
             output.iloc[idx] = np.dot(weights, series.iloc[idx - len(weights) + 1 : idx + 1])
-        return output
-
-    def fracdiff_fixed_width(self, series: pd.Series, d: float, thres: float = 0.01) -> pd.Series:
-        weights = [1.0]
-        k = 1
-        while k < len(series):
-            weight = -weights[-1] * (d - k + 1) / k
-            if abs(weight) < thres:
-                break
-            weights.append(weight)
-            k += 1
-        weights_arr = np.array(weights[::-1])
-        width = len(weights_arr)
-        output = series.copy() * np.nan
-        for idx in range(width - 1, len(series)):
-            window = series.iloc[idx - width + 1 : idx + 1]
-            output.iloc[idx] = float(np.dot(weights_arr, window))
         return output
 
     def fracdiff_diagnostics(self, source: pd.Series, diffed: pd.Series, *, mode: str, order: float, threshold: float) -> Dict[str, Any]:
@@ -384,10 +384,15 @@ class DataPreprocessor:
             "nan_rows": int(diffed.isna().sum()),
             "adf_pvalue": pvalue,
             "memory_correlation": memory_correlation,
-            "implementation_note": "AFML-inspired fixed-width fracdiff proxy" if mode in {"fixed_width", "fixed-width"} else "AFML-inspired expanding-window fracdiff proxy",
+            "implementation_note": "AFML-inspired truncated fixed-width fracdiff proxy; fixed is the legacy alias",
         }
 
     def find_optimal_d(self, series: pd.Series, max_d: float = 1.0, corr_threshold: float = 0.97) -> float:
+        """Research diagnostic; callers must supply training observations only.
+
+        Model feature generation never calls this on the full dataset. Freeze
+        the returned order in config before transforming evaluation data.
+        """
         best_d = 0.0
         clean = series.dropna()
         if len(clean) < 50:
@@ -418,11 +423,10 @@ class DataPreprocessor:
         return returns.rolling(window, min_periods=window).apply(shannon_entropy, raw=True)
 
     def cusum_flag(self, series: pd.Series, threshold: float = 2.0) -> pd.Series:
-        std = series.std()
-        if std == 0 or np.isnan(std):
-            return pd.Series(0, index=series.index)
-        cusum = (series - series.mean()).cumsum()
-        return (np.abs(cusum) > threshold * std).astype(int)
+        history = series.expanding(min_periods=2)
+        std = history.std()
+        cusum = (series - history.mean()).fillna(0.0).cumsum()
+        return ((std > 0) & (np.abs(cusum) > threshold * std)).astype(int)
 
     def sadf_flag(self, series: pd.Series, max_window: int = 100, step: int = 12) -> pd.Series:
         flags = pd.Series(0, index=series.index)
@@ -441,8 +445,9 @@ class DataPreprocessor:
         return flags
 
     def volatility_regime(self, returns: pd.Series, window: int = 24) -> pd.Series:
-        vol = returns.rolling(window).std().fillna(0)
-        low, high = vol.quantile(0.33), vol.quantile(0.67)
+        vol = returns.rolling(window).std()
+        history = vol.expanding(min_periods=2)
+        low, high = history.quantile(0.33), history.quantile(0.67)
         regime = pd.Series(1, index=vol.index)
         regime[vol <= low] = 0
         regime[vol >= high] = 2
@@ -480,19 +485,29 @@ class DataPreprocessor:
         merged["volume_zscore_24h"] = ((merged["volume"] - volume_mean) / volume_std).replace([np.inf, -np.inf], np.nan).fillna(0)
 
         frac_cfg = self.feature_config.get("fracdiff", {}) if isinstance(self.feature_config.get("fracdiff"), dict) else {}
-        has_configured_order = "frac_diff_order" in self.feature_config or "order" in frac_cfg
-        frac_mode = str(self.feature_config.get("frac_diff_mode", frac_cfg.get("mode", "fixed" if has_configured_order else "auto"))).lower()
+        frac_mode = str(self.feature_config.get("frac_diff_mode", frac_cfg.get("mode", "fixed_width"))).lower()
         frac_threshold = float(self.feature_config.get("frac_diff_threshold", frac_cfg.get("threshold", 0.01)))
         close_d = float(self.feature_config.get("frac_diff_order", frac_cfg.get("order", 0.0)))
+        if "fracdiff_close" not in self.get_feature_cols():
+            frac_mode = "disabled"
         if frac_mode == "auto":
-            close_d = self.find_optimal_d(merged["close"])
-            merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d, thres=frac_threshold)
-        elif frac_mode in {"fixed_width", "fixed-width"}:
+            raise ValueError(
+                "features.frac_diff_mode=auto would fit on future validation/test rows. "
+                "Select an order using training-only data, then freeze frac_diff_order "
+                "with frac_diff_mode=fixed_width (or fixed)."
+            )
+        if not np.isfinite(close_d) or not 0 <= close_d <= 1:
+            raise ValueError("features.frac_diff_order must be finite and between 0 and 1")
+        if not np.isfinite(frac_threshold) or frac_threshold <= 0:
+            raise ValueError("features.frac_diff_threshold must be finite and positive")
+        if frac_mode in {"fixed_width", "fixed-width"}:
             merged["fracdiff_close"] = self.fracdiff_fixed_width(merged["close"], close_d, thres=frac_threshold)
         elif frac_mode in {"none", "disabled"}:
             merged["fracdiff_close"] = 0.0
-        else:
+        elif frac_mode == "fixed":
             merged["fracdiff_close"] = self.fracdiff(merged["close"], close_d, thres=frac_threshold)
+        else:
+            raise ValueError(f"Unknown features.frac_diff_mode: {frac_mode}")
         self._last_fracdiff = self.fracdiff_diagnostics(
             merged["close"],
             merged["fracdiff_close"],
@@ -554,7 +569,7 @@ class DataPreprocessor:
 
     def get_feature_cols(self) -> List[str]:
         include = self.feature_config.get("include")
-        return feature_columns_for_families(include if isinstance(include, list) else None)
+        return feature_columns_for_families(include)
 
     def feature_manifest(self) -> Dict[str, Any]:
         include = self.feature_config.get("include")
@@ -563,8 +578,15 @@ class DataPreprocessor:
             "families": list(families),
             "columns": self.get_feature_cols(),
             "fracdiff": dict(self._last_fracdiff),
+            "causality": {
+                "feature_fit_scope": "observations_at_or_before_feature_timestamp",
+                "auto_fracdiff": "rejected_when_selected; freeze a training-only order in config",
+                "normalization": "v2 base-model scaler fitted on training windows only",
+                "diagnostics_scope": "full_frame_reporting_only; never used to fit features",
+            },
             "transform_notes": {
-                "cusum_flag": "Dense-sample feature only; observation-time CUSUM sampling is controlled by sampling.mode.",
+                "cusum_flag": "Expanding historical mean/std; dense-sample proxy only. Observation-time CUSUM sampling is controlled by sampling.mode.",
+                "vol_regime": "Rolling volatility with expanding historical quantiles; neutral until two valid volatility observations.",
                 "sadf_flag": "Computationally simplified structural-break proxy, not a full SADF research implementation.",
             },
         }
