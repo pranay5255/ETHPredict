@@ -15,6 +15,14 @@ open until its fix is merged. Reuse existing implementations and archived
 experiment evidence where appropriate; do not infer completion from a utility
 function or an old experiment alone.
 
+## Current implementation progress
+
+#9 is merged in PR #48. The next three issues (#13, #15 and #8) are implemented
+on `codex/afml-labels-validation-side-data`, pending PR review and merge. Their
+cross-file fixture gates and limits are documented in
+`context/afml_13_15_8_verification.md`. Issue closure follows merge; no new
+performance experiments were run. Continue with #12 after this batch.
+
 ## Implementation order
 
 - [#9: AFML: Fix feature reproducibility and fold-local preprocessing](https://github.com/pranay5255/ETHPredict/issues/9) — Remove future-data feature dependencies before any new evidence is trusted. First implementation PR.

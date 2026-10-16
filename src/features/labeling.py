@@ -376,164 +376,147 @@ def meta_triple_barrier_labels(
     *,
     granularity: str = "5m",
 ) -> pd.DataFrame:
-    """Label proposed long/short signals with side-adjusted triple barriers.
+    """Reconstructable side-adjusted labels; unavailable outcomes stay unlabeled.
 
-    ``signals`` must contain ``sample_index``, ``side``, ``horizon_bars``,
-    ``realized_vol`` and ``is_candidate``. Rows without a candidate signal are
-    preserved with ``meta_label`` missing so coverage can be reported separately
-    from binary meta-label training.
+    OHLC cannot reveal the order of two touches in one candle. The configured
+    ambiguity assumption is recorded, never represented as observed ordering.
+    Missing prices are never filled from another bar.
     """
+    import hashlib
+    import json
 
-    if signals.empty:
-        out = signals.copy()
-        for column in [
-            "meta_label",
-            "t1_idx",
-            "t1_timestamp",
-            "vertical_barrier_idx",
-            "vertical_barrier_timestamp",
-            "label_span_start_idx",
-            "label_span_end_idx",
-            "label_span_start_timestamp",
-            "label_span_end_timestamp",
-        ]:
-            out[column] = pd.Series(dtype="float64")
-        return out
-
-    path_df = price_path.reset_index(drop=True).copy()
-    for column in ["open", "high", "low", "close"]:
-        if column not in path_df.columns:
-            raise ValueError(f"price_path missing required column: {column}")
-        path_df[column] = pd.to_numeric(path_df[column], errors="coerce").replace([np.inf, -np.inf], np.nan).ffill().bfill()
-
+    geometry = str(barrier_config.get("geometry", "asymmetric"))
+    success = str(barrier_config.get("success_mode", "positive_net_at_vertical"))
+    ordering = str(barrier_config.get("intrabar_ordering", "stop_first"))
+    if geometry not in {"symmetric", "asymmetric"}:
+        raise ValueError(f"Unknown label geometry: {geometry}")
+    if success not in {"positive_net_at_vertical", "profit_take_only"}:
+        raise ValueError(f"Unknown label success_mode: {success}")
+    if ordering not in {"stop_first", "profit_first", "exclude"}:
+        raise ValueError(f"Unknown intrabar_ordering: {ordering}")
     profit_kappa = float(barrier_config.get("profit_kappa", 1.5))
     stop_kappa = float(barrier_config.get("stop_kappa", 1.0))
-    min_edge_ret = float(barrier_config.get("min_edge_bps", 0.0)) / 10_000.0
-    timestamps = path_df["timestamp"].tolist() if "timestamp" in path_df.columns else list(path_df.index)
+    min_edge = float(barrier_config.get("min_edge_bps", 0.0)) / 10_000.0
+    if not all(np.isfinite(x) and x > 0 for x in (profit_kappa, stop_kappa)):
+        raise ValueError("profit_kappa and stop_kappa must be finite and positive")
+    if not np.isfinite(min_edge) or min_edge < 0:
+        raise ValueError("min_edge_bps must be finite and nonnegative")
+    identity = hashlib.sha256(json.dumps({"barriers": barrier_config, "costs": costs}, sort_keys=True).encode()).hexdigest()
+    path = price_path.reset_index(drop=True).copy()
+    for column in ["open", "high", "low", "close"]:
+        if column not in path:
+            raise ValueError(f"price_path missing required column: {column}")
+        path[column] = pd.to_numeric(path[column], errors="coerce")
+    values = path[["open", "high", "low", "close"]]
+    valid = np.isfinite(values).all(axis=1) & (values > 0).all(axis=1)
+    valid &= (path["high"] >= path[["open", "close"]].max(axis=1))
+    valid &= (path["low"] <= path[["open", "close"]].min(axis=1)) & (path["high"] >= path["low"])
+    timestamps = path["timestamp"].tolist() if "timestamp" in path else list(path.index)
 
-    def _coerce_index(value: Any, default: int = -1) -> int:
+    def integer(value, default=-1):
         try:
             number = float(value)
+            return int(number) if np.isfinite(number) and number.is_integer() else default
         except (TypeError, ValueError):
             return default
-        return int(number) if np.isfinite(number) else default
 
-    def _timestamp_at(idx: int) -> Any:
-        return timestamps[idx] if 0 <= int(idx) < len(timestamps) else pd.NaT
+    def timestamp(index):
+        return timestamps[index] if 0 <= index < len(timestamps) else pd.NaT
 
-    def _vertical_barrier_index(sample_index: int, horizon_bars: int) -> int:
-        if sample_index < 0:
-            return -1
-        if sample_index >= len(path_df):
-            return sample_index
-        return min(int(sample_index) + max(0, int(horizon_bars)), len(path_df) - 1)
-
-    def _span_metadata(sample_index: int, horizon_bars: int, t1_idx: int) -> dict:
-        vertical_idx = _vertical_barrier_index(sample_index, horizon_bars)
-        end_idx = _coerce_index(t1_idx, default=vertical_idx)
-        spans = build_label_spans([sample_index], [vertical_idx], timestamps=timestamps, t1_idx=[end_idx])
-        span = spans.iloc[0]
-        return {
-            "vertical_barrier_idx": int(vertical_idx) if vertical_idx >= 0 else np.nan,
-            "vertical_barrier_timestamp": _timestamp_at(vertical_idx),
-            "t1_idx": int(span["label_span_end_idx"]) if int(span["label_span_end_idx"]) >= 0 else np.nan,
-            "t1_timestamp": span["label_span_end_timestamp"],
-            "label_span_start_idx": int(span["label_span_start_idx"]) if int(span["label_span_start_idx"]) >= 0 else np.nan,
-            "label_span_end_idx": int(span["label_span_end_idx"]) if int(span["label_span_end_idx"]) >= 0 else np.nan,
-            "label_span_start_timestamp": span["label_span_start_timestamp"],
-            "label_span_end_timestamp": span["label_span_end_timestamp"],
-        }
-
-    labeled_rows = []
-    for _, row in signals.iterrows():
-        out = row.to_dict()
-        sample_index = _coerce_index(row.get("sample_index", -1))
-        horizon_bars = max(0, _coerce_index(row.get("horizon_bars", 1), default=1))
-        vertical_barrier_idx = _vertical_barrier_index(sample_index, horizon_bars)
-        is_candidate = bool(row.get("is_candidate", False)) and int(row.get("side", 0)) != 0
-        if not is_candidate:
-            out.update(
-                {
-                    "meta_label": np.nan,
-                    "exit_reason": "no_signal",
-                    "label_gross_return": 0.0,
-                    "label_net_return": 0.0,
-                    "label_holding_bars": 0,
-                    "profit_barrier": np.nan,
-                    "stop_barrier": np.nan,
-                    **_span_metadata(sample_index, horizon_bars, vertical_barrier_idx),
-                }
-            )
-            labeled_rows.append(out)
-            continue
-
-        if sample_index < 0 or sample_index >= len(path_df) - 1:
-            out.update(
-                {
-                    "meta_label": 0.0,
-                    "exit_reason": "incomplete_path",
-                    "label_gross_return": 0.0,
-                    "label_net_return": -float(row.get("total_cost_bps", 0.0)) / 10_000.0,
-                    "label_holding_bars": 0,
-                    "profit_barrier": np.nan,
-                    "stop_barrier": np.nan,
-                    **_span_metadata(sample_index, horizon_bars, sample_index),
-                }
-            )
-            labeled_rows.append(out)
-            continue
-
-        side = int(row["side"])
-        vertical = min(horizon_bars, len(path_df) - sample_index - 1)
-        total_cost_bps = float(row.get("total_cost_bps", _meta_label_total_cost_bps(costs, horizon_bars, granularity)))
-        cost_ret = total_cost_bps / 10_000.0
-        realized_vol = float(row.get("realized_vol", 0.0))
-        if not np.isfinite(realized_vol) or realized_vol <= 0:
-            realized_vol = 1e-8
-        profit_barrier = max(profit_kappa * realized_vol, min_edge_ret + cost_ret)
-        stop_barrier = max(stop_kappa * realized_vol, cost_ret)
-        entry = float(path_df.loc[sample_index, "close"])
-
-        exit_reason = "vertical"
-        gross_return = 0.0
-        holding_bars = vertical
-        for step in range(1, vertical + 1):
-            future = path_df.loc[sample_index + step]
-            if side > 0:
-                favorable = np.log(float(future["high"]) / entry)
-                adverse = np.log(float(future["low"]) / entry)
+    rows = []
+    for _, signal in signals.iterrows():
+        row = signal.to_dict()
+        start = integer(row.get("sample_index"))
+        horizon = integer(row.get("horizon_bars"))
+        expiry = start + horizon
+        end = min(max(start, 0), max(len(path) - 1, 0))
+        side = integer(row.get("side", 0), 0)
+        candidate = bool(row.get("is_candidate", False)) and side in {-1, 1}
+        row.update({
+            "label_schema_version": 2, "label_config_hash": identity,
+            "label_geometry": geometry, "label_success_mode": success,
+            "intrabar_ordering": ordering, "ambiguity_flag": False,
+            "label_status": "unavailable", "label_exclusion_reason": None,
+            "meta_label": np.nan, "exit_reason": "incomplete_path",
+            "label_gross_return": np.nan, "label_net_return": np.nan,
+            "label_holding_bars": 0, "profit_barrier": np.nan, "stop_barrier": np.nan,
+            "profit_barrier_price": np.nan, "stop_barrier_price": np.nan,
+            "entry_price": np.nan, "entry_timestamp": timestamp(start),
+            "label_volatility": row.get("realized_vol", np.nan),
+            "vertical_barrier_idx": expiry, "vertical_barrier_timestamp": timestamp(expiry),
+        })
+        if not candidate:
+            row.update(exit_reason="no_signal", label_exclusion_reason="no_signal")
+            end = min(expiry, len(path) - 1)
+        elif start < 0 or start >= len(path) or horizon < 1:
+            row["label_exclusion_reason"] = "incomplete_path"
+        elif not valid.iloc[start]:
+            row.update(exit_reason="invalid_ohlc", label_exclusion_reason="invalid_ohlc")
+        else:
+            entry = float(path.loc[start, "close"])
+            row["entry_price"] = entry
+            vol = float(row.get("realized_vol", np.nan))
+            cost = float(row.get("total_cost_bps", _meta_label_total_cost_bps(costs, horizon, granularity))) / 10_000.0
+            if not np.isfinite(vol) or vol <= 0 or not np.isfinite(cost) or cost < 0:
+                row.update(exit_reason="invalid_label_inputs", label_exclusion_reason="invalid_label_inputs")
             else:
-                favorable = np.log(entry / float(future["low"]))
-                adverse = np.log(entry / float(future["high"]))
-
-            if adverse <= -stop_barrier:
-                exit_reason = "stop_loss"
-                gross_return = -stop_barrier
-                holding_bars = step
-                break
-            if favorable >= profit_barrier:
-                exit_reason = "profit_take"
-                gross_return = profit_barrier
-                holding_bars = step
-                break
-            if step == vertical:
-                exit_close = float(future["close"])
-                gross_return = side * np.log(exit_close / entry)
-
-        net_return = gross_return - cost_ret
-        meta_label = 1.0 if (exit_reason == "profit_take" or net_return > 0.0) else 0.0
-        out.update(
-            {
-                "meta_label": meta_label,
-                "exit_reason": exit_reason,
-                "label_gross_return": float(gross_return),
-                "label_net_return": float(net_return),
-                "label_holding_bars": int(holding_bars),
-                "profit_barrier": float(profit_barrier),
-                "stop_barrier": float(stop_barrier),
-                **_span_metadata(sample_index, horizon_bars, sample_index + holding_bars),
-            }
-        )
-        labeled_rows.append(out)
-
-    return pd.DataFrame(labeled_rows, columns=list(labeled_rows[0].keys()))
+                profit = max(profit_kappa * vol, min_edge + cost)
+                stop = max(stop_kappa * vol, cost)
+                if geometry == "symmetric":
+                    profit = stop = max(profit, stop)
+                row.update(entry_price=entry, profit_barrier=profit, stop_barrier=stop,
+                           profit_barrier_price=entry * np.exp(side * profit),
+                           stop_barrier_price=entry * np.exp(-side * stop),
+                           total_cost_bps=cost * 10_000.0)
+                gross = np.nan
+                for index in range(start + 1, min(expiry, len(path) - 1) + 1):
+                    end = index
+                    if not valid.iloc[index]:
+                        row.update(exit_reason="invalid_ohlc", label_exclusion_reason="invalid_ohlc")
+                        break
+                    bar = path.iloc[index]
+                    favorable = np.log(bar["high"] / entry) if side > 0 else np.log(entry / bar["low"])
+                    adverse = np.log(bar["low"] / entry) if side > 0 else np.log(entry / bar["high"])
+                    hit_profit, hit_stop = favorable >= profit, adverse <= -stop
+                    if hit_profit and hit_stop:
+                        row["ambiguity_flag"] = True
+                        if ordering == "exclude":
+                            row.update(exit_reason="ambiguous", label_exclusion_reason="ambiguous")
+                            break
+                        hit_stop = ordering == "stop_first"
+                        hit_profit = not hit_stop
+                    if hit_stop or hit_profit:
+                        row["exit_reason"] = "stop_loss" if hit_stop else "profit_take"
+                        gross = -stop if hit_stop else profit
+                        break
+                    if index == expiry:
+                        row["exit_reason"] = "vertical"
+                        gross = side * np.log(bar["close"] / entry)
+                if np.isfinite(gross):
+                    net = gross - cost
+                    label = row["exit_reason"] == "profit_take" or (
+                        success == "positive_net_at_vertical" and row["exit_reason"] == "vertical" and net > 0
+                    )
+                    row.update(meta_label=float(label), label_gross_return=float(gross),
+                               label_net_return=float(net), label_status="valid")
+                elif row["label_exclusion_reason"] is None:
+                    row["label_exclusion_reason"] = "incomplete_path"
+        row.update({
+            "label_holding_bars": max(0, end - start),
+            "t1_idx": end, "t1_timestamp": timestamp(end),
+            "first_touch_type": row["exit_reason"] if row["label_status"] == "valid" or row["ambiguity_flag"] else None,
+            "first_touch_timestamp": timestamp(end) if row["label_status"] == "valid" or row["ambiguity_flag"] else pd.NaT,
+            "label_span_start_idx": start, "label_span_end_idx": end,
+            "label_span_start_timestamp": timestamp(start), "label_span_end_timestamp": timestamp(end),
+        })
+        rows.append(row)
+    if rows:
+        return pd.DataFrame(rows)
+    # Keep a stable schema even when candidate generation is empty.
+    empty = signals.copy()
+    for column in ["meta_label", "label_gross_return", "label_net_return", "t1_idx", "t1_timestamp",
+                   "vertical_barrier_idx", "vertical_barrier_timestamp", "label_span_start_idx",
+                   "label_span_end_idx", "label_span_start_timestamp", "label_span_end_timestamp",
+                   "label_status", "label_exclusion_reason", "ambiguity_flag", "label_config_hash"]:
+        empty[column] = pd.Series(dtype="object")
+    return empty

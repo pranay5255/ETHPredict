@@ -11,6 +11,8 @@ data:
   granularity: 5m
   sources:
     - lighter
+  side_data:
+    groups: {}  # Historical sources remain disabled until their coverage gates pass.
   lighter:
     base_url: "https://mainnet.zklighter.elliot.ai"
     symbol: "ETH"
@@ -51,11 +53,13 @@ targets:
       bars: 12
 
 validation:
-  method: purged_walk_forward
+  method: exact_span_walk_forward
   folds: 3
   test_fraction: 0.2
   purge_bars: 12
   embargo_bars: 12
+  embargo_mode: fixed_bars
+  meta_inner_folds: 2
 
 sampling:
   mode: dense
@@ -70,10 +74,13 @@ sample_weights:
 
 research:
   final_test_guard:
-    do_not_reuse_test: false
+    do_not_reuse_test: true
 
 labels:
   meta_triple_barrier:
+    geometry: asymmetric
+    success_mode: positive_net_at_vertical
+    intrabar_ordering: stop_first
     profit_kappa: 1.5
     stop_kappa: 1.0
     vertical_barriers:

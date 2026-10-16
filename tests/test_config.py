@@ -13,7 +13,7 @@ def test_v2_config_validates_and_loads_active_sections():
     assert cfg.model_type.value == "lstm"
     assert cfg.targets["horizons"]["next_5m"]["bars"] == 1
     assert cfg.targets["horizons"]["next_hour"]["bars"] == 12
-    assert cfg.validation["method"] == "purged_walk_forward"
+    assert cfg.validation["method"] == "exact_span_walk_forward"
     assert cfg.alpha_backtest["meta_threshold"] == 0.55
     assert cfg.tracking["trackio"]["project"] == "ethpredict"
     assert cfg.raw_config["tracking"]["trackio"]["auto_log_gpu"] is True
