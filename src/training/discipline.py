@@ -148,3 +148,14 @@ class TabularBase(torch.nn.Module):
 
     def set_extra_state(self, state):
         self.regressors, self.classifiers = state['regressors'], state['classifiers']
+
+
+class ConstantBase(torch.nn.Module):
+    """Train-only mean/zero return with a training-prior direction probability."""
+    def __init__(self, returns, probabilities):
+        super().__init__()
+        self.register_buffer('returns', torch.as_tensor(returns, dtype=torch.float32).clone())
+        self.register_buffer('probabilities', torch.as_tensor(probabilities, dtype=torch.float32).clamp(1e-7, 1-1e-7))
+
+    def forward(self, x):
+        return self.returns.expand(len(x), -1), torch.logit(self.probabilities).expand(len(x), -1)
