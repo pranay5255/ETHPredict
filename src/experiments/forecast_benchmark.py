@@ -611,6 +611,11 @@ def run_forecast_benchmark_from_dataset(
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     bench_cfg = _benchmark_config(config)
+    # This legacy benchmark evaluates all declared models, without a prior
+    # validation-selected economic acceptance. Do not let it bypass that gate.
+    if (config.get("research", {}).get("economic_gate", {}).get("enabled", False)
+            and config.get("research", {}).get("final_test_guard", {}).get("evaluate", True) is not False):
+        raise ValueError("Economic-gated research requires validation-first selected-trial evaluation; benchmark final-test comparison is unavailable")
     run_dir.mkdir(parents=True, exist_ok=True)
     evaluate_test = (config.get("research", {}).get("final_test_guard", {}) or {}).get("evaluate", True) is not False
     if not evaluate_test and bench_cfg.get("route_to_meta_backtest", True):

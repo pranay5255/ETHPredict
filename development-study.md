@@ -55,7 +55,9 @@ least two positive blocks of three, 60 total trades, at least ten per block,
 positive net PnL at 2x costs, and stable positive rule-feature importance above
 trained noise. Missing evidence fails the gate. The general pipeline now also
 supports a research economic gate before its test scorer/ledger, preserving the
-classification winner even when economics rejects it. Enabling gates cannot
+classification winner even when economics rejects it. The scorer itself checks
+again before any ledger write; the legacy benchmark rejects economic-gated
+final-test comparisons until it supports validation-selected acceptance. Enabling gates cannot
 retroactively change the old study's winner or its consumed test outcome.
 
 Costs retain the conservative configured fees, historical signed funding,
@@ -110,3 +112,6 @@ uv run python -m src.experiments.development_study \
 Existing locally verified receipts are reconciled. Never rerun training just to
 recover a report. Read the final result/verification record before deciding what
 new hypothesis, if any, deserves another frozen development study.
+
+The completed study and its rejection decision are recorded in
+[development-study-results.md](development-study-results.md).

@@ -2485,6 +2485,14 @@ def _score_trial_on_test(
     dataset = context["dataset"]
     splits = context["splits"]
     trial_id = str(manifest["trial_id"])
+    # Protect the scorer itself as well as its validation-selection caller.
+    from src.evaluation.economic_gate import economic_gate
+    acceptance = economic_gate(manifest.get("metrics", {}).get("validation", {}),
+        [row.get("simulated_validation", {}) for row in manifest.get("folds", [])],
+        manifest.get("cost_stress", {}), manifest.get("feature_importance", {}),
+        config.get("research", {}).get("economic_gate", {}))
+    if not acceptance["passed"]:
+        raise ValueError("Economic acceptance failed before final-test access: " + acceptance["reason"])
     final_test_evaluation = _record_final_test_evaluation(
         config,
         run_dir,

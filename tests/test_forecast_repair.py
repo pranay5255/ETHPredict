@@ -32,8 +32,10 @@ def test_target_transform_excludes_inner_holdout_and_roundtrips(data,tmp_path):
     # Nonzero transforms make a missing/double inverse transform visible.
     with torch.no_grad():
         model.return_mean.fill_(.002);model.return_scale.fill_(.0003)
+        model.return_head.weight.zero_();model.return_head.bias.fill_(2.)
     path=tmp_path/'base.pt';torch.save(model.state_dict(),path)
     restored=load_base_checkpoint(path,cfg,dataset)
+    assert predict_base_model(restored,dataset,np.arange(120,130),torch.device('cpu')).next_5m_pred_return.to_numpy()==pytest.approx(.0026)
     pd.testing.assert_frame_equal(predict_base_model(model,dataset,np.arange(120,130),torch.device('cpu')),
                                   predict_base_model(restored,dataset,np.arange(120,130),torch.device('cpu')))
     assert len(history['training_loss_components'])==history['early_stopping']['epochs_run']
@@ -76,3 +78,13 @@ def test_standardized_lstm_can_learn_controlled_small_return_signal(data):
     pred=predict_base_model(model,dataset,np.arange(32),torch.device('cpu'))
     y=dataset['y_ret'][:32,0].numpy();p=pred.next_5m_pred_return.to_numpy()
     assert np.mean((p-y)**2)<.1*np.mean(y*y)
+
+
+def test_standardized_seed_ensemble_roundtrips_every_member_transform(data,tmp_path):
+    dataset,cfg=data;cfg['training']['ensemble_seeds']=[17,29]
+    model,_=train_base_model(dataset,np.arange(100),cfg,torch.device('cpu'))
+    path=tmp_path/'ensemble.pt';torch.save(model.state_dict(),path)
+    restored=load_base_checkpoint(path,cfg,dataset)
+    assert len(restored.members)==2
+    pd.testing.assert_frame_equal(predict_base_model(model,dataset,np.arange(120,130),torch.device('cpu')),
+                                  predict_base_model(restored,dataset,np.arange(120,130),torch.device('cpu')))
