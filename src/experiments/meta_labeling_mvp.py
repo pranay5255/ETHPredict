@@ -39,6 +39,7 @@ from src.evaluation.backtest_stats import (
     period_pnl_by_timestamp,
     summarize_single_path,
 )
+from src.evaluation.forecast_diagnostics import calibration_summary, forecast_diagnostics, map_forecast
 from src.features.labeling import meta_triple_barrier_labels
 from src.features.sample_weights import (
     average_uniqueness,
@@ -48,6 +49,8 @@ from src.features.sample_weights import (
     sample_weights_and_diagnostics,
 )
 from src.validation.splits import exact_validation_splits, purge_training_spans
+from src.training.meta_models import MetaModelBundle, SklearnMetaModel, fit_calibrator
+from src.training.discipline import EarlyStopper, SeedEnsemble, TabularBase, bootstrap_rows, training_holdout
 from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics
 from src.utils.trackio_logging import enforce_trackio_policy, log_trackio_run
@@ -95,16 +98,17 @@ class MetaLabelMLP(nn.Module):
 
 
 class ConstantMetaModel:
-    def __init__(self, probability: float, feature_columns: Sequence[str]):
+    def __init__(self, probability: float, feature_columns: Sequence[str], reason: str = "configured_constant"):
         self.probability = float(np.clip(probability, 0.0, 1.0))
         self.feature_columns = list(feature_columns)
         self.kind = "constant"
+        self.reason = reason
 
     def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
         return np.full(len(frame), self.probability, dtype=float)
 
     def manifest(self) -> Dict[str, Any]:
-        return {"kind": self.kind, "probability": self.probability, "feature_columns": self.feature_columns}
+        return {"kind": self.kind, "probability": self.probability, "feature_columns": self.feature_columns, "fallback_reason": self.reason}
 
 
 class TorchMetaModel:
@@ -129,7 +133,9 @@ class TorchMetaModel:
             return torch.sigmoid(self.model(X)).detach().cpu().numpy().reshape(-1)
 
     def manifest(self) -> Dict[str, Any]:
-        return {"kind": self.kind, "feature_columns": self.feature_columns}
+        return {"kind": self.kind, "feature_columns": self.feature_columns,
+                "preprocessing": {"fit_scope": "training_rows_only", "mean": self.mean.tolist(), "std": self.std.tolist()},
+                "training": getattr(self, "training_history", {})}
 
 
 def _utc_now() -> datetime:
@@ -225,6 +231,7 @@ RESEARCH_SPEC_SECTIONS = (
     "validation",
     "costs",
     "alpha_backtest",
+    "candidate_mapping",
 )
 FINAL_TEST_SELECTION_ROLES = ("raw_best", "trade_qualified_best", "classification_best", "calibration_best")
 DEFAULT_FINAL_TEST_ROLES = ("raw_best", "trade_qualified_best")
@@ -1092,7 +1099,7 @@ def fit_outer_meta_model(dataset, training_indices, config, device, prediction_p
         frames.append(add_meta_labels(candidate_signals(predictions, dataset, config), dataset, config))
         audits.append({**audit, "status": "completed"})
     if not frames:
-        return ConstantMetaModel(0.0, []), {"status": "unavailable", "reason": "no nested base OOF training candidates", "inner_folds": audits}
+        return ConstantMetaModel(0.0, [], "no_nested_base_oof_training_candidates"), {"status": "unavailable", "reason": "no nested base OOF training candidates", "inner_folds": audits}
     candidates = pd.concat(frames, ignore_index=True)
     realized_audit = None
     if evaluation_spans is not None and len(evaluation_spans):
@@ -1105,7 +1112,7 @@ def fit_outer_meta_model(dataset, training_indices, config, device, prediction_p
         realized_audit["span_kind"] = "meta_realized_t1"
         realized_audit["candidate_keys"] = combined[["sample_index", "horizon", "t1_idx"]].to_dict("records")
         candidates = candidates.iloc[retained].copy()
-    model = fit_meta_labeler(candidates, config, dataset["horizon_names"], device)
+    model = fit_meta_labeler(candidates, config, dataset["horizon_names"], device, dataset=dataset)
     labeled_count = int((candidates["is_candidate"] & candidates["meta_label"].notna()).sum())
     return model, {"status": "completed" if labeled_count else "unavailable",
                    "reason": None if labeled_count else "no labeled nested training candidates",
@@ -1140,7 +1147,15 @@ def _subset(dataset: Mapping[str, Any], indices: np.ndarray) -> Tuple[torch.Tens
     return dataset["X"][indices], dataset["y_ret"][indices], dataset["y_dir"][indices], dataset["sample_weights"][indices]
 
 
-def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Mapping[str, Any], device: torch.device) -> Tuple[MultiHorizonLSTM, Dict[str, Any]]:
+def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: Mapping[str, Any], device: torch.device) -> Tuple[MultiHorizonLSTM, Dict[str, Any]]:
+    training = config.get("training", {})
+    stop_cfg = training.get("early_stopping", {}) or {}
+    stop_audit = {"status": "disabled"}
+    fit_indices, validation = np.asarray(indices), np.array([], dtype=int)
+    if stop_cfg.get("enabled", False) and config.get("model", {}).get("base", {}).get("type", "lstm") == "lstm":
+        fit_indices, validation, stop_audit = training_holdout(
+            dataset["samples"], indices, config, stop_cfg, dataset=dataset)
+    indices = fit_indices
     X, y_ret, y_dir, weights = _subset(dataset, indices)
     X = X.to(device)
     feature_mean = X.mean(dim=(0, 1), keepdim=True)
@@ -1164,6 +1179,42 @@ def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Ma
         dropout=float(model_cfg.get("dropout", 0.0)),
         n_horizons=len(dataset["horizon_names"]),
     ).to(device)
+    # Persist training-only preprocessing with the checkpoint state.
+    model.register_buffer("feature_mean", feature_mean.detach().clone())
+    model.register_buffer("feature_std", feature_std.detach().clone())
+    seed = int(torch.initial_seed())
+    draws = bootstrap_rows(dataset["samples"].iloc[indices], str(training.get("bootstrap", "none")), seed)
+    kind = str(model_cfg.get("type", "lstm"))
+    if kind in {"linear", "tree"}:
+        from sklearn.linear_model import Ridge, LogisticRegression
+        from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+        matrix = TabularBase.summary(X.detach().cpu().numpy())[draws]
+        targets, directions = y_ret.cpu().numpy()[draws], y_dir.cpu().numpy()[draws]
+        regressors, classifiers = [], []
+        for h in range(targets.shape[1]):
+            reg = (Ridge(alpha=float(model_cfg.get("alpha", 1.))) if kind == "linear" else
+                   RandomForestRegressor(n_estimators=int(model_cfg.get("n_estimators", 50)),
+                                         max_depth=int(model_cfg.get("max_depth", 4)), random_state=seed))
+            reg.fit(matrix, targets[:, h], sample_weight=weights.detach().cpu().numpy()[draws] / max(float(weights.mean().cpu()), 1e-12))
+            regressors.append(reg)
+            if len(np.unique(directions[:, h])) < 2:
+                classifiers.append(float(directions[:, h].mean()))
+            else:
+                clf = (LogisticRegression(max_iter=1000, random_state=seed) if kind == "linear" else
+                       RandomForestClassifier(n_estimators=int(model_cfg.get("n_estimators", 50)),
+                                              max_depth=int(model_cfg.get("max_depth", 4)), random_state=seed))
+                clf.fit(matrix, directions[:, h], sample_weight=weights.detach().cpu().numpy()[draws] / max(float(weights.mean().cpu()), 1e-12))
+                classifiers.append(clf)
+        model = TabularBase(regressors, classifiers).to(device)
+        model.register_buffer("feature_mean", feature_mean.detach().clone())
+        model.register_buffer("feature_std", feature_std.detach().clone())
+        return model, {"model_type": kind, "feature_summary": "latest_mean_std", "seed": seed,
+                       "early_stopping": {"status": "not_applicable", "reason": "noniterative tabular fit"},
+                       "sample_weight_diagnostics": weight_diagnostics,
+                       "bootstrap": {"mode": training.get("bootstrap", "none"), "draws": draws.tolist()},
+                       "preprocessing": {"fit_scope": "train_indices_only"}}
+    if kind != "lstm":
+        raise ValueError(f"Unknown base model type: {kind}")
     optimizer = optim.Adam(
         model.parameters(),
         lr=float(training.get("learning_rate", 0.001)),
@@ -1172,12 +1223,14 @@ def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Ma
     ret_loss = nn.MSELoss(reduction="none")
     dir_loss = nn.BCEWithLogitsLoss(reduction="none")
     loader = DataLoader(
-        TensorDataset(X, y_ret, y_dir, weights),
+        TensorDataset(X[draws], y_ret[draws], y_dir[draws], weights[draws]),
         batch_size=int(training.get("batch_size", 32)),
         shuffle=True,
     )
     losses: List[float] = []
-    for _ in range(int(training.get("epochs", 1))):
+    validation_losses = []
+    stopper = EarlyStopper(stop_cfg.get("patience", 3), stop_cfg.get("min_delta", 0.))
+    for epoch in range(int(training.get("epochs", 1))):
         model.train()
         total = 0.0
         batches = 0
@@ -1196,13 +1249,27 @@ def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Ma
             total += float(weighted.detach().cpu())
             batches += 1
         losses.append(total / max(batches, 1))
-    model.feature_mean = feature_mean.detach().cpu()
-    model.feature_std = feature_std.detach().cpu()
+        if len(validation):
+            model.eval()
+            with torch.no_grad():
+                vx = (dataset["X"][validation].to(device) - feature_mean) / feature_std
+                vr, vd = model(vx)
+                vl = (float(loss_weights.get("return", 1.)) * ret_loss(vr, dataset["y_ret"][validation].to(device)).mean()
+                      + float(loss_weights.get("direction", .25)) * dir_loss(vd, dataset["y_dir"][validation].to(device)).mean())
+            validation_losses.append(float(vl.cpu()))
+            if stopper.update(validation_losses[-1], epoch + 1, model):
+                break
+    stopper.restore(model)
+    stop_audit.update(selected_epoch=stopper.best_epoch if len(validation) else len(losses),
+                      validation_losses=validation_losses, epochs_run=len(losses),
+                      best_loss=stopper.best_loss if len(validation) else None)
     return model, {
+        "model_type": kind, "seed": seed, "early_stopping": stop_audit,
+        "bootstrap": {"mode": training.get("bootstrap", "none"), "draws": draws.tolist()},
         "sample_weight_fit_scope": "retained_training_rows_only",
         "sample_weight_diagnostics": weight_diagnostics,
         "training_losses": losses,
-        "final_loss": losses[-1] if losses else 0.0,
+        "final_loss": losses[(stopper.best_epoch or len(losses)) - 1] if losses else 0.0,
         "preprocessing": {
             "scaler": "standard",
             "fit_scope": "train_indices_only",
@@ -1212,7 +1279,46 @@ def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Ma
     }
 
 
+def train_base_model(dataset, indices, config, device):
+    seeds = config.get("training", {}).get("ensemble_seeds")
+    if seeds is None:
+        seeds = [int(torch.initial_seed()) % (2**32)]
+    if not seeds or len(set(seeds)) != len(seeds):
+        raise ValueError("ensemble_seeds must be nonempty and unique")
+    members, histories = [], []
+    for seed in seeds:
+        torch.manual_seed(int(seed))
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        np.random.seed(int(seed))
+        model, history = _train_base_member(dataset, indices, config, device)
+        members.append(model)
+        histories.append(history)
+    if len(members) == 1:
+        return members[0], histories[0]
+    return SeedEnsemble(members, seeds), {"ensemble_seeds": list(seeds), "aggregation": "arithmetic_mean_return_and_probability",
+                                         "members": histories}
+
+
 def predict_base_model(model: MultiHorizonLSTM, dataset: Mapping[str, Any], indices: np.ndarray, device: torch.device, batch_size: int = 512) -> pd.DataFrame:
+    if isinstance(model, SeedEnsemble):
+        frames = [predict_base_model(member, dataset, indices, device, batch_size) for member in model.members]
+        frame = frames[0].copy()
+        for horizon in dataset["horizon_names"]:
+            for suffix in ["pred_return", "direction_prob"]:
+                key = f"{horizon}_{suffix}"
+                values = np.stack([part[key].to_numpy() for part in frames])
+                frame[key] = values.mean(axis=0)
+                frame[f"{key}_seed_std"] = values.std(axis=0)
+                for seed, row in zip(model.seeds, values):
+                    frame[f"{key}_seed_{seed}"] = row
+        return frame
+    if not len(indices):
+        frame = dataset["samples"].iloc[:0].copy()
+        for horizon in dataset["horizon_names"]:
+            for suffix in ["pred_return", "direction_prob", "true_return", "true_direction"]:
+                frame[f"{horizon}_{suffix}"] = np.array([], dtype=float)
+        return frame
     X = dataset["X"][indices]
     pred_returns: List[torch.Tensor] = []
     pred_probs: List[torch.Tensor] = []
@@ -1283,6 +1389,7 @@ def _prediction_metrics(frame: pd.DataFrame, horizons: Sequence[str]) -> Dict[st
     metrics: Dict[str, Any] = {}
     for horizon in horizons:
         metrics[horizon] = {
+            **forecast_diagnostics(frame, horizon),
             "return": _sanitize_metrics(
                 compute_metrics(
                     torch.tensor(frame[f"{horizon}_true_return"].to_numpy(dtype=float)).unsqueeze(1),
@@ -1305,6 +1412,25 @@ def _prediction_metrics(frame: pd.DataFrame, horizons: Sequence[str]) -> Dict[st
                 frame[f"{horizon}_direction_prob"],
                 frame["sample_weight"],
             )
+    if any("_seed_std" in column for column in frame):
+        metrics["instability"] = {
+            "mean_prediction_std": {column: float(frame[column].mean()) for column in frame if column.endswith("_seed_std")},
+            "mean_prediction_variance": {column: float((frame[column] ** 2).mean()) for column in frame if column.endswith("_seed_std")},
+            "per_seed": {},
+        }
+        seeds = sorted({column.rsplit("_seed_", 1)[1] for column in frame if "_seed_" in column and not column.endswith("_seed_std")})
+        for seed in seeds:
+            seed_frame = frame[[column for column in frame if "_seed_" not in column]].copy()
+            for horizon in horizons:
+                for suffix in ["pred_return", "direction_prob"]:
+                    key = f"{horizon}_{suffix}"
+                    seed_frame[key] = frame[f"{key}_seed_{seed}"]
+            metrics["instability"]["per_seed"][seed] = _prediction_metrics(seed_frame, horizons)
+        metrics["instability"]["metric_variance"] = {
+            horizon: {"return_mse": float(np.var([value[horizon]["return"]["mse"] for value in metrics["instability"]["per_seed"].values()])),
+                      "direction_accuracy": float(np.var([value[horizon]["direction"]["accuracy"] for value in metrics["instability"]["per_seed"].values()]))}
+            for horizon in horizons}
+
     return metrics
 
 
@@ -1325,10 +1451,14 @@ def candidate_signals(predictions: pd.DataFrame, dataset: Mapping[str, Any], con
             horizon_bars = int((label_cfg.get("vertical_barriers", {}) or {}).get(horizon, dataset["horizon_bars"][horizon]))
             cost_bps = _total_cost_bps(config, horizon_bars, str(dataset["granularity"]))
             expected_edge_bps = abs(pred_return) * 10_000.0 - cost_bps
-            is_candidate = bool(side != 0 and expected_edge_bps >= min_edge_bps)
+            mapping = map_forecast(pred_return, direction_prob, float(row.get("realized_vol", .001)),
+                                   disagreement, cost_bps, min_edge_bps, config.get("candidate_mapping", {}))
+            side, expected_edge_bps, is_candidate = mapping["side"], mapping["expected_edge_bps"], mapping["is_candidate"]
+            confidence = direction_prob if side >= 0 else 1. - direction_prob
             out = dict(shared)
             out.update(
                 {
+                    **mapping,
                     "horizon": horizon,
                     "horizon_bars": horizon_bars,
                     "pred_return": pred_return,
@@ -1413,13 +1543,25 @@ def _meta_feature_columns(frame: pd.DataFrame, horizons: Sequence[str]) -> List[
     return [column for column in columns if column in frame.columns]
 
 
-def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizons: Sequence[str], device: torch.device) -> Any:
+def _fit_meta_core(candidates: pd.DataFrame, config: Mapping[str, Any], horizons: Sequence[str], device: torch.device, dataset=None) -> Any:
     feature_columns = _meta_feature_columns(candidates, horizons)
     train = candidates[(candidates["is_candidate"]) & candidates["meta_label"].notna()].copy()
     if "prediction_role" in train and not train["prediction_role"].isin(["base_oof", "untrained_baseline"]).all():
         raise ValueError("Meta training requires out-of-fold base predictions")
     if train.empty:
-        return ConstantMetaModel(0.0, feature_columns)
+        return ConstantMetaModel(0.0, feature_columns, "empty_labeled_candidates")
+    meta_cfg = config.get("model", {}).get("meta_labeler", {})
+    kind = meta_cfg.get("type", "mlp")
+    if kind not in {"constant", "logistic", "tree", "mlp"}:
+        raise ValueError(f"Unknown meta-labeler type: {kind}")
+    training = config.get("training", {})
+    stop_cfg = training.get("early_stopping", {}) or {}
+    validation = train.iloc[:0]
+    stop_audit = {"status": "disabled"}
+    if kind == "mlp" and stop_cfg.get("enabled", False):
+        train = train.reset_index(drop=True)
+        fit, heldout, stop_audit = training_holdout(train, np.arange(len(train)), config, stop_cfg, dataset=dataset)
+        validation, train = train.iloc[heldout].copy(), train.iloc[fit].copy()
     train = _apply_meta_sample_weights(train, config)
     y = train["meta_label"].astype(float).to_numpy()
     if "sample_weight" in train.columns:
@@ -1430,21 +1572,32 @@ def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizo
     if not np.any(raw_weights > 0.0):
         raw_weights = np.ones(len(train), dtype=float)
     train_weights = raw_weights / max(float(raw_weights.mean()), 1e-12)
-    if len(np.unique(y)) < 2:
-        return ConstantMetaModel(float(np.average(y, weights=raw_weights)), feature_columns)
+    if kind == "constant" or len(np.unique(y)) < 2:
+        return ConstantMetaModel(float(np.average(y, weights=raw_weights)), feature_columns,
+                                 "configured_constant" if kind == "constant" else "single_class_training_labels")
     X = train.reindex(columns=feature_columns).replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=float)
     mean = X.mean(axis=0)
     std = X.std(axis=0) + 1e-8
     X = (X - mean) / std
-    meta_cfg = config.get("model", {}).get("meta_labeler", {})
-    training = config.get("training", {})
+    if kind in {"logistic", "tree"}:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.ensemble import RandomForestClassifier
+        seed = int(config.get("experiment", {}).get("seed", 42))
+        estimator = (LogisticRegression(C=float(meta_cfg.get("C", 1.)), max_iter=1000, random_state=seed)
+                     if kind == "logistic" else
+                     RandomForestClassifier(n_estimators=int(meta_cfg.get("n_estimators", 50)),
+                                            max_depth=int(meta_cfg.get("max_depth", 4)), random_state=seed))
+        estimator.fit(X, y, sample_weight=train_weights)
+        return SklearnMetaModel(estimator, mean, std, feature_columns, kind)
+    torch.manual_seed(int(config.get("experiment", {}).get("seed", torch.initial_seed())) % (2**32))
     model = MetaLabelMLP(
         input_size=X.shape[1],
         hidden_size=int(meta_cfg.get("hidden_size", 16)),
         num_layers=int(meta_cfg.get("num_layers", 1)),
         dropout=float(meta_cfg.get("dropout", 0.0)),
     ).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=float(training.get("learning_rate", 0.001)))
+    optimizer = optim.Adam(model.parameters(), lr=float(training.get("learning_rate", 0.001)),
+                           weight_decay=float(training.get("weight_decay", 0.)))
     criterion = nn.BCEWithLogitsLoss(reduction="none")
     loader = DataLoader(
         TensorDataset(
@@ -1455,7 +1608,9 @@ def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizo
         batch_size=int(training.get("batch_size", 32)),
         shuffle=True,
     )
-    for _ in range(int(training.get("epochs", 1))):
+    stopper = EarlyStopper(stop_cfg.get("patience", 3), stop_cfg.get("min_delta", 0.))
+    validation_losses = []
+    for epoch in range(int(training.get("epochs", 1))):
         model.train()
         for batch_X, batch_y, batch_w in loader:
             batch_X = batch_X.to(device)
@@ -1465,12 +1620,114 @@ def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizo
             loss = (criterion(model(batch_X), batch_y) * batch_w).mean()
             loss.backward()
             optimizer.step()
-    return TorchMetaModel(model, mean, std, feature_columns, device)
+        if len(validation):
+            model.eval()
+            vx = validation.reindex(columns=feature_columns).replace([np.inf, -np.inf], np.nan).fillna(0.).to_numpy(dtype=float)
+            with torch.no_grad():
+                vl = criterion(model(torch.tensor((vx - mean) / std, dtype=torch.float32, device=device)),
+                               torch.tensor(validation["meta_label"].to_numpy(), dtype=torch.float32, device=device)).mean()
+            validation_losses.append(float(vl.cpu()))
+            if stopper.update(validation_losses[-1], epoch + 1, model):
+                break
+    stopper.restore(model)
+    wrapped = TorchMetaModel(model, mean, std, feature_columns, device)
+    wrapped.training_history = {"early_stopping": {**stop_audit, "selected_epoch": stopper.best_epoch,
+                                "validation_losses": validation_losses, "epochs_run": epoch + 1}}
+    return wrapped
+
+
+def fit_meta_labeler(candidates, config, horizons, device, dataset=None):
+    """Fit, calibrate, and select using disjoint purged training-only populations."""
+    if "prediction_role" in candidates and not candidates["prediction_role"].isin(["base_oof", "untrained_baseline"]).all():
+        raise ValueError("Meta training requires out-of-fold base predictions")
+    meta_cfg = config.get("model", {}).get("meta_labeler", {})
+    method = (meta_cfg.get("calibration", {}) or {}).get("method", "none")
+    if method not in {"none", "platt", "isotonic"}:
+        raise ValueError(f"Unknown calibration method: {method}")
+    train = candidates[candidates["is_candidate"] & candidates["meta_label"].notna()].reset_index(drop=True)
+    before = {"rows": len(candidates), "labeled_rows": int(candidates["meta_label"].notna().sum()),
+              "positive_rate": float(candidates["meta_label"].mean()) if candidates["meta_label"].notna().any() else None}
+    balance = {"before_filtering": before, "after_filtering": {"rows": len(train),
+               "positive_rate": float(train["meta_label"].mean()) if len(train) else None}}
+    selection = meta_cfg.get("selection", {}) or {}
+    threshold_cfg = config.get("alpha_backtest", {}).get("meta_threshold_selection", {}) or {}
+    selection_rows = train.iloc[:0]
+    selection_audit = {"status": "disabled"}
+    if len(train) and (selection.get("enabled") or threshold_cfg.get("enabled")):
+        fit, holdout, selection_audit = training_holdout(train, np.arange(len(train)), config, selection, dataset=dataset)
+        selection_rows, train = train.iloc[holdout].copy(), train.iloc[fit].copy()
+    calibration_rows = train.iloc[:0]
+    calibration_audit = {"status": "disabled", "method": method}
+    if len(train) and method != "none":
+        settings = meta_cfg.get("calibration", {}) or {}
+        fit, holdout, audit = training_holdout(train, np.arange(len(train)), config, settings, dataset=dataset)
+        calibration_rows, train = train.iloc[holdout].copy(), train.iloc[fit].copy()
+        calibration_audit = {**audit, "method": method}
+    types = selection.get("models", [meta_cfg.get("type", "mlp")]) if selection.get("enabled") else [meta_cfg.get("type", "mlp")]
+    if not types:
+        raise ValueError("Meta model selection needs at least one model")
+    # If selection is unavailable, honor the predeclared default model.
+    if not len(selection_rows):
+        types = [meta_cfg.get("type", "mlp")]
+    models, scores = [], []
+    metric = selection.get("metric", "brier_score")
+    if metric not in {"brier_score", "log_loss"}:
+        raise ValueError("Meta selection metric must be brier_score or log_loss")
+    for kind in types:
+        candidate_config = deepcopy(config)
+        candidate_config.setdefault("model", {}).setdefault("meta_labeler", {})["type"] = kind
+        base = _fit_meta_core(train, candidate_config, horizons, device, dataset)
+        cal, cal_audit = None, dict(calibration_audit)
+        if method != "none" and len(calibration_rows):
+            truth = calibration_rows["meta_label"].to_numpy(dtype=float)
+            if base.kind == "constant" or len(np.unique(truth)) < 2:
+                cal_audit.update(status="unavailable", reason="constant model or single-class calibration labels")
+            else:
+                weights = _apply_meta_sample_weights(calibration_rows, config)["sample_weight"].to_numpy(dtype=float)
+                cal = fit_calibrator(method, base.predict_proba(calibration_rows), truth, weights / max(weights.mean(), 1e-12))
+                cal_audit.update(status="completed", reason=None)
+        bundle = MetaModelBundle(base, cal, method, {"calibration": cal_audit, "class_balance": balance})
+        if len(selection_rows):
+            truth, probability = selection_rows["meta_label"].to_numpy(dtype=float), bundle.predict_proba(selection_rows)
+            value = (float(np.mean((truth-probability)**2)) if metric == "brier_score" else
+                     _weighted_binary_classification_summary(truth, probability, np.ones(len(truth)))["log_loss"])
+        else:
+            value = None
+        models.append(bundle)
+        scores.append({"model_type": kind, "score": value, "actual_kind": base.kind})
+    winner = int(np.argmin([row["score"] for row in scores])) if len(selection_rows) else 0
+    model = models[winner]
+    model.audit["model_selection"] = {**selection_audit, "metric": metric, "scores": scores, "selected_type": types[winner]}
+    model.audit["threshold_selection"] = {"status": "disabled", "source": "configured_fixed_threshold"}
+    if threshold_cfg.get("enabled"):
+        if len(selection_rows):
+            scored = add_meta_probabilities(selection_rows, model)
+            scored["prediction_role"] = "meta_training_holdout"
+            rows = meta_threshold_table(scored, config.get("alpha_backtest", {}).get("meta_threshold_grid"), config=config)
+            objective = threshold_cfg.get("metric", "f1")
+            if objective not in {"f1", "validation_net_pnl"}:
+                raise ValueError("Threshold metric must be f1 or validation_net_pnl")
+            viable = [row for row in rows if row["trade_count"] >= int(threshold_cfg.get("min_trades", 1))]
+            chosen = max(viable, key=lambda row: (row[objective], row["threshold"])) if viable else None
+            model.decision_threshold = chosen["threshold"] if chosen else None
+            model.audit["threshold_selection"] = {"status": "completed" if chosen else "unavailable",
+                "reason": None if chosen else "no threshold meets minimum trade count", "metric": objective,
+                "source": "purged_meta_training_holdout_only", "table": rows, "split": selection_audit}
+        else:
+            model.audit["threshold_selection"] = {**selection_audit, "source": "configured_fixed_threshold_fallback"}
+    return model
 
 
 def add_meta_probabilities(candidates: pd.DataFrame, meta_model: Any) -> pd.DataFrame:
     out = candidates.copy()
     out["meta_prob"] = meta_model.predict_proba(out)
+    threshold = getattr(meta_model, "decision_threshold", None)
+    out["meta_decision_threshold"] = np.nan if threshold is None else threshold
+    manifest = meta_model.manifest()
+    out["meta_threshold_source"] = manifest.get("threshold_selection", {}).get("source", "configured_fixed_threshold")
+    out["meta_model_kind"] = manifest["kind"]
+    calibration = manifest.get("calibration", {})
+    out["meta_calibration_method"] = calibration.get("method", "none") if calibration.get("status") == "completed" else "none"
     out.loc[~out["is_candidate"], "meta_prob"] = 0.0
     return out
 
@@ -1556,6 +1813,8 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
     notional = min(notional, max_notional) if max_notional > 0 else notional
     policy = {
         "meta_threshold": meta_threshold,
+        "threshold_mode": "per_model_training_holdout" if candidates.get("meta_decision_threshold", pd.Series(dtype=float)).notna().any() else "configured_fixed",
+        "selected_thresholds": sorted(candidates.get("meta_decision_threshold", pd.Series(dtype=float)).dropna().unique().tolist()),
         "edge_threshold_bps": edge_threshold,
         "edge_safety_margin_bps": safety_margin,
         "effective_edge_threshold_bps": effective_edge_threshold,
@@ -1565,7 +1824,7 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
 
     eligible = candidates[
         (candidates["is_candidate"])
-        & (candidates["meta_prob"] >= meta_threshold)
+        & (candidates["meta_prob"] >= pd.to_numeric(candidates.get("meta_decision_threshold", pd.Series(meta_threshold, index=candidates.index)), errors="coerce").fillna(meta_threshold))
         & (candidates["expected_edge_bps"] >= effective_edge_threshold)
     ].copy()
     if "label_status" in eligible:
@@ -1606,6 +1865,10 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
                 "fees": fee_cost,
                 "net_pnl": net_pnl,
                 "meta_prob": float(row["meta_prob"]),
+                "meta_threshold": float(row["meta_decision_threshold"]) if pd.notna(row.get("meta_decision_threshold")) else meta_threshold,
+                "meta_threshold_source": row.get("meta_threshold_source", "configured_fixed_threshold"),
+                "meta_model_kind": row.get("meta_model_kind"),
+                "meta_calibration_method": row.get("meta_calibration_method", "none"),
                 "expected_edge_bps": float(row["expected_edge_bps"]),
                 "exit_reason": row.get("exit_reason", "vertical"),
                 "label_holding_bars": row.get("label_holding_bars", 0),
@@ -1732,8 +1995,12 @@ def predicted_edge_bucket_table(candidates: pd.DataFrame, bins: Optional[Sequenc
     return rows
 
 
-def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]:
+def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence[float]] = None, *, config=None) -> List[Dict[str, Any]]:
+    if "prediction_role" in candidates and candidates["prediction_role"].eq("final_test").any():
+        raise ValueError("Threshold sweeps cannot use final-test outcomes")
     thresholds = list(thresholds or [0.50, 0.55, 0.60, 0.65, 0.70, 0.80])
+    if any(not 0 <= float(value) <= 1 for value in thresholds):
+        raise ValueError("Meta thresholds must be within [0, 1]")
     if candidates.empty or "meta_prob" not in candidates or "meta_label" not in candidates:
         return []
     base = candidates[candidates["is_candidate"]].copy() if "is_candidate" in candidates else candidates.copy()
@@ -1757,9 +2024,22 @@ def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence
         tp = float((selected["meta_label"] == 1.0).sum())
         selected_weight = float(selected["_threshold_weight"].sum()) if len(selected) else 0.0
         selected_positive_weight = float(selected.loc[selected["meta_label"] == 1.0, "_threshold_weight"].sum()) if len(selected) else 0.0
+        precision, recall = tp / max(len(selected), 1), tp / max(positives, 1.)
+        pnl, trade_count = None, len(selected)
+        if config is not None:
+            sweep_config = deepcopy(config)
+            sweep_config.setdefault("alpha_backtest", {})["meta_threshold"] = float(threshold)
+            fixed = labeled.drop(columns=["meta_decision_threshold"], errors="ignore")
+            fixed["meta_threshold_source"] = "validation_diagnostic_sweep"
+            simulated, _ = run_alpha_backtest(fixed, sweep_config)
+            pnl, trade_count = simulated["net_pnl"], int(simulated["trades"])
+        cal = calibration_summary(selected["meta_label"], selected["meta_prob"])
         rows.append(
             {
                 "threshold": float(threshold),
+                "f1": float(2 * precision * recall / max(precision + recall, 1e-12)),
+                "trade_count": trade_count, "validation_net_pnl": pnl,
+                "calibration_error": cal["ece"],
                 "selected": int(len(selected)),
                 "coverage": float(len(selected) / max(len(labeled), 1)),
                 "precision": float(tp / max(len(selected), 1)),
@@ -1774,11 +2054,13 @@ def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence
 def alpha_diagnostics(candidates: pd.DataFrame, config: Mapping[str, Any]) -> Dict[str, Any]:
     alpha = config.get("alpha_backtest", {}) or {}
     thresholds = alpha.get("meta_threshold_grid")
+    final_test = "prediction_role" in candidates and candidates["prediction_role"].eq("final_test").any()
     return {
         "labels": label_diagnostics(candidates, config),
         "probability_buckets": probability_bucket_table(candidates),
         "predicted_edge_buckets": predicted_edge_bucket_table(candidates),
-        "meta_label_thresholds": meta_threshold_table(candidates, thresholds),
+        "meta_label_thresholds": [] if final_test else meta_threshold_table(candidates, thresholds, config=config),
+        "threshold_sweep_status": "not_run_on_final_test" if final_test else "validation_only",
     }
 
 
@@ -1938,11 +2220,22 @@ def _run_one_trial(
     meta_sample_weight_diagnostics = {
         "validation": oof_candidates.attrs.get("sample_weight_diagnostics", {}),
     }
-    meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device)
+    meta_model, final_meta_audit = fit_outer_meta_model(dataset, splits["development"], config, device)
     oof_candidates = collapse_scenario_predictions(pd.concat(meta_frames, ignore_index=True), candidates=True)
 
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
     diagnostics = {"validation": alpha_diagnostics(oof_candidates, config)}
+    from src.experiments.forecast_benchmark import forecast_metrics, zero_return_predictions, momentum_predictions
+    validation_metrics["forecast"] = forecast_metrics(oof_predictions, dataset, config)
+    validation_indices = dataset["samples"].reset_index().set_index("sample_index").loc[oof_predictions["sample_index"], "index"].to_numpy(dtype=int, copy=True)
+    validation_metrics["forecast_baselines"] = {
+        "zero_return": forecast_metrics(zero_return_predictions(dataset, validation_indices), dataset, config),
+        "momentum": forecast_metrics(momentum_predictions(dataset, validation_indices), dataset, config),
+    }
+    validation_metrics["candidate_mapping"] = {"settings": config.get("candidate_mapping", {"mode": "expected_edge"}),
+                                                "coverage": float(oof_candidates["is_candidate"].mean())}
+
+    validation_metrics["instability"] = validation_metrics["forecast"].get("instability", {"status": "single_seed"})
     validation_metrics["meta_classification"] = diagnostics["validation"]["labels"]["classification"]
     path_values = [item["simulated_validation"]["net_pnl"] for item in fold_manifests if item["meta_validation"]["status"] == "completed"]
     validation_metrics["path_dispersion"] = {
@@ -1952,7 +2245,7 @@ def _run_one_trial(
         "stitched_cpcv": False,
     }
 
-    model_path = trial_dir / "base_multi_horizon_lstm.pt"
+    model_path = trial_dir / f"base_multi_horizon_{config.get('model', {}).get('base', {}).get('type', 'lstm')}.pt"
     torch.save(final_model.state_dict(), model_path)
     checkpoint_id = _sha256_path(model_path)
     paths = {
@@ -1960,6 +2253,8 @@ def _run_one_trial(
         "oof_candidates": trial_dir / "meta_candidates_oof.parquet",
         "validation_trades": trial_dir / "alpha_trades_validation.parquet",
         "diagnostics": trial_dir / "alpha_diagnostics.json",
+        "forecast_diagnostics": trial_dir / "forecast_diagnostics.json",
+        "threshold_sweep": trial_dir / "threshold_sweep_validation.parquet",
         "meta_scenarios": trial_dir / "meta_candidates_scenarios.parquet",
         "meta_validation": trial_dir / "meta_validation.json",
     }
@@ -1968,7 +2263,9 @@ def _run_one_trial(
     pd.concat(meta_frames, ignore_index=True).to_parquet(paths["meta_scenarios"], index=False)
     _write_json(paths["meta_validation"], {"folds": fold_manifests})
     validation_trades.to_parquet(paths["validation_trades"], index=False)
+    pd.DataFrame(diagnostics["validation"]["meta_label_thresholds"]).to_parquet(paths["threshold_sweep"], index=False)
     _write_json(paths["diagnostics"], diagnostics)
+    _write_json(paths["forecast_diagnostics"], {"forecast": validation_metrics["forecast"], "baselines": validation_metrics["forecast_baselines"]})
 
     manifest = {
         "stage": "mvp_trial",
@@ -1998,6 +2295,8 @@ def _run_one_trial(
         "folds": fold_manifests,
         "final_training_history": final_history,
         "meta_labeler": meta_model.manifest(),
+        "final_meta_training": final_meta_audit,
+        "candidate_mapping": config.get("candidate_mapping", {"mode": "expected_edge"}),
         "meta_sample_weight_diagnostics": meta_sample_weight_diagnostics,
         "model_path": model_path,
         "checkpoint_id": checkpoint_id,
@@ -2022,6 +2321,8 @@ def _run_one_trial(
 
 
 def _move_meta_model(meta_model: Any, device: torch.device) -> None:
+    if isinstance(meta_model, MetaModelBundle):
+        _move_meta_model(meta_model.base, device)
     if isinstance(meta_model, TorchMetaModel):
         meta_model.model.to(device)
         meta_model.device = device
@@ -2069,6 +2370,9 @@ def _score_trial_on_test(
         meta_model,
     )
     test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
+    from src.experiments.forecast_benchmark import forecast_metrics
+    test_metrics["forecast"] = forecast_metrics(test_predictions, dataset, config)
+    test_metrics["instability"] = test_metrics["forecast"].get("instability", {"status": "single_seed"})
     test_metrics["meta_classification"] = label_diagnostics(test_candidates, config)["classification"]
     diagnostics = dict(manifest.get("diagnostics") or {})
     diagnostics["test"] = alpha_diagnostics(test_candidates, config)
@@ -2077,6 +2381,8 @@ def _score_trial_on_test(
 
     trial_dir = Path(manifest["manifest_path"]).parent
     paths = dict(manifest.get("artifact_paths") or {})
+    paths["forecast_diagnostics_test"] = trial_dir / "forecast_diagnostics_test.json"
+    _write_json(paths["forecast_diagnostics_test"], test_metrics["forecast"])
     paths["test_predictions"] = trial_dir / "predictions_test.parquet"
     paths["test_candidates"] = trial_dir / "meta_candidates_test.parquet"
     paths["test_trades"] = trial_dir / "alpha_trades_test.parquet"
@@ -2567,9 +2873,18 @@ def _log_meta_label_trial_trackio(
         "sample_weight_diagnostics": (trial.get("dataset", {}) or {}).get("sample_weight_diagnostics"),
         "bar_clock_diagnostics": (trial.get("dataset", {}) or {}).get("bar_clock_diagnostics"),
         "side_data_manifest": (trial.get("dataset", {}) or {}).get("side_data_manifest"),
+        "meta_labeler": trial.get("meta_labeler"),
+        "training_discipline": trial.get("final_training_history"),
+        "candidate_mapping": trial.get("candidate_mapping"),
     }
+    split_metrics = trial.get("metrics", {}) or {}
     metrics = {
-        "alpha": trial.get("metrics", {}) or {},
+        "alpha": {split: {key: value for key, value in payload.items()
+                          if key not in {"forecast", "forecast_baselines", "instability"}}
+                  for split, payload in split_metrics.items()},
+        "forecast": {split: payload.get("forecast", {}) for split, payload in split_metrics.items()},
+        "forecast_baselines": {split: payload.get("forecast_baselines", {}) for split, payload in split_metrics.items()},
+        "model_instability": {split: payload.get("instability", {}) for split, payload in split_metrics.items()},
         "forecast_oof_by_fold": {
             f"fold_{fold.get('fold')}": fold.get("metrics", {})
             for fold in trial.get("folds", []) or []
@@ -2815,6 +3130,11 @@ def _report_markdown(report: Mapping[str, Any]) -> str:
         "- Test coverage: `{}`".format((best["metrics"].get("test") or {}).get("coverage", "not_evaluated")),
         "- Evidence grade: `{}`".format(report.get("evidence_grade", "debugging_only")),
         "- Path type: `{}`".format(report.get("path_type", "single_path")),
+        "- Base training: `{}`".format(best.get("final_training_history", {}).get("ensemble_seeds", "single seed")),
+        "- Meta model: `{}`".format(best.get("meta_labeler", {}).get("kind", "unavailable")),
+        "- Meta calibration: `{}` / `{}`".format(best.get("meta_labeler", {}).get("calibration", {}).get("method", "none"), best.get("meta_labeler", {}).get("calibration", {}).get("status", "unavailable")),
+        "- Validation classification/calibration: `{}`".format(best["metrics"]["validation"].get("meta_classification")),
+        "- Seed instability: `{}`".format(best["metrics"]["validation"].get("instability", {}).get("metric_variance", "single seed")),
         "- Annualisation: `{}`".format(best["metrics"]["validation"].get("statistics", {}).get("annualisation", ANNUALISATION_NOTE)),
         "- Validation Sharpe (per period): `{}`".format(_statistic_value(best, "validation", "sharpe_per_period")),
         "- Validation PSR: `{}`".format(_statistic_value(best, "validation", "psr")),

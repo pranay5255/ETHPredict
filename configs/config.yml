@@ -103,11 +103,32 @@ model:
     num_layers: 1
     dropout: 0.1
     enabled: true
+    calibration:
+      method: none
+      validation_fraction: 0.2
+    selection:
+      enabled: false
+      models: [constant, logistic, tree, mlp]
+      metric: brier_score
+      validation_fraction: 0.2
   confidence_head:
     enabled: false
     report_as: event_confidence
 
+candidate_mapping:
+  mode: expected_edge
+  min_scaled_edge: 0.0
+
 training:
+  # Preserve the single-seed baseline; compare ensembles under a frozen budget.
+  ensemble_seeds: [42]
+  bootstrap: none
+  early_stopping:
+    enabled: true
+    validation_fraction: 0.2
+    patience: 2
+    min_delta: 0.0
+    min_rows: 2
   sequence_length: 288
   epochs: 3
   batch_size: 16
@@ -126,6 +147,10 @@ costs:
 alpha_backtest:
   initial_capital: 100000.0
   horizon: best
+  meta_threshold_selection:
+    enabled: false
+    metric: f1
+    min_trades: 1
   meta_threshold: 0.55
   edge_threshold_bps: 5.0
   position_sizing: fixed_notional

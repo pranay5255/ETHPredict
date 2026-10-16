@@ -217,10 +217,10 @@ oneOf:
             type: string
           base:
             type: object
-            required: [type, hidden_size, num_layers]
+            required: [type]
             properties:
               type:
-                type: string
+                enum: [lstm, linear, tree]
               hidden_size:
                 type: integer
                 minimum: 1
@@ -232,10 +232,10 @@ oneOf:
                 minimum: 0
           meta_labeler:
             type: object
-            required: [type, hidden_size]
+            required: [type]
             properties:
               type:
-                type: string
+                enum: [constant, logistic, tree, mlp]
               hidden_size:
                 type: integer
                 minimum: 1
@@ -245,12 +245,73 @@ oneOf:
               dropout:
                 type: number
                 minimum: 0
+              calibration:
+                type: object
+                properties:
+                  method:
+                    enum: [none, platt, isotonic]
+                  validation_fraction:
+                    type: number
+                    exclusiveMinimum: 0
+                    exclusiveMaximum: 1
+              selection:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  models:
+                    type: array
+                    minItems: 1
+                    uniqueItems: true
+                    items:
+                      enum: [constant, logistic, tree, mlp]
+                  metric:
+                    enum: [brier_score, log_loss]
+                  validation_fraction:
+                    type: number
+                    exclusiveMinimum: 0
+                    exclusiveMaximum: 1
               enabled:
                 type: boolean
+      candidate_mapping:
+        type: object
+        properties:
+          mode:
+            enum: [raw_sign, probability_sign, expected_edge, volatility_scaled_edge, horizon_agreement]
+          min_scaled_edge:
+            type: number
       training:
         type: object
         required: [sequence_length, epochs, batch_size, learning_rate]
         properties:
+          ensemble_seeds:
+            type: array
+            minItems: 1
+            uniqueItems: true
+            items:
+              type: integer
+              minimum: 0
+              maximum: 4294967295
+          bootstrap:
+            enum: [none, bootstrap, sequential_bootstrap]
+          early_stopping:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              patience:
+                type: integer
+                minimum: 1
+              min_delta:
+                type: number
+                minimum: 0
+              validation_fraction:
+                type: number
+                exclusiveMinimum: 0
+                exclusiveMaximum: 1
+              min_rows:
+                type: integer
+                minimum: 1
           sequence_length:
             type: integer
             minimum: 1
@@ -291,6 +352,23 @@ oneOf:
             minimum: 0
           horizon:
             type: string
+          meta_threshold_selection:
+            type: object
+            properties:
+              enabled:
+                type: boolean
+              metric:
+                enum: [f1, validation_net_pnl]
+              min_trades:
+                type: integer
+                minimum: 0
+          meta_threshold_grid:
+            type: array
+            minItems: 1
+            items:
+              type: number
+              minimum: 0
+              maximum: 1
           meta_threshold:
             type: number
             minimum: 0
