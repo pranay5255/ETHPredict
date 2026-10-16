@@ -46,6 +46,7 @@ from src.features.sample_weights import (
     sample_weight_diagnostics,
     sample_weights_and_diagnostics,
 )
+from src.validation.splits import exact_validation_splits, purge_training_spans
 from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics
 from src.utils.trackio_logging import enforce_trackio_policy, log_trackio_run
@@ -386,6 +387,8 @@ def final_test_use_count(trials: Sequence[Mapping[str, Any]]) -> int:
 def final_test_selection_roles(config: Mapping[str, Any]) -> List[str]:
     """Selection roles whose trials may be evaluated on the final test split."""
 
+    if _research_cfg(config, "final_test_guard").get("evaluate", True) is False:
+        return []
     roles = _research_cfg(config, "final_test_guard").get("evaluate_selection_roles", list(DEFAULT_FINAL_TEST_ROLES))
     roles = [str(role) for role in (roles or [])]
     unknown = sorted(set(roles) - set(FINAL_TEST_SELECTION_ROLES))
@@ -813,6 +816,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     horizons = target_horizons(config)
     max_horizon = max(bars for _, bars in horizons)
     label_cfg = config.get("labels", {}).get("meta_triple_barrier", {})
+    max_horizon = max([max_horizon, *map(int, (label_cfg.get("vertical_barriers", {}) or {}).values())])
     volatility_window = int(label_cfg.get("volatility_window", bars_for_duration(granularity, hours=24)))
 
     bar_cfg = dict(config.get("bars", {}) or data_cfg.get("bars", {}) or {})
@@ -1006,6 +1010,97 @@ def purged_walk_forward_splits(n_samples: int, validation_cfg: Mapping[str, Any]
     }
 
 
+def build_validation_splits(dataset: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any]:
+    """One split contract for v2 training and every forecast benchmark.
+
+    Legacy fixed gaps remain available, with an explicit final safety guard
+    when configured gaps are shorter than observed inclusive label spans.
+    """
+    cfg = config.get("validation", {})
+    if cfg.get("method", "purged_walk_forward") != "purged_walk_forward":
+        return exact_validation_splits(dataset, cfg)
+    splits = purged_walk_forward_splits(len(dataset["X"]), cfg)
+    clock = dataset["price_path"]["timestamp"]
+    guard = {"embargo_bars": 0}
+    development, audit = purge_training_spans(dataset["samples"], splits["development"], splits["test"], guard, clock=clock)
+    if len(development) < 2:
+        raise ValueError("Insufficient development coverage after label-span safety guard")
+    splits["development"] = development
+    splits["gap"] = np.setdiff1d(np.arange(splits["test_start"]), development)
+    splits["final_boundary_audit"] = audit
+    for fold in splits["folds"]:
+        fold["validation"] = np.intersect1d(fold["validation"], development)
+        if not len(fold["validation"]):
+            raise ValueError("Insufficient validation coverage after final-test span protection")
+        fold["train"], fold["audit"] = purge_training_spans(dataset["samples"], fold["train"], fold["validation"], guard, clock=clock)
+        if not len(fold["train"]):
+            raise ValueError("Insufficient training coverage after fixed-gap label-span safety guard")
+    splits.update(method="purged_walk_forward", path_type="walk_forward", span_guard=True)
+    return splits
+
+
+def fit_outer_meta_model(dataset, training_indices, config, device, prediction_provider=None):
+    """Nested base OOF predictions from the outer training population only.
+
+    In purged k-fold/grouped scenarios even another outer fold's base model
+    may have seen the current evaluation labels. Inner base fits prevent that
+    indirect route into meta training.
+    """
+    count = int(config.get("validation", {}).get("meta_inner_folds", 2))
+    if count < 1:
+        raise ValueError("meta_inner_folds must be positive")
+    groups = np.array_split(np.asarray(training_indices, dtype=int), count + 1)
+    frames, audits = [], []
+    clock = dataset["price_path"]["timestamp"]
+    for index in range(1, len(groups)):
+        validation = groups[index]
+        proposed = np.concatenate(groups[:index])
+        if not len(validation) or not len(proposed):
+            continue
+        train, audit = purge_training_spans(dataset["samples"], proposed, validation,
+                                             config.get("validation", {}), clock=clock,
+                                             max_horizon=dataset["max_horizon_bars"], sequence_length=dataset["sequence_length"])
+        if not len(train):
+            audits.append({**audit, "status": "unavailable", "reason": "no inner training rows after purging"})
+            continue
+        if prediction_provider is None:
+            model, _ = train_base_model(dataset, train, config, device)
+            predictions = predict_base_model(model, dataset, validation, device)
+            predictions["prediction_role"] = "base_oof"
+        else:
+            predictions = prediction_provider(validation)
+            if predictions.empty:
+                continue
+            predictions["prediction_role"] = "untrained_baseline"
+        frames.append(add_meta_labels(candidate_signals(predictions, dataset, config), dataset, config))
+        audits.append({**audit, "status": "completed"})
+    if not frames:
+        return ConstantMetaModel(0.0, []), {"status": "unavailable", "reason": "no nested base OOF training candidates", "inner_folds": audits}
+    candidates = pd.concat(frames, ignore_index=True)
+    model = fit_meta_labeler(candidates, config, dataset["horizon_names"], device)
+    return model, {"status": "completed", "outer_train_indices": list(map(int, training_indices)),
+                   "candidate_count": len(candidates), "inner_folds": audits}
+
+
+def evaluate_meta_fold(predictions, dataset, fold, config, device, prediction_provider=None):
+    candidates = add_meta_labels(candidate_signals(predictions, dataset, config), dataset, config)
+    model, audit = fit_outer_meta_model(dataset, fold["train"], config, device, prediction_provider)
+    candidates = add_meta_probabilities(candidates, model)
+    candidates["meta_evaluation_status"] = "held_out" if audit["status"] == "completed" else "unavailable"
+    candidates["meta_fold"] = int(fold["fold"])
+    return candidates, audit
+
+
+def collapse_scenario_predictions(frame, *, candidates=False):
+    """Use the first predeclared scenario per row; retain full scenario reports.
+
+    Never average probabilities of proposals with different sides or eligibility.
+    This deterministic summary is not a stitched CPCV path.
+    """
+    keys = ["sample_index"] + (["horizon"] if candidates else [])
+    return frame.drop_duplicates(keys).sort_values("timestamp").reset_index(drop=True)
+
+
 def _subset(dataset: Mapping[str, Any], indices: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return dataset["X"][indices], dataset["y_ret"][indices], dataset["y_dir"][indices], dataset["sample_weights"][indices]
 
@@ -1018,7 +1113,12 @@ def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Ma
     X = (X - feature_mean) / feature_std
     y_ret = y_ret.to(device)
     y_dir = y_dir.to(device)
-    weights = weights.to(device)
+    weight_cfg = sample_weight_config(config)
+    train_weights, weight_diagnostics = sample_weights_and_diagnostics(
+        dataset["samples"].iloc[indices], mode=weight_cfg["base_mode"], normalize=weight_cfg["normalize"],
+        return_values=dataset["y_ret"][indices].cpu().numpy(),
+    )
+    weights = torch.tensor(train_weights.to_numpy(), dtype=torch.float32, device=device)
     model_cfg = config.get("model", {}).get("base", {})
     training = config.get("training", {})
     loss_weights = training.get("loss_weights", {}) or {}
@@ -1064,6 +1164,8 @@ def train_base_model(dataset: Mapping[str, Any], indices: np.ndarray, config: Ma
     model.feature_mean = feature_mean.detach().cpu()
     model.feature_std = feature_std.detach().cpu()
     return model, {
+        "sample_weight_fit_scope": "retained_training_rows_only",
+        "sample_weight_diagnostics": weight_diagnostics,
         "training_losses": losses,
         "final_loss": losses[-1] if losses else 0.0,
         "preprocessing": {
@@ -1185,7 +1287,7 @@ def candidate_signals(predictions: pd.DataFrame, dataset: Mapping[str, Any], con
             side = int(np.sign(pred_return))
             direction_prob = float(row[f"{horizon}_direction_prob"])
             confidence = direction_prob if side >= 0 else 1.0 - direction_prob
-            horizon_bars = int(dataset["horizon_bars"][horizon])
+            horizon_bars = int((label_cfg.get("vertical_barriers", {}) or {}).get(horizon, dataset["horizon_bars"][horizon]))
             cost_bps = _total_cost_bps(config, horizon_bars, str(dataset["granularity"]))
             expected_edge_bps = abs(pred_return) * 10_000.0 - cost_bps
             is_candidate = bool(side != 0 and expected_edge_bps >= min_edge_bps)
@@ -1283,6 +1385,7 @@ def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizo
         raise ValueError("Meta training requires out-of-fold base predictions")
     if train.empty:
         return ConstantMetaModel(0.0, feature_columns)
+    train = _apply_meta_sample_weights(train, config)
     y = train["meta_label"].astype(float).to_numpy()
     if "sample_weight" in train.columns:
         raw_weights = pd.to_numeric(train["sample_weight"], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=float)
@@ -1685,14 +1788,17 @@ def _split_manifest(dataset: Mapping[str, Any], splits: Mapping[str, Any]) -> Di
         }
 
     return {
-        "method": "purged_walk_forward",
+        "method": splits.get("method", "purged_walk_forward"),
+        "path_type": splits.get("path_type", "walk_forward"),
+        "final_boundary_audit": splits.get("final_boundary_audit"),
+        "span_guard": splits.get("span_guard", True),
         "purge_bars": int(splits["purge_bars"]),
         "embargo_bars": int(splits["embargo_bars"]),
         "development": describe(splits["development"]),
         "gap": describe(splits["gap"]),
         "test": describe(splits["test"]),
         "folds": [
-            {"fold": int(fold["fold"]), "train": describe(fold["train"]), "validation": describe(fold["validation"])}
+            {"fold": int(fold["fold"]), "train": describe(fold["train"]), "validation": describe(fold["validation"]), "audit": fold.get("audit")}
             for fold in splits["folds"]
         ],
     }
@@ -1746,13 +1852,14 @@ def _run_one_trial(
     np.random.seed(int(config.get("experiment", {}).get("seed", 42)) + int(spec["trial_index"]))
 
     dataset = build_multi_horizon_lighter_dataset(config, smoke=smoke)
-    splits = purged_walk_forward_splits(int(dataset["X"].shape[0]), config.get("validation", {}))
+    splits = build_validation_splits(dataset, config)
     split_manifest = _split_manifest(dataset, splits)
     split_manifest_path = trial_dir / "split_manifest.json"
     _write_json(split_manifest_path, split_manifest)
     split_manifest_hash = _stable_hash(split_manifest)
 
     oof_frames: List[pd.DataFrame] = []
+    meta_frames: List[pd.DataFrame] = []
     fold_manifests: List[Dict[str, Any]] = []
     batch_size = int(config.get("training", {}).get("prediction_batch_size", 512))
     for fold in splits["folds"]:
@@ -1761,17 +1868,22 @@ def _run_one_trial(
         fold_pred["fold"] = int(fold["fold"])
         fold_pred["prediction_role"] = "base_oof"
         oof_frames.append(fold_pred)
+        meta_candidates, meta_audit = evaluate_meta_fold(fold_pred, dataset, fold, config, device)
+        meta_frames.append(meta_candidates)
+        path_metrics, _ = run_alpha_backtest(meta_candidates, config)
         fold_manifests.append(
             {
                 "fold": int(fold["fold"]),
                 "train_samples": int(len(fold["train"])),
                 "validation_samples": int(len(fold["validation"])),
                 "history": history,
+                "meta_validation": meta_audit,
+                "simulated_validation": path_metrics,
                 "metrics": _prediction_metrics(fold_pred, dataset["horizon_names"]),
             }
         )
 
-    oof_predictions = pd.concat(oof_frames, ignore_index=True).sort_values("timestamp")
+    oof_predictions = collapse_scenario_predictions(pd.concat(oof_frames, ignore_index=True).sort_values("timestamp"))
     final_model, final_history = train_base_model(dataset, splits["development"], config, device)
 
     # Only validation (out-of-fold) evidence is produced here. The final test
@@ -1781,11 +1893,18 @@ def _run_one_trial(
         "validation": oof_candidates.attrs.get("sample_weight_diagnostics", {}),
     }
     meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device)
-    oof_candidates = add_meta_probabilities(oof_candidates, meta_model)
+    oof_candidates = collapse_scenario_predictions(pd.concat(meta_frames, ignore_index=True), candidates=True)
 
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
     diagnostics = {"validation": alpha_diagnostics(oof_candidates, config)}
     validation_metrics["meta_classification"] = diagnostics["validation"]["labels"]["classification"]
+    path_values = [item["simulated_validation"]["net_pnl"] for item in fold_manifests]
+    validation_metrics["path_dispersion"] = {
+        "path_type": splits.get("path_type"), "scenario_count": len(path_values),
+        "net_pnl_quantiles": {str(q): float(np.quantile(path_values, q)) for q in [.1, .5, .9]},
+        "scenarios": [{"fold": item["fold"], "metrics": item["simulated_validation"]} for item in fold_manifests],
+        "stitched_cpcv": False,
+    }
 
     model_path = trial_dir / "base_multi_horizon_lstm.pt"
     torch.save(final_model.state_dict(), model_path)
@@ -1795,9 +1914,13 @@ def _run_one_trial(
         "oof_candidates": trial_dir / "meta_candidates_oof.parquet",
         "validation_trades": trial_dir / "alpha_trades_validation.parquet",
         "diagnostics": trial_dir / "alpha_diagnostics.json",
+        "meta_scenarios": trial_dir / "meta_candidates_scenarios.parquet",
+        "meta_validation": trial_dir / "meta_validation.json",
     }
     oof_predictions.to_parquet(paths["oof_predictions"], index=False)
     oof_candidates.to_parquet(paths["oof_candidates"], index=False)
+    pd.concat(meta_frames, ignore_index=True).to_parquet(paths["meta_scenarios"], index=False)
+    _write_json(paths["meta_validation"], {"folds": fold_manifests})
     validation_trades.to_parquet(paths["validation_trades"], index=False)
     _write_json(paths["diagnostics"], diagnostics)
 
@@ -1899,6 +2022,7 @@ def _score_trial_on_test(
         meta_model,
     )
     test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
+    test_metrics["meta_classification"] = label_diagnostics(test_candidates, config)["classification"]
     diagnostics = dict(manifest.get("diagnostics") or {})
     diagnostics["test"] = alpha_diagnostics(test_candidates, config)
     meta_diagnostics = dict(manifest.get("meta_sample_weight_diagnostics") or {})
@@ -1957,8 +2081,8 @@ def _apply_selected_test_evaluations(
         trial_roles = _selection_roles_for_trial(current, selection)
         if not (set(trial_roles) & roles):
             current["test_evaluation"] = {
-                "status": "not_selected",
-                "reason": "final test is scored only for trials selected on validation",
+                "status": "disabled" if not roles else "not_selected",
+                "reason": "final-test scoring disabled for implementation verification" if not roles else "final test is scored only for trials selected on validation",
                 "selection_roles": trial_roles,
             }
             current["final_test_evaluation"] = None
@@ -2678,6 +2802,20 @@ def _report_markdown(report: Mapping[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def validation_test_rank_stability(trials):
+    pairs = [(trial["trial_id"], trial.get("metrics", {}).get("validation", {}).get("net_pnl"),
+              trial.get("metrics", {}).get("test", {}).get("net_pnl")) for trial in trials]
+    pairs = [row for row in pairs if row[1] is not None and row[2] is not None]
+    result = {"available": False, "spearman": None, "trials": pairs,
+              "scope": "validation-selected trials with recorded final-test evaluations only",
+              "reason": "fewer than two evaluated trials or constant ranks"}
+    if len(pairs) >= 2:
+        correlation = pd.Series([row[1] for row in pairs]).corr(pd.Series([row[2] for row in pairs]), method="spearman")
+        if np.isfinite(correlation):
+            result.update(available=True, spearman=float(correlation), reason=None)
+    return result
+
+
 def run_meta_labeling_mvp(
     config_path: Path,
     *,
@@ -2815,6 +2953,7 @@ def run_meta_labeling_mvp(
         "trial_accounting": trial_accounting,
         "trial_accounting_path": trial_accounting_path,
         "path_type": "single_path",
+        "validation_test_rank_stability": validation_test_rank_stability(trial_manifests),
         "evidence_grade": evidence_grade,
         "pbo": cross_trial["pbo"],
         "annualisation": ANNUALISATION_NOTE,

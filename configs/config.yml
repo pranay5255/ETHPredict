@@ -51,11 +51,13 @@ targets:
       bars: 12
 
 validation:
-  method: purged_walk_forward
+  method: exact_span_walk_forward
   folds: 3
   test_fraction: 0.2
   purge_bars: 12
   embargo_bars: 12
+  embargo_mode: fixed_bars
+  meta_inner_folds: 2
 
 sampling:
   mode: dense
@@ -70,7 +72,7 @@ sample_weights:
 
 research:
   final_test_guard:
-    do_not_reuse_test: false
+    do_not_reuse_test: true
 
 labels:
   meta_triple_barrier:

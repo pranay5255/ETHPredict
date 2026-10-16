@@ -88,7 +88,24 @@ oneOf:
         required: [method, folds, test_fraction, purge_bars, embargo_bars]
         properties:
           method:
-            const: purged_walk_forward
+            enum: [purged_walk_forward, exact_span_walk_forward, purged_kfold, grouped_scenario]
+          embargo_mode:
+            enum: [fixed_bars, max_horizon, sequence_plus_horizon, realized_t1, volatility_adaptive]
+          meta_inner_folds:
+            type: integer
+            minimum: 1
+          scenario_test_groups:
+            type: integer
+            minimum: 1
+          max_scenarios:
+            type: integer
+            minimum: 1
+          min_train_rows:
+            type: integer
+            minimum: 1
+          min_validation_rows:
+            type: integer
+            minimum: 1
           folds:
             type: integer
             minimum: 1

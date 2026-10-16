@@ -33,6 +33,9 @@ from src.experiments.meta_labeling_mvp import (
     add_meta_probabilities,
     apply_smoke_overrides,
     build_multi_horizon_lighter_dataset,
+    build_validation_splits,
+    collapse_scenario_predictions,
+    evaluate_meta_fold,
     candidate_signals,
     fit_meta_labeler,
     predict_base_model,
@@ -355,10 +358,27 @@ def _run_meta_backtest_for_predictions(
     model_dir: Path,
     device: torch.device,
 ) -> Dict[str, Any]:
+    scenario_predictions = oof_predictions.copy()
+    oof_predictions = collapse_scenario_predictions(oof_predictions)
     oof_candidates = add_meta_labels(candidate_signals(oof_predictions, dataset, config), dataset, config)
     test_candidates = add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config)
     meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device)
-    oof_candidates = add_meta_probabilities(oof_candidates, meta_model)
+    splits = build_validation_splits(dataset, config)
+    meta_frames, meta_audits = [], []
+    provider = None
+    if model_id != "lstm":
+        def provider(indices):
+            sample_ids = dataset["samples"].iloc[indices]["sample_index"]
+            return oof_predictions[oof_predictions["sample_index"].isin(sample_ids)].copy()
+    for fold in splits["folds"]:
+        sample_ids = dataset["samples"].iloc[fold["validation"]]["sample_index"]
+        predictions = scenario_predictions[scenario_predictions["sample_index"].isin(sample_ids)].copy()
+        if "fold" in predictions:
+            predictions = predictions[predictions["fold"] == fold["fold"]].copy()
+        part, audit = evaluate_meta_fold(predictions, dataset, fold, config, device, provider)
+        meta_frames.append(part)
+        meta_audits.append(audit)
+    oof_candidates = collapse_scenario_predictions(pd.concat(meta_frames, ignore_index=True), candidates=True)
     test_candidates = add_meta_probabilities(test_candidates, meta_model)
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
     test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
@@ -376,6 +396,7 @@ def _run_meta_backtest_for_predictions(
 
     return {
         "meta_labeler": meta_model.manifest(),
+        "meta_validation": meta_audits,
         "metrics": {"validation": validation_metrics, "test": test_metrics},
         "artifact_paths": paths,
     }
@@ -549,7 +570,9 @@ def run_forecast_benchmark_from_dataset(
 ) -> Dict[str, Any]:
     bench_cfg = _benchmark_config(config)
     run_dir.mkdir(parents=True, exist_ok=True)
-    splits = purged_walk_forward_splits(int(dataset["X"].shape[0]), config.get("validation", {}))
+    if (config.get("research", {}).get("final_test_guard", {}) or {}).get("evaluate", True) is False:
+        raise ValueError("Forecast benchmark evaluates final test; disable benchmark for validation-only verification")
+    splits = build_validation_splits(dataset, config)
     split_manifest = _split_manifest(dataset, splits)
     _write_json(run_dir / "split_manifest.json", split_manifest)
     split_manifest_hash = _stable_hash(split_manifest)

@@ -211,3 +211,39 @@ and unfinished paths remain unlabeled; an observed early touch completes a
 label even when its planned expiry has not arrived. No missing prices are
 backfilled. Diagnostics report class balance, classification/calibration,
 threshold coverage, and ambiguity separately from simulated PnL.
+
+## Exact spans and nested meta validation (#15)
+
+The active config uses `validation.method: exact_span_walk_forward`. Alternatives
+are `purged_kfold` and `grouped_scenario`; the latter holds out configured
+`scenario_test_groups` combinations of `folds` contiguous development groups.
+These are genuine independently fitted grouped scenarios, not stitched CPCV
+paths. `max_scenarios` bounds combinatorial work. Each scenario has simulated
+validation metrics; reports retain all scenario candidates and PnL quantiles.
+The aggregate candidate table uses the first predeclared scenario per row,
+never an average of probabilities for different proposals.
+
+Spans are inclusive and use source timestamps (including irregular activity
+bars). All supervised horizons and configured meta vertical barriers protect
+the final-test boundary. Embargo modes are `fixed_bars`, `max_horizon`,
+`sequence_plus_horizon`, `realized_t1`, and `volatility_adaptive` (estimated on
+the proposed training population only). Split manifests record retained,
+purged and embargoed row IDs and zero-overlap checks. Undersized partitions
+fail rather than fall back to an unprotected split. The legacy public
+fixed-gap splitter remains; v2 `purged_walk_forward` applies an additional
+recorded span safety guard when its configured gaps are insufficient.
+
+For every outer evaluation partition the meta model trains on nested base OOF
+candidates generated strictly inside the outer training population. This
+prevents indirect label leakage through another outer fold's base model.
+Inner folds and any unavailable fallback are recorded in `meta_validation.json`.
+Training weights and normalization are recomputed on retained training rows.
+Model and calibration enhancements (#12/#18) must preserve these boundaries.
+
+`research.final_test_guard.do_not_reuse_test` is enabled in the active config.
+Use `research.final_test_guard.evaluate: false` plus `benchmark.enabled: false`
+for implementation-only verification: no test scoring or ledger query occurs.
+The forecast benchmark explicitly refuses this mode because it is a test-
+evaluating comparison. Rank stability is reported only for actually evaluated
+selected trials, and is unavailable when there is insufficient evidence.
+Cross-scheme performance comparisons remain the separate frozen #31 experiment.
