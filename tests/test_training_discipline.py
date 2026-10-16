@@ -106,6 +106,30 @@ def test_training_only_resampling_is_deterministic(mode):
     assert len(first) == len(samples) and set(first) <= set(range(4))
 
 
+def _indicator_sequential_bootstrap(starts, ends, seed):
+    """Brute-force AFML reference over an explicit events-by-bars indicator."""
+    rng = np.random.default_rng(seed)
+    bars = np.arange(ends.max() + 1)
+    indicator = (bars >= starts[:, None]) & (bars <= ends[:, None])
+    concurrency, draws = np.zeros(len(bars)), []
+    for _ in range(len(starts)):
+        uniqueness = np.array([np.mean(1. / (concurrency[row] + 1.)) for row in indicator])
+        choice = int(rng.choice(len(starts), p=uniqueness / uniqueness.sum()))
+        draws.append(choice)
+        concurrency[indicator[choice]] += 1
+    return np.asarray(draws)
+
+
+@pytest.mark.parametrize('seed', [1, 7, 99])
+def test_sequential_bootstrap_matches_indicator_reference(seed):
+    rng = np.random.default_rng(seed)
+    starts = np.sort(rng.integers(0, 120, 40))
+    ends = starts + rng.integers(0, 12, 40)
+    samples = pd.DataFrame({'label_span_start_idx': starts, 'label_span_end_idx': ends})
+    assert np.array_equal(bootstrap_rows(samples, 'sequential_bootstrap', seed),
+                          _indicator_sequential_bootstrap(starts, ends, seed))
+
+
 def test_holdout_keeps_timestamp_groups_together():
     samples = pd.DataFrame({'label_span_start_idx': np.repeat(np.arange(10) * 4, 2),
                             'label_span_end_idx': np.repeat(np.arange(10) * 4 + 1, 2)})

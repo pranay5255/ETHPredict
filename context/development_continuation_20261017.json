@@ -1,0 +1,2567 @@
+{
+  "audit": {
+    "approved_configurations": 0,
+    "checkpoint_roundtrips": 36,
+    "chronological_purged_blocks": 3,
+    "clean_training_commit": "a33e6c45cf80b1687724bc04983bf4c567120781",
+    "completed_attempts": 54,
+    "excluded_entire_previous_window": true,
+    "forecast_predictions_match_log_return_units_and_clock": true,
+    "frozen_hashes_verified": true,
+    "new_final_test_evaluations": 0,
+    "no_trade_signal_trials": 6,
+    "old_test_ledger_count_unchanged": 1,
+    "protected_prior_files_unchanged": 18,
+    "seeds": [
+      17,
+      29,
+      43
+    ],
+    "signal_configurations": 6,
+    "trackio_records_read_back": 55,
+    "train_only_target_transforms_verified_on_actual_fits": true
+  },
+  "budgets": {
+    "actual_fit_counts": {
+      "calibrators": 27,
+      "forecast_members": 36,
+      "logistic_fits": 27,
+      "meta_fit_calls": 27
+    },
+    "declared_configurations": 6,
+    "forecast_attempts": 36,
+    "permutation_evaluations": 972,
+    "seeds": [
+      17,
+      29,
+      43
+    ],
+    "signal_attempts": 18
+  },
+  "comparison_note": "Earlier 835 bps/356x errors came from another date window and recipe; this is not a controlled causal before/after effect estimate.",
+  "forecast_comparisons": [
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2500793708567111,
+            "count": 2868,
+            "ece": 0.02598239458588214,
+            "log_loss": 0.6933059228067115
+          },
+          "mae": 0.003048276726141764,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 1.9968088432109457e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "mae": 0.0026749244245032554,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4508540354546109e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "mae": 0.002930288134531406,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 1.9323960026537614e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2500793708567111,
+            "count": 2868,
+            "ece": 0.02598239458588214,
+            "log_loss": 0.6933059228067115
+          },
+          "mae": 0.003048276726141764,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 1.9968088432109457e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "mae": 0.0026749244245032554,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4508540354546109e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "mae": 0.002930288134531406,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 1.9323960026537614e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2500793708567111,
+            "count": 2868,
+            "ece": 0.02598239458588214,
+            "log_loss": 0.6933059228067115
+          },
+          "mae": 0.003048276726141764,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 1.9968088432109457e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "mae": 0.0026749244245032554,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4508540354546109e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "zero",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "mae": 0.002930288134531406,
+          "median_abs_prediction_bps": 0.0,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 1.9323960026537614e-05,
+          "mse_vs_zero": 1.0,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2500793708567111,
+            "count": 2868,
+            "ece": 0.02598239458588214,
+            "log_loss": 0.6933059228067115
+          },
+          "mae": 0.0030442374755294955,
+          "median_abs_prediction_bps": 1.7816237232182175,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 2.000618696821276e-05,
+          "mse_vs_zero": 1.001907971122666,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "mae": 0.0026724093000199357,
+          "median_abs_prediction_bps": 0.6400031270459294,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4499701904731448e-05,
+          "mse_vs_zero": 0.999390810543399,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "mae": 0.0029322503068198663,
+          "median_abs_prediction_bps": 0.8634226105641574,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 1.9401603039459656e-05,
+          "mse_vs_zero": 1.0040179659249664,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2500793708567111,
+            "count": 2868,
+            "ece": 0.02598239458588214,
+            "log_loss": 0.6933059228067115
+          },
+          "mae": 0.0030442374755294955,
+          "median_abs_prediction_bps": 1.7816237232182175,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 2.000618696821276e-05,
+          "mse_vs_zero": 1.001907971122666,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "mae": 0.0026724093000199357,
+          "median_abs_prediction_bps": 0.6400031270459294,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4499701904731448e-05,
+          "mse_vs_zero": 0.999390810543399,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "mae": 0.0029322503068198663,
+          "median_abs_prediction_bps": 0.8634226105641574,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 1.9401603039459656e-05,
+          "mse_vs_zero": 1.0040179659249664,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2500793708567111,
+            "count": 2868,
+            "ece": 0.02598239458588214,
+            "log_loss": 0.6933059228067115
+          },
+          "mae": 0.0030442374755294955,
+          "median_abs_prediction_bps": 1.7816237232182175,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 2.000618696821276e-05,
+          "mse_vs_zero": 1.001907971122666,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "mae": 0.0026724093000199357,
+          "median_abs_prediction_bps": 0.6400031270459294,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4499701904731448e-05,
+          "mse_vs_zero": 0.999390810543399,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "mean",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": null,
+          "direction": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "mae": 0.0029322503068198663,
+          "median_abs_prediction_bps": 0.8634226105641574,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 1.9401603039459656e-05,
+          "mse_vs_zero": 1.0040179659249664,
+          "return_rank_correlation": null,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.04422113295293206,
+          "direction": {
+            "brier_score": 0.2704901366170131,
+            "count": 2868,
+            "ece": 0.10711127778871118,
+            "log_loss": 0.7465886209664279
+          },
+          "mae": 0.004391098005435755,
+          "median_abs_prediction_bps": 24.46276368573308,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 3.112734235040736e-05,
+          "mse_vs_zero": 1.5588543919083109,
+          "return_rank_correlation": 0.01860597711283622,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.34605093772650963,
+          "direction": {
+            "brier_score": 0.2539728993567902,
+            "count": 2868,
+            "ece": 0.06521443466719551,
+            "log_loss": 0.7019404430710358
+          },
+          "mae": 0.002816562292046705,
+          "median_abs_prediction_bps": 8.4832520224154,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.5204881768988735e-05,
+          "mse_vs_zero": 1.0479952770868803,
+          "return_rank_correlation": 0.07130808891351356,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": -0.0007006263633312002,
+          "direction": {
+            "brier_score": 0.27665743834327705,
+            "count": 2868,
+            "ece": 0.160811770935978,
+            "log_loss": 0.7530554050337099
+          },
+          "mae": 0.003405192794274743,
+          "median_abs_prediction_bps": 10.054078884422779,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 2.362377961520075e-05,
+          "mse_vs_zero": 1.2225123412984806,
+          "return_rank_correlation": -0.0036571847081164235,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.04422113295293206,
+          "direction": {
+            "brier_score": 0.2704901366170131,
+            "count": 2868,
+            "ece": 0.10711127778871118,
+            "log_loss": 0.7465886209664279
+          },
+          "mae": 0.004391098005435755,
+          "median_abs_prediction_bps": 24.46276368573308,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 3.112734235040736e-05,
+          "mse_vs_zero": 1.5588543919083109,
+          "return_rank_correlation": 0.01860597711283622,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.34605093772650963,
+          "direction": {
+            "brier_score": 0.2539728993567902,
+            "count": 2868,
+            "ece": 0.06521443466719551,
+            "log_loss": 0.7019404430710358
+          },
+          "mae": 0.002816562292046705,
+          "median_abs_prediction_bps": 8.4832520224154,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.5204881768988735e-05,
+          "mse_vs_zero": 1.0479952770868803,
+          "return_rank_correlation": 0.07130808891351356,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": -0.0007006263633312002,
+          "direction": {
+            "brier_score": 0.27665743834327705,
+            "count": 2868,
+            "ece": 0.160811770935978,
+            "log_loss": 0.7530554050337099
+          },
+          "mae": 0.003405192794274743,
+          "median_abs_prediction_bps": 10.054078884422779,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 2.362377961520075e-05,
+          "mse_vs_zero": 1.2225123412984806,
+          "return_rank_correlation": -0.0036571847081164235,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.04422113295293206,
+          "direction": {
+            "brier_score": 0.2704901366170131,
+            "count": 2868,
+            "ece": 0.10711127778871118,
+            "log_loss": 0.7465886209664279
+          },
+          "mae": 0.004391098005435755,
+          "median_abs_prediction_bps": 24.46276368573308,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 3.112734235040736e-05,
+          "mse_vs_zero": 1.5588543919083109,
+          "return_rank_correlation": 0.01860597711283622,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.34605093772650963,
+          "direction": {
+            "brier_score": 0.2539728993567902,
+            "count": 2868,
+            "ece": 0.06521443466719551,
+            "log_loss": 0.7019404430710358
+          },
+          "mae": 0.002816562292046705,
+          "median_abs_prediction_bps": 8.4832520224154,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.5204881768988735e-05,
+          "mse_vs_zero": 1.0479952770868803,
+          "return_rank_correlation": 0.07130808891351356,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "linear",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": -0.0007006263633312002,
+          "direction": {
+            "brier_score": 0.27665743834327705,
+            "count": 2868,
+            "ece": 0.160811770935978,
+            "log_loss": 0.7530554050337099
+          },
+          "mae": 0.003405192794274743,
+          "median_abs_prediction_bps": 10.054078884422779,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 2.362377961520075e-05,
+          "mse_vs_zero": 1.2225123412984806,
+          "return_rank_correlation": -0.0036571847081164235,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.4370638404441293,
+          "direction": {
+            "brier_score": 0.2532167740209097,
+            "count": 2868,
+            "ece": 0.06723069841226607,
+            "log_loss": 0.6996387257830893
+          },
+          "mae": 0.0030892290561607963,
+          "median_abs_prediction_bps": 5.7030501193366945,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 2.0092451551269754e-05,
+          "mse_vs_zero": 1.006228093369234,
+          "return_rank_correlation": 0.06233146267355179,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 1.0619442867090032,
+          "direction": {
+            "brier_score": 0.2580207332530503,
+            "count": 2868,
+            "ece": 0.09493498368035469,
+            "log_loss": 0.7093501133966473
+          },
+          "mae": 0.0026605251122023403,
+          "median_abs_prediction_bps": 2.6387358957435936,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4318884192126411e-05,
+          "mse_vs_zero": 0.9869279639588092,
+          "return_rank_correlation": 0.10115507957432009,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.21426559216639848,
+          "direction": {
+            "brier_score": 0.2503234890928629,
+            "count": 2868,
+            "ece": 0.012058942044878604,
+            "log_loss": 0.6937965820213144
+          },
+          "mae": 0.002962774561977387,
+          "median_abs_prediction_bps": 2.853612240869552,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 1.9784162130015e-05,
+          "mse_vs_zero": 1.0238151032627572,
+          "return_rank_correlation": 0.027368046278249243,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 17
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.35124138711184344,
+          "direction": {
+            "brier_score": 0.25053108639090926,
+            "count": 2868,
+            "ece": 0.015144775394282769,
+            "log_loss": 0.6942119571500913
+          },
+          "mae": 0.003140863089876011,
+          "median_abs_prediction_bps": 6.867169868201017,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 2.026505749123739e-05,
+          "mse_vs_zero": 1.014872182689776,
+          "return_rank_correlation": 0.0649737660372824,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.18552299759073398,
+          "direction": {
+            "brier_score": 0.25130749845539974,
+            "count": 2868,
+            "ece": 0.04982437913512589,
+            "log_loss": 0.6957650305777279
+          },
+          "mae": 0.0026884017775012934,
+          "median_abs_prediction_bps": 3.426100010983646,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.471398834006925e-05,
+          "mse_vs_zero": 1.014160486203477,
+          "return_rank_correlation": 0.04526304895736851,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.22276641642330824,
+          "direction": {
+            "brier_score": 0.2519567653100725,
+            "count": 2868,
+            "ece": 0.04240984038412156,
+            "log_loss": 0.6970745383610998
+          },
+          "mae": 0.003055525759122364,
+          "median_abs_prediction_bps": 7.482122164219618,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 2.066823494647225e-05,
+          "mse_vs_zero": 1.0695651884028192,
+          "return_rank_correlation": 0.04894694133920282,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 29
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 0,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.9370395216199775,
+          "direction": {
+            "brier_score": 0.25369045045455274,
+            "count": 2868,
+            "ece": 0.06430960700144489,
+            "log_loss": 0.7005604829977975
+          },
+          "mae": 0.003052091575095757,
+          "median_abs_prediction_bps": 4.649103502742946,
+          "median_abs_realized_bps": 21.295332117006183,
+          "mse": 1.9560510253515844e-05,
+          "mse_vs_zero": 0.9795885229585516,
+          "return_rank_correlation": 0.1413152144714423,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2500793677593719,
+            "count": 2868,
+            "ece": 0.025982334981237365,
+            "log_loss": 0.6933059166119715
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9968088432109457e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 1,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.48788902504254744,
+          "direction": {
+            "brier_score": 0.24922178123478708,
+            "count": 2868,
+            "ece": 0.029956728355073195,
+            "log_loss": 0.6915861798828711
+          },
+          "mae": 0.0026780167159286207,
+          "median_abs_prediction_bps": 3.808046749327332,
+          "median_abs_realized_bps": 19.088105764240026,
+          "mse": 1.4601876507737428e-05,
+          "mse_vs_zero": 1.0064331869995504,
+          "return_rank_correlation": 0.0648014128207798,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.24961517979266493,
+            "count": 2868,
+            "ece": 0.013316878880084482,
+            "log_loss": 0.6923774448346646
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.4508540354546109e-05
+        }
+      },
+      "seed": 43
+    },
+    {
+      "checkpoint_roundtrip_exact": true,
+      "fold": 2,
+      "model": "lstm",
+      "scores": {
+        "next_hour": {
+          "calibration_slope": 0.4502531236418297,
+          "direction": {
+            "brier_score": 0.24978190510152784,
+            "count": 2868,
+            "ece": 0.01429027778251071,
+            "log_loss": 0.6927125220806271
+          },
+          "mae": 0.0029890037697319813,
+          "median_abs_prediction_bps": 5.309063999447972,
+          "median_abs_realized_bps": 19.496343447826803,
+          "mse": 2.0005994623559846e-05,
+          "mse_vs_zero": 1.0352947633966119,
+          "return_rank_correlation": 0.0425392389369058,
+          "rows": 2868,
+          "training_prior_baseline": {
+            "brier_score": 0.2503497034580192,
+            "count": 2868,
+            "ece": 0.019022641404735807,
+            "log_loss": 0.6938468904239994
+          },
+          "unit": "log_fraction",
+          "zero_mse": 1.9323960026537614e-05
+        }
+      },
+      "seed": 43
+    }
+  ],
+  "forecast_summary": {
+    "linear": {
+      "median_absolute_prediction_bps": 10.054078884422779,
+      "median_mse_vs_zero": 1.2225123412984806
+    },
+    "lstm": {
+      "median_absolute_prediction_bps": 4.649103502742946,
+      "median_mse_vs_zero": 1.014160486203477
+    },
+    "mean": {
+      "median_absolute_prediction_bps": 0.8634226105641574,
+      "median_mse_vs_zero": 1.001907971122666
+    },
+    "zero": {
+      "median_absolute_prediction_bps": 0.0,
+      "median_mse_vs_zero": 1.0
+    }
+  },
+  "frozen_config_sha256": "73b7da96d7670d64bf1677a657a6feda5bf33e733f2f54a8bbe878bb881646f3",
+  "interpretation": "Numerical forecast validity improved; no consistent skill versus zero demonstrated. All continuation configurations rejected; no final test authorized.",
+  "opportunities": [
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -27.94339800529931,
+          "trades": 21.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -26.231659191105756,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -17.766343340619407,
+          "trades": 18.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -71.94140053702448,
+          "survives": false,
+          "trades": 55.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -142.38517946089328,
+          "survives": false,
+          "trades": 55.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -353.7165162324998,
+          "survives": false,
+          "trades": 55.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0_base",
+        "meta": false,
+        "volume_z_min": 0.0
+      },
+      "seed": 17,
+      "trial_id": "volume_0_base_seed17",
+      "validation": {
+        "fees": 70.42477892386886,
+        "gross_pnl": -1.516621613155631,
+        "max_drawdown": 74.95121137209935,
+        "net_pnl": -71.94140053702448,
+        "trades": 55.0,
+        "turnover": 55000.0,
+        "win_rate": 0.4
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -27.94339800529931,
+          "trades": 21.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -26.231659191105756,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -17.766343340619407,
+          "trades": 18.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -71.94140053702448,
+          "survives": false,
+          "trades": 55.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -142.38517946089328,
+          "survives": false,
+          "trades": 55.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -353.7165162324998,
+          "survives": false,
+          "trades": 55.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0_base",
+        "meta": false,
+        "volume_z_min": 0.0
+      },
+      "seed": 29,
+      "trial_id": "volume_0_base_seed29",
+      "validation": {
+        "fees": 70.42477892386886,
+        "gross_pnl": -1.516621613155631,
+        "max_drawdown": 74.95121137209935,
+        "net_pnl": -71.94140053702448,
+        "trades": 55.0,
+        "turnover": 55000.0,
+        "win_rate": 0.4
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -27.94339800529931,
+          "trades": 21.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -26.231659191105756,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -17.766343340619407,
+          "trades": 18.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -71.94140053702448,
+          "survives": false,
+          "trades": 55.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -142.38517946089328,
+          "survives": false,
+          "trades": 55.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -353.7165162324998,
+          "survives": false,
+          "trades": 55.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0_base",
+        "meta": false,
+        "volume_z_min": 0.0
+      },
+      "seed": 43,
+      "trial_id": "volume_0_base_seed43",
+      "validation": {
+        "fees": 70.42477892386886,
+        "gross_pnl": -1.516621613155631,
+        "max_drawdown": 74.95121137209935,
+        "net_pnl": -71.94140053702448,
+        "trades": 55.0,
+        "turnover": 55000.0,
+        "win_rate": 0.4
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": true,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0_meta",
+        "meta": true,
+        "volume_z_min": 0.0
+      },
+      "seed": 17,
+      "trial_id": "volume_0_meta_seed17",
+      "validation": {
+        "fees": 0.0,
+        "gross_pnl": 0.0,
+        "max_drawdown": 0.0,
+        "net_pnl": 0.0,
+        "trades": 0.0,
+        "turnover": 0.0,
+        "win_rate": 0.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": true,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0_meta",
+        "meta": true,
+        "volume_z_min": 0.0
+      },
+      "seed": 29,
+      "trial_id": "volume_0_meta_seed29",
+      "validation": {
+        "fees": 0.0,
+        "gross_pnl": 0.0,
+        "max_drawdown": 0.0,
+        "net_pnl": 0.0,
+        "trades": 0.0,
+        "turnover": 0.0,
+        "win_rate": 0.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": true,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0_meta",
+        "meta": true,
+        "volume_z_min": 0.0
+      },
+      "seed": 43,
+      "trial_id": "volume_0_meta_seed43",
+      "validation": {
+        "fees": 0.0,
+        "gross_pnl": 0.0,
+        "max_drawdown": 0.0,
+        "net_pnl": 0.0,
+        "trades": 0.0,
+        "turnover": 0.0,
+        "win_rate": 0.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -32.41583801581254,
+          "trades": 20.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -24.807391402158842,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -17.766343340619407,
+          "trades": 18.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -74.9895727585908,
+          "survives": false,
+          "trades": 54.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -143.5653889582219,
+          "survives": false,
+          "trades": 54.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -349.2928375571152,
+          "survives": false,
+          "trades": 54.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0.5_base",
+        "meta": false,
+        "volume_z_min": 0.5
+      },
+      "seed": 17,
+      "trial_id": "volume_0.5_base_seed17",
+      "validation": {
+        "fees": 68.55681619963113,
+        "gross_pnl": -6.432756558959689,
+        "max_drawdown": 76.5825983453542,
+        "net_pnl": -74.9895727585908,
+        "trades": 54.0,
+        "turnover": 54000.0,
+        "win_rate": 0.37037037037037035
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -32.41583801581254,
+          "trades": 20.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -24.807391402158842,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -17.766343340619407,
+          "trades": 18.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -74.9895727585908,
+          "survives": false,
+          "trades": 54.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -143.5653889582219,
+          "survives": false,
+          "trades": 54.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -349.2928375571152,
+          "survives": false,
+          "trades": 54.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0.5_base",
+        "meta": false,
+        "volume_z_min": 0.5
+      },
+      "seed": 29,
+      "trial_id": "volume_0.5_base_seed29",
+      "validation": {
+        "fees": 68.55681619963113,
+        "gross_pnl": -6.432756558959689,
+        "max_drawdown": 76.5825983453542,
+        "net_pnl": -74.9895727585908,
+        "trades": 54.0,
+        "turnover": 54000.0,
+        "win_rate": 0.37037037037037035
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -32.41583801581254,
+          "trades": 20.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -24.807391402158842,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -17.766343340619407,
+          "trades": 18.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -74.9895727585908,
+          "survives": false,
+          "trades": 54.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -143.5653889582219,
+          "survives": false,
+          "trades": 54.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -349.2928375571152,
+          "survives": false,
+          "trades": 54.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0.5_base",
+        "meta": false,
+        "volume_z_min": 0.5
+      },
+      "seed": 43,
+      "trial_id": "volume_0.5_base_seed43",
+      "validation": {
+        "fees": 68.55681619963113,
+        "gross_pnl": -6.432756558959689,
+        "max_drawdown": 76.5825983453542,
+        "net_pnl": -74.9895727585908,
+        "trades": 54.0,
+        "turnover": 54000.0,
+        "win_rate": 0.37037037037037035
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": true,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0.5_meta",
+        "meta": true,
+        "volume_z_min": 0.5
+      },
+      "seed": 17,
+      "trial_id": "volume_0.5_meta_seed17",
+      "validation": {
+        "fees": 0.0,
+        "gross_pnl": 0.0,
+        "max_drawdown": 0.0,
+        "net_pnl": 0.0,
+        "trades": 0.0,
+        "turnover": 0.0,
+        "win_rate": 0.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0.5_meta",
+        "meta": true,
+        "volume_z_min": 0.5
+      },
+      "seed": 29,
+      "trial_id": "volume_0.5_meta_seed29",
+      "validation": {
+        "fees": 0.0,
+        "gross_pnl": 0.0,
+        "max_drawdown": 0.0,
+        "net_pnl": 0.0,
+        "trades": 0.0,
+        "turnover": 0.0,
+        "win_rate": 0.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": 0.0,
+          "survives": false,
+          "trades": 0.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": true,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_0.5_meta",
+        "meta": true,
+        "volume_z_min": 0.5
+      },
+      "seed": 43,
+      "trial_id": "volume_0.5_meta_seed43",
+      "validation": {
+        "fees": 0.0,
+        "gross_pnl": 0.0,
+        "max_drawdown": 0.0,
+        "net_pnl": 0.0,
+        "trades": 0.0,
+        "turnover": 0.0,
+        "win_rate": 0.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -32.41583801581254,
+          "trades": 20.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -24.911543842547843,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -21.523369917084818,
+          "trades": 17.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -78.85075177544519,
+          "survives": false,
+          "trades": 53.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -146.22268268184797,
+          "survives": false,
+          "trades": 53.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -348.33847540105626,
+          "survives": false,
+          "trades": 53.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_1_base",
+        "meta": false,
+        "volume_z_min": 1.0
+      },
+      "seed": 17,
+      "trial_id": "volume_1_base_seed17",
+      "validation": {
+        "fees": 67.34493090640277,
+        "gross_pnl": -11.505820869042433,
+        "max_drawdown": 80.44377736221941,
+        "net_pnl": -78.85075177544519,
+        "trades": 53.0,
+        "turnover": 53000.0,
+        "win_rate": 0.33962264150943394
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -32.41583801581254,
+          "trades": 20.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -24.911543842547843,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -21.523369917084818,
+          "trades": 17.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -78.85075177544519,
+          "survives": false,
+          "trades": 53.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -146.22268268184797,
+          "survives": false,
+          "trades": 53.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -348.33847540105626,
+          "survives": false,
+          "trades": 53.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_1_base",
+        "meta": false,
+        "volume_z_min": 1.0
+      },
+      "seed": 29,
+      "trial_id": "volume_1_base_seed29",
+      "validation": {
+        "fees": 67.34493090640277,
+        "gross_pnl": -11.505820869042433,
+        "max_drawdown": 80.44377736221941,
+        "net_pnl": -78.85075177544519,
+        "trades": 53.0,
+        "turnover": 53000.0,
+        "win_rate": 0.33962264150943394
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": -32.41583801581254,
+          "trades": 20.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": -24.911543842547843,
+          "trades": 16.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": -21.523369917084818,
+          "trades": 17.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": -78.85075177544519,
+          "survives": false,
+          "trades": 53.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -146.22268268184797,
+          "survives": false,
+          "trades": 53.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -348.33847540105626,
+          "survives": false,
+          "trades": 53.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": true,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": false,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 0,
+        "reason": "positive_net_expectancy, enough_trades, positive_across_blocks, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_1_base",
+        "meta": false,
+        "volume_z_min": 1.0
+      },
+      "seed": 43,
+      "trial_id": "volume_1_base_seed43",
+      "validation": {
+        "fees": 67.34493090640277,
+        "gross_pnl": -11.505820869042433,
+        "max_drawdown": 80.44377736221941,
+        "net_pnl": -78.85075177544519,
+        "trades": 53.0,
+        "turnover": 53000.0,
+        "win_rate": 0.33962264150943394
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 1.3608148473197255,
+          "trades": 2.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 1.3608148473197255,
+          "survives": true,
+          "trades": 2.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -1.3092193444999702,
+          "survives": false,
+          "trades": 2.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -9.319321919959055,
+          "survives": false,
+          "trades": 2.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": true,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 1,
+        "reason": "enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_1_meta",
+        "meta": true,
+        "volume_z_min": 1.0
+      },
+      "seed": 17,
+      "trial_id": "volume_1_meta_seed17",
+      "validation": {
+        "fees": 2.6700341918196955,
+        "gross_pnl": 4.0308490391394205,
+        "max_drawdown": 0.0,
+        "net_pnl": 1.3608148473197255,
+        "trades": 2.0,
+        "turnover": 2000.0,
+        "win_rate": 1.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 1.3608148473197255,
+          "trades": 2.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 1.3608148473197255,
+          "survives": true,
+          "trades": 2.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -1.3092193444999702,
+          "survives": false,
+          "trades": 2.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -9.319321919959055,
+          "survives": false,
+          "trades": 2.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": true,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 1,
+        "reason": "enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_1_meta",
+        "meta": true,
+        "volume_z_min": 1.0
+      },
+      "seed": 29,
+      "trial_id": "volume_1_meta_seed29",
+      "validation": {
+        "fees": 2.6700341918196955,
+        "gross_pnl": 4.0308490391394205,
+        "max_drawdown": 0.0,
+        "net_pnl": 1.3608148473197255,
+        "trades": 2.0,
+        "turnover": 2000.0,
+        "win_rate": 1.0
+      }
+    },
+    {
+      "blocks": [
+        {
+          "fold": 0,
+          "net_pnl": 1.3608148473197255,
+          "trades": 2.0
+        },
+        {
+          "fold": 1,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        },
+        {
+          "fold": 2,
+          "net_pnl": 0.0,
+          "trades": 0.0
+        }
+      ],
+      "cost_stress": [
+        {
+          "cost_multiple": 1.0,
+          "net_pnl": 1.3608148473197255,
+          "survives": true,
+          "trades": 2.0
+        },
+        {
+          "cost_multiple": 2.0,
+          "net_pnl": -1.3092193444999702,
+          "survives": false,
+          "trades": 2.0
+        },
+        {
+          "cost_multiple": 5.0,
+          "net_pnl": -9.319321919959055,
+          "survives": false,
+          "trades": 2.0
+        }
+      ],
+      "economic_gate": {
+        "gates": {
+          "block_trade_coverage": false,
+          "credible_features": false,
+          "enough_blocks": true,
+          "enough_trades": false,
+          "positive_across_blocks": false,
+          "positive_net_expectancy": true,
+          "survives_cost_stress": false
+        },
+        "note": "Passing authorizes review, not deployment or automatic final-test evaluation",
+        "passed": false,
+        "positive_blocks": 1,
+        "reason": "enough_trades, positive_across_blocks, block_trade_coverage, survives_cost_stress, credible_features",
+        "scope": "purged_development_only",
+        "status": "rejected"
+      },
+      "noise_control_failures": [],
+      "proposal": {
+        "id": "volume_1_meta",
+        "meta": true,
+        "volume_z_min": 1.0
+      },
+      "seed": 43,
+      "trial_id": "volume_1_meta_seed43",
+      "validation": {
+        "fees": 2.6700341918196955,
+        "gross_pnl": 4.0308490391394205,
+        "max_drawdown": 0.0,
+        "net_pnl": 1.3608148473197255,
+        "trades": 2.0,
+        "turnover": 2000.0,
+        "win_rate": 1.0
+      }
+    }
+  ],
+  "protocol_sha256": "c1507c0be03b9ec25e69663da1b12b4735f773c5c1ed86831e53960c86b6e39e",
+  "run_path_local": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/development_continuation_20261017_local/development_v1",
+  "source_hashes": [
+    {
+      "frozen_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/development_continuation_20261017_local/data/raw/ETHUSDT-5m-lighter-frozen.csv",
+      "original_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/data/raw/ETHUSDT-5m-lighter-20260328-20260628.csv",
+      "original_sha256": "acc6e5f88673b0e0ee3dea1648e8a2a4ae0b3104f3f96d80451e6da2f164caa2",
+      "rows": 16384,
+      "sha256": "1a41f5bcf53e4f05d450d3d79c1133bd2de89075cedfb413ab9802680b545854"
+    },
+    {
+      "frozen_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/development_continuation_20261017_local/data/lighter/funding_payments.csv",
+      "original_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/data/lighter/fundings_ETH_perp_1h_20260328_20260628.csv",
+      "original_sha256": "cc32611b2c20ba3b8e7827be56858811cfd61add504d32879ab3e504145e3050",
+      "rows": 1367,
+      "sha256": "30588eabc868cf7948c1de942c8740240d3a981fbedcc5a79482ee9ee97a4c56"
+    }
+  ],
+  "source_window": [
+    "2026-04-03 02:40:00+00:00",
+    "2026-05-29 23:55:00+00:00"
+  ],
+  "verification": {
+    "elapsed_seconds": 116.71,
+    "full_suite_passed": 238,
+    "gate_integration_tests_passed": 23,
+    "logging_replay": {
+      "additional_fits": 0,
+      "additional_test_evaluations": 0,
+      "all_hashes_unchanged": true,
+      "logging_replayed_from_saved_report": true,
+      "protected_current_scientific_files": 112
+    },
+    "warnings": 21
+  }
+}

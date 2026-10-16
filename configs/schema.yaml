@@ -220,7 +220,7 @@ oneOf:
             required: [type]
             properties:
               type:
-                enum: [lstm, linear, tree]
+                enum: [lstm, linear, tree, zero, mean]
               hidden_size:
                 type: integer
                 minimum: 1
@@ -284,6 +284,11 @@ oneOf:
         type: object
         required: [sequence_length, epochs, batch_size, learning_rate]
         properties:
+          target_standardization:
+            enum: [none, standard]
+          gradient_clip_norm:
+            type: number
+            exclusiveMinimum: 0
           ensemble_seeds:
             type: array
             minItems: 1
