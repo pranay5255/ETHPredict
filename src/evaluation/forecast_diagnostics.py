@@ -50,6 +50,7 @@ def forecast_diagnostics(frame, horizon, cost_bps=0.):
     prob = frame[f'{horizon}_direction_prob'].to_numpy(dtype=float)
     valid = np.isfinite(true) & np.isfinite(pred) & np.isfinite(prob)
     true, pred, prob = true[valid], pred[valid], prob[valid]
+    cost_bps = np.broadcast_to(np.asarray(cost_bps, dtype=float), len(frame))[valid]
     rank = None
     if len(true) > 1 and np.ptp(pred) > 0 and np.ptp(true) > 0:
         rank = float(pd.Series(pred).corr(pd.Series(true), method='spearman'))
@@ -77,7 +78,9 @@ def forecast_diagnostics(frame, horizon, cost_bps=0.):
     return {'calibration': calibration_summary(true > 0, prob),
             'return_calibration': {'slope': slope, 'intercept': intercept, 'scope': 'descriptive_evaluation_only'},
             'rank_correlation': {'spearman': rank, 'edge_to_realized_net_spearman': edge_rank, 'reason': None if rank is not None else 'insufficient or constant values'},
-            'edge_ranking': {'cost_bps': cost_bps, 'predicted_edge_buckets': buckets,
+            'edge_ranking': {'cost_bps': float(cost_bps.mean()) if len(cost_bps) else None,
+                             'cost_bps_min': float(cost_bps.min()) if len(cost_bps) else None,
+                             'cost_bps_max': float(cost_bps.max()) if len(cost_bps) else None, 'predicted_edge_buckets': buckets,
                              'mean_realized_gross_edge_bps': float(gross.mean()) if len(gross) else None,
                              'mean_realized_net_edge_bps': float(net.mean()) if len(net) else None,
                              'candidate_coverage': float(np.mean((side != 0) & (edge >= 0))) if len(edge) else 0.}}

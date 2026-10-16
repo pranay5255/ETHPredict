@@ -224,61 +224,14 @@ def apply_dotted_overrides(config: Mapping[str, Any], overrides: Mapping[str, An
 
 
 def iter_grid_overrides(search: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    if search.get("mode", "grid") != "grid":
-        raise ValueError(f"Unsupported search mode: {search.get('mode')}")
-    spaces = search.get("spaces", {}) or {}
-    items: List[Tuple[str, List[Any]]] = []
-    for params in spaces.values():
-        if not isinstance(params, Mapping):
-            continue
-        for path, raw_values in params.items():
-            values = raw_values if isinstance(raw_values, list) else [raw_values]
-            items.append((str(path), list(values)))
-    if not items:
-        return [{}]
-    paths = [item[0] for item in items]
-    values = [item[1] for item in items]
-    overrides = [dict(zip(paths, combo)) for combo in itertools.product(*values)]
-    max_trials = search.get("max_trials")
-    if max_trials is not None:
-        overrides = overrides[: int(max_trials)]
-    return overrides
+    from src.config.search import build_search_plan
+    return [row["overrides"] for row in build_search_plan({"search": search})["executed_subset"]]
 
 
 def expand_grid_search(config: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    """Expand explicit trials or ``search.spaces`` into trial configs."""
-
-    search = config.get("search", {}) if isinstance(config, Mapping) else {}
-    explicit_trials = search.get("trials") if isinstance(search, Mapping) else None
-    if explicit_trials:
-        trials: List[Dict[str, Any]] = []
-        max_trials = search.get("max_trials")
-        for idx, raw_trial in enumerate(list(explicit_trials)):
-            if max_trials is not None and idx >= int(max_trials):
-                break
-            trial = raw_trial if isinstance(raw_trial, Mapping) else {}
-            overrides = trial.get("overrides", {})
-            if not isinstance(overrides, Mapping):
-                overrides = {}
-            trial_id = str(trial.get("id", f"grid_{idx:03d}"))
-            trials.append(
-                {
-                    "trial_index": idx,
-                    "trial_id": trial_id,
-                    "overrides": dict(overrides),
-                    "config": apply_dotted_overrides(config, overrides),
-                }
-            )
-        return trials
-
-    trials: List[Dict[str, Any]] = []
-    for idx, overrides in enumerate(iter_grid_overrides(search)):
-        trials.append(
-            {
-                "trial_index": idx,
-                "trial_id": f"grid_{idx:03d}",
-                "overrides": overrides,
-                "config": apply_dotted_overrides(config, overrides),
-            }
-        )
-    return trials
+    """Backward-compatible entry point for every supported seeded search mode."""
+    from src.config.search import build_search_plan
+    plan = build_search_plan(config)
+    return [{"trial_index": index, "trial_id": row["id"], "proposal_index": row["proposal_index"],
+             "overrides": row["overrides"], "config": apply_dotted_overrides(config, row["overrides"])}
+            for index, row in enumerate(plan["executed_subset"])]
