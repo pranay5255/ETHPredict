@@ -348,11 +348,11 @@ def forecast_metrics(frame: pd.DataFrame, dataset: Mapping[str, Any], config: Ma
     for horizon in dataset["horizon_names"]:
         true_return = frame[f"{horizon}_true_return"].to_numpy(dtype=float)
         pred_return = frame[f"{horizon}_pred_return"].to_numpy(dtype=float)
-        from src.simulator.costs import dataset_cost_model
+        from src.simulator.costs import dataset_cost_model, configured_notional
         cost_model = dataset_cost_model(dataset, config)
         cost_bps = np.array([cost_model.quote({**row.to_dict(), "horizon_bars": int(dataset["horizon_bars"][horizon]),
                             "side": int(np.sign(row[f"{horizon}_pred_return"])),
-                            "position_notional": config.get("alpha_backtest", {}).get("position_notional", 1000.)})["total_cost_bps"]
+                            "position_notional": configured_notional(config)})["total_cost_bps"]
                              for _, row in frame.iterrows()], dtype=float)
         metrics[horizon].update(forecast_diagnostics(frame, horizon, cost_bps))
         side = np.sign(pred_return)

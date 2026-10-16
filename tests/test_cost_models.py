@@ -125,3 +125,24 @@ def test_funding_cashflow_sources_participate_in_raw_data_identity(tmp_path):
     first = raw_data_fingerprint(_raw_data_manifest(cfg))
     source.write_text('timestamp,rate\n2026-01-01,2\n')
     assert first != raw_data_fingerprint(_raw_data_manifest(cfg))
+
+
+def test_size_dependent_costs_use_executable_capped_notional_throughout():
+    from src.experiments.meta_labeling_mvp import candidate_signals
+
+    path, signal = path_fixture(), signal_fixture()
+    cfg = {'costs': {'mode': 'dynamic', 'dynamic_slippage': {'enabled': True,
+            'size_coefficient_bps': 2., 'reference_notional': 1000.}},
+           'alpha_backtest': {'position_notional': 10000., 'max_position_notional': 1000.}}
+    predictions = pd.DataFrame([{**signal, 'h_pred_return': .04, 'h_direction_prob': .9,
+                                 'h_true_return': .04, 'h_true_direction': 1.}])
+    dataset = {'price_path': path, 'horizon_names': ['h'], 'horizon_bars': {'h': 2}, 'granularity': '1h'}
+    candidates = candidate_signals(predictions, dataset, cfg)
+    assert candidates.iloc[0].position_notional == 1000.
+    assert candidates.iloc[0].slippage_bps == pytest.approx(2.)
+    labels = meta_triple_barrier_labels(candidates, path, {}, cfg['costs'],
+                                        cost_model=dataset['cost_model'], granularity='1h')
+    assert labels.iloc[0].realized_slippage_bps == pytest.approx(2.)
+    metrics, trades = run_alpha_backtest(labels, cfg, cost_model=dataset['cost_model'])
+    assert trades.iloc[0].notional == 1000.
+    assert metrics['cost_components']['slippage'] == pytest.approx(.2)

@@ -1,0 +1,790 @@
+{
+  "audit": {
+    "all_protected_hashes_match_recovery": true,
+    "frozen_hashes_verified": true,
+    "new_fits_predictions_or_test_evaluations_for_reporting": 0,
+    "original_metrics_selection_importance_and_stress_unchanged": true,
+    "protected_model_prediction_test_and_ledger_files": 16,
+    "test_evaluations": 1,
+    "trackio_runs_read_back": 6
+  },
+  "comparison_budget": {
+    "conservative_comparison_count": 108,
+    "diagnostic_ablations": 56,
+    "nested_model_comparisons": 0,
+    "nested_threshold_comparisons": 48,
+    "prior_research_attempts": "not estimated; archived runs remain separate evidence",
+    "scope": "disclosed within-run comparisons; dependent comparisons counted conservatively, not independent trials",
+    "top_level_attempts": 4
+  },
+  "dashboard_sha256": "85760e804f6458a7f911b12205418f73d45a0ca567219d97378ef8b730d168a8",
+  "dashboard_verification": {
+    "dark": {
+      "bg": "#1c211d",
+      "checks": [
+        "linear_baseline:validation",
+        "linear_baseline:test",
+        "lstm_16:validation",
+        "lstm_16:test",
+        "lstm_8:validation",
+        "lstm_8:test",
+        "lstm_regularized:validation",
+        "lstm_regularized:test",
+        "layout:1440",
+        "layout:390"
+      ],
+      "errors": []
+    },
+    "dashboard_sha256": "85760e804f6458a7f911b12205418f73d45a0ca567219d97378ef8b730d168a8",
+    "light": {
+      "bg": "#faf7f0",
+      "checks": [
+        "linear_baseline:validation",
+        "linear_baseline:test",
+        "lstm_16:validation",
+        "lstm_16:test",
+        "lstm_8:validation",
+        "lstm_8:test",
+        "lstm_regularized:validation",
+        "lstm_regularized:test",
+        "layout:1440",
+        "layout:390"
+      ],
+      "errors": []
+    },
+    "renderer": "local Google Chrome headless; connector browser unavailable",
+    "screenshots": [
+      "/home/pranay5255/.agent/diagrams/ethpredict-first-experiment-light.png",
+      "/home/pranay5255/.agent/diagrams/ethpredict-mobile.png",
+      "/home/pranay5255/.agent/diagrams/ethpredict-features.png"
+    ],
+    "template_sha256": "4caebae741cca4a6905699a47d99341ce42259c747096cd0c4e7935672675857"
+  },
+  "device": {
+    "cuda_available": true,
+    "cuda_device_count": 1,
+    "cuda_device_name": "NVIDIA GeForce RTX 4090",
+    "requested": "cuda:0"
+  },
+  "evidence_grade": "exploratory_backtest",
+  "freeze": {
+    "freeze_note": "Fixed chronological tail chosen before training; no outcome-dependent window or budget changes",
+    "frozen_config": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/first_bounded_16_17_20/frozen_config.yml",
+    "frozen_config_sha256": "3bdfeb464fdf21ac3bda5db6e6ca6d645242f7db07c2b9e7274ff4fe6afcae51",
+    "funding_repairs": [
+      {
+        "endpoint": "/api/v1/fundings",
+        "parameters": {
+          "count_back": 4,
+          "end_timestamp": 1781859600000,
+          "market_id": 0,
+          "resolution": "1h",
+          "start_timestamp": 1781852400000
+        },
+        "recovered_row": {
+          "direction": "long",
+          "rate": 0.0004,
+          "timestamp": "2026-06-19T08:00:00.000Z",
+          "timestamp_ms": 1781856000000,
+          "value": 0.00678352
+        },
+        "response_sha256": "03a9a0a7bd905a3bebd2e2b453b85724d05ce0ce74daa62d9b3c84ef409753dc",
+        "retrieved_at": "2026-10-16T17:45:11.441525+00:00",
+        "timestamp": "2026-06-19T08:00:00+00:00"
+      }
+    ],
+    "protocol": "first_bounded_fixed_notional_v1",
+    "sample_start": "2026-06-06T13:20:00+00:00",
+    "selection_budget": {
+      "max_trials": 4,
+      "mode": "shuffled_grid",
+      "seed": 17,
+      "trials": [
+        {
+          "id": "linear_baseline",
+          "overrides": {
+            "model.base.type": "linear"
+          }
+        },
+        {
+          "id": "lstm_8",
+          "overrides": {
+            "model.base.hidden_size": 8
+          }
+        },
+        {
+          "id": "lstm_16",
+          "overrides": {
+            "model.base.hidden_size": 16
+          }
+        },
+        {
+          "id": "lstm_regularized",
+          "overrides": {
+            "model.base.hidden_size": 16,
+            "training.weight_decay": 0.001
+          }
+        }
+      ]
+    },
+    "source_end": "2026-06-27 23:55:00+00:00",
+    "source_start": "2026-05-30 13:20:00+00:00",
+    "sources": [
+      {
+        "frozen_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/first_bounded_16_17_20/data/raw/ETHUSDT-5m-lighter-frozen.csv",
+        "original_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/data/raw/ETHUSDT-5m-lighter-20260328-20260628.csv",
+        "original_sha256": "acc6e5f88673b0e0ee3dea1648e8a2a4ae0b3104f3f96d80451e6da2f164caa2",
+        "rows": 8192,
+        "sha256": "c8855883c7f34b32b8a46dd9de3f0f4138245abc63e05802d733d8a77f6484bb"
+      },
+      {
+        "frozen_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/first_bounded_16_17_20/data/lighter/funding_payments.csv",
+        "original_path": "/home/pranay5255/Documents/ethpredict/ETHPredict/data/lighter/fundings_ETH_perp_1h_20260328_20260628.csv",
+        "original_sha256": "cc32611b2c20ba3b8e7827be56858811cfd61add504d32879ab3e504145e3050",
+        "rows": 684,
+        "sha256": "278ab4b1fa1b91daf722e42e418fea607beea9aa007334bdec391f16ed643464"
+      }
+    ],
+    "template": "/home/pranay5255/.codex/worktrees/afml-search-importance-execution/ETHPredict/configs/first_experiment_batch.yml",
+    "template_sha256": "2f8d8c141ddb9317b3446c7a30010393ab1640a8569f81ceeeb33cb4a94ce77a",
+    "warmup_bars": 2016
+  },
+  "pbo": {
+    "available": true,
+    "method": "cscv_relative_rank",
+    "path_type": "multi_path",
+    "period_alignment": "common_recorded_timestamps",
+    "periods": 3280,
+    "reason": null,
+    "slices": 16,
+    "splits": 6113,
+    "trials": 4,
+    "value": 0.1820709962375266
+  },
+  "preflight": {
+    "cost_model": {
+      "configuration": {
+        "dynamic_funding": {
+          "availability_delay": "1min",
+          "direction_column": "direction",
+          "direction_semantics": "payer",
+          "enabled": true,
+          "historical": true,
+          "max_gap": "1h",
+          "paths": [
+            "lighter/funding_payments.csv"
+          ],
+          "payment_period_hours": 1,
+          "rate_column": "rate",
+          "rate_unit": "percent",
+          "timestamp_column": "timestamp"
+        },
+        "dynamic_slippage": {
+          "enabled": true,
+          "volatility_coefficient": 0.02
+        },
+        "dynamic_spread": {
+          "enabled": true,
+          "floor_bps": 1.0,
+          "range_fraction": 0.1,
+          "source": "high_low_proxy"
+        },
+        "execution": {
+          "entry_delay_bars": 0,
+          "fill_policy": "sampled",
+          "missed_fill_probability": 0.0,
+          "mode": "taker",
+          "seed": 17
+        },
+        "fee_bps": 4.0,
+        "funding_bps_per_hour": 0.0,
+        "mode": "dynamic",
+        "slippage_bps": 1.0,
+        "spread_bps": 2.0,
+        "stress_report_multipliers": [
+          1.0,
+          2.0,
+          5.0
+        ]
+      },
+      "expected_cost_clock": "causal signal state only",
+      "id": "3aea0e68177e7535bd67e199f3a7b1c0ffef332bd7bb074cf323e560f02bd3f9",
+      "live_execution_ready": false,
+      "maker_assumption": "fill haircut; no spread capture credit; adverse selection not calibrated",
+      "mode": "dynamic",
+      "realized_funding_clock": "entry exclusive, exit inclusive settled payments",
+      "simulation_type": "dynamic_cost_simulation",
+      "sources": [
+        {
+          "bytes": 42774,
+          "path": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/first_bounded_16_17_20/data/lighter/funding_payments.csv",
+          "sha256": "278ab4b1fa1b91daf722e42e418fea607beea9aa007334bdec391f16ed643464"
+        }
+      ]
+    },
+    "development_rows": 4919,
+    "feature_columns": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "quote_asset_volume",
+      "price_return",
+      "log_return",
+      "volume_change",
+      "quote_volume_change",
+      "dollar_volume",
+      "high_low_range",
+      "close_open_return",
+      "return_vol_1bar",
+      "return_vol_24h",
+      "return_vol_7d",
+      "parkinson_vol",
+      "volume_zscore_24h",
+      "diagnostic_noise_0",
+      "diagnostic_noise_1"
+    ],
+    "folds": [
+      {
+        "overlap_count": 0,
+        "train": 1628,
+        "validation": 1640
+      },
+      {
+        "overlap_count": 0,
+        "train": 3268,
+        "validation": 1639
+      }
+    ],
+    "funding_repairs": 1,
+    "sample_rows": 6164,
+    "sample_start": "2026-06-06T13:20:00+00:00",
+    "sequence_length": 48,
+    "source_end": "2026-06-27 23:55:00+00:00",
+    "source_start": "2026-05-30 13:20:00+00:00",
+    "test_rows": 1233
+  },
+  "reporting_source_sha256": {
+    "src/evaluation/evidence.py": "2b4a608282bf8f51edf351fd56702f44b3d06a31a4459971bf89364f6e865b99",
+    "src/experiments/dashboard.py": "bc3483decbfa5ed2b0133c3b24aff0a340bf21e437fa459038d7379c7bb61345",
+    "src/experiments/dashboard_template.html": "e97a09e73350191caf3864549ef156ea4eae3d06de04b53f0a9c07553cbd255f",
+    "src/experiments/resume_reporting.py": "4e942ece59e4ea600dbf1e026f4ebb6a8da50459948d8220d52cd881effe1ba4",
+    "src/utils/trackio_logging.py": "42e1af2891b61dbb9e7bbd2fda9d3c574e4cf24719b25680f4c5efb2bfcdfcb0"
+  },
+  "run_dir_local": "/home/pranay5255/Documents/ethpredict/ETHPredict/artifacts/first_bounded_16_17_20/runs/first_bounded_fixed_notional_v1_20261016T175303Z",
+  "run_id": "first_bounded_fixed_notional_v1_20261016T175303Z",
+  "selected_test": {
+    "break_even_additional_slippage_bps": -13.220755746986868,
+    "cost_components": {
+      "fee": 82.39999999999998,
+      "funding": 0.02999999999999972,
+      "slippage": 14.736481157527702,
+      "spread": 31.743538625789185
+    },
+    "fees": 128.91001978331687,
+    "gross_pnl": -7.26376441064785,
+    "max_drawdown": 136.78535977069987,
+    "meta_classification": {
+      "accuracy": 0.6859504132231405,
+      "brier_score": 0.20554860074262193,
+      "calibration_error": 0.07705261822739969,
+      "f1": 0.06172839506172839,
+      "log_loss": 0.6056449737922287,
+      "precision": 0.36764705882352944,
+      "recall": 0.03369272237196765,
+      "weight_sum": 2420.0
+    },
+    "net_pnl": -136.17378419396474,
+    "selection": null,
+    "trades": 103.0,
+    "turnover": 103000.0,
+    "win_rate": 0.3786407766990291
+  },
+  "selected_test_statistics": {
+    "dsr": {
+      "available": true,
+      "benchmark_sharpe": 0.02988275329880096,
+      "null_mean": 0.0,
+      "path_type": "single_path",
+      "reason": null,
+      "trial_count": 108,
+      "trial_sharpe_variance": 0.00013651758146389833,
+      "value": 1.0259477793090157e-11
+    },
+    "independent_bets": {
+      "available": true,
+      "average_uniqueness": 0.9859658949464775,
+      "method": "label_span_uniqueness",
+      "path_type": "single_path",
+      "reason": null,
+      "value": 101.55448717948718
+    },
+    "psr": {
+      "available": true,
+      "benchmark_sharpe": 0.0,
+      "kurtosis_non_excess": 17.155065975055656,
+      "observations": 1245,
+      "path_type": "single_path",
+      "reason": null,
+      "sharpe_per_period": -0.1302043746749398,
+      "skewness": -2.75527359583597,
+      "value": 2.501598503774032e-08
+    },
+    "return_on_execution_costs": {
+      "available": true,
+      "cost_outflows": 128.97101978331688,
+      "reason": null,
+      "value": -1.0558479294243712
+    },
+    "sharpe_annualised": {
+      "available": true,
+      "observations": 1245,
+      "path_type": "single_path",
+      "reason": null,
+      "value": -42.229596549991975
+    },
+    "sharpe_per_period": {
+      "available": true,
+      "observations": 1245,
+      "path_type": "single_path",
+      "reason": null,
+      "value": -0.1302043746749398
+    }
+  },
+  "selection": {
+    "best_trading_trial_id": "lstm_8",
+    "calibration_best_ece": 0.0239499413566126,
+    "calibration_best_trial_id": "linear_baseline",
+    "classification_best_score": 0.06850025947067982,
+    "classification_best_trial_id": "lstm_8",
+    "classification_score_source": "held_out_meta_f1",
+    "metric": "metrics.validation.selection.composite",
+    "min_validation_trades": 30,
+    "mode": "max",
+    "qualified_trial_count": 4,
+    "raw_best_selection_status": "trade_qualified",
+    "raw_best_trial_id": "lstm_8",
+    "raw_best_validation_trades": 268.0,
+    "selection_score_available": true,
+    "validation_metric_winners": {
+      "calibration_error": {
+        "score": 0.0239499413566126,
+        "trade_qualified": true,
+        "trial_id": "linear_baseline"
+      },
+      "composite": {
+        "score": 0.04353680195315826,
+        "trade_qualified": true,
+        "trial_id": "lstm_8"
+      },
+      "edge_rank": {
+        "score": 0.017338842970593547,
+        "trade_qualified": true,
+        "trial_id": "linear_baseline"
+      },
+      "f1": {
+        "score": 0.06850025947067982,
+        "trade_qualified": true,
+        "trial_id": "lstm_8"
+      },
+      "negative_log_loss": {
+        "score": -0.5739039962291583,
+        "trade_qualified": true,
+        "trial_id": "lstm_regularized"
+      },
+      "net_pnl": {
+        "score": -239.95112127660036,
+        "trade_qualified": true,
+        "trial_id": "linear_baseline"
+      }
+    }
+  },
+  "training_code": {
+    "commit": "6aeb87cdfc8ae6d63e5b3178a6d57194d6932e35",
+    "critical_untracked_or_modified": [],
+    "dirty": false,
+    "status_short": ""
+  },
+  "trials": [
+    {
+      "cost_stress": [
+        {
+          "break_even_additional_slippage_bps": -11.648112683330114,
+          "cost_multiple": 1.0,
+          "fees": 244.47961784515238,
+          "gross_pnl": 4.528496568551995,
+          "max_drawdown": 239.95112127659377,
+          "net_pnl": -239.95112127660036,
+          "pnl_per_turnover": -0.0011648112683330114,
+          "survives": false,
+          "trades": 206.0
+        },
+        {
+          "break_even_additional_slippage_bps": -23.522511607852078,
+          "cost_multiple": 2.0,
+          "fees": 489.0922356903048,
+          "gross_pnl": 4.528496568551995,
+          "max_drawdown": 484.56373912174604,
+          "net_pnl": -484.56373912175275,
+          "pnl_per_turnover": -0.0023522511607852077,
+          "survives": false,
+          "trades": 206.0
+        },
+        {
+          "break_even_additional_slippage_bps": -59.14570838141795,
+          "cost_multiple": 5.0,
+          "fees": 1222.930089225762,
+          "gross_pnl": 4.528496568551995,
+          "max_drawdown": 1218.4015926572029,
+          "net_pnl": -1218.4015926572097,
+          "pnl_per_turnover": -0.005914570838141795,
+          "survives": false,
+          "trades": 206.0
+        }
+      ],
+      "noise_control_failures": [],
+      "overrides": {
+        "model.base.type": "linear"
+      },
+      "runtime": {
+        "device": "cuda:0",
+        "elapsed_seconds": 37.6670100500005,
+        "peak_gpu_allocated_bytes": 56669696
+      },
+      "status": "completed",
+      "test_evaluation": {
+        "reason": "final test is scored only for trials selected on validation",
+        "selection_roles": [
+          "calibration_best"
+        ],
+        "status": "not_selected"
+      },
+      "trial_id": "linear_baseline",
+      "validation": {
+        "break_even_additional_slippage_bps": -11.648112683330114,
+        "cost_components": {
+          "fee": 164.79999999999998,
+          "funding": 0.33000000000000074,
+          "slippage": 26.903222247096302,
+          "spread": 52.44639559805606
+        },
+        "fees": 244.47961784515238,
+        "gross_pnl": 4.528496568551995,
+        "max_drawdown": 239.95112127659377,
+        "meta_classification": {
+          "accuracy": 0.6090116279069767,
+          "brier_score": 0.23961511150780873,
+          "calibration_error": 0.0239499413566126,
+          "f1": 0.0,
+          "log_loss": 0.6723807640845311,
+          "precision": 0.0,
+          "recall": 0.0,
+          "weight_sum": 2064.0
+        },
+        "net_pnl": -239.95112127660036,
+        "selection": {
+          "calibration_error": 0.0239499413566126,
+          "composite": -0.010241086381246945,
+          "composite_unavailable_reason": null,
+          "edge_rank_correlation": 0.017338842970593547,
+          "evaluated_candidate_rows": 2064,
+          "f1": 0.0,
+          "negative_log_loss": -0.6723807640845311,
+          "source": "held_out_outer_validation_only",
+          "trade_qualified": true
+        },
+        "trades": 206.0,
+        "turnover": 206000.0,
+        "win_rate": 0.3932038834951456
+      }
+    },
+    {
+      "cost_stress": [
+        {
+          "break_even_additional_slippage_bps": -11.052927379210354,
+          "cost_multiple": 1.0,
+          "fees": 315.63822251998886,
+          "gross_pnl": 19.419768757151303,
+          "max_drawdown": 296.21845376283454,
+          "net_pnl": -296.2184537628375,
+          "pnl_per_turnover": -0.0011052927379210354,
+          "survives": false,
+          "trades": 268.0
+        },
+        {
+          "break_even_additional_slippage_bps": -22.837301353836803,
+          "cost_multiple": 2.0,
+          "fees": 631.4594450399776,
+          "gross_pnl": 19.419768757151303,
+          "max_drawdown": 612.0396762828314,
+          "net_pnl": -612.0396762828263,
+          "pnl_per_turnover": -0.0022837301353836803,
+          "survives": false,
+          "trades": 268.0
+        },
+        {
+          "break_even_additional_slippage_bps": -58.19042327771614,
+          "cost_multiple": 5.0,
+          "fees": 1578.9231125999438,
+          "gross_pnl": 19.419768757151303,
+          "max_drawdown": 1559.5033438427927,
+          "net_pnl": -1559.5033438427927,
+          "pnl_per_turnover": -0.0058190423277716145,
+          "survives": false,
+          "trades": 268.0
+        }
+      ],
+      "noise_control_failures": [
+        "diagnostic_noise_0",
+        "diagnostic_noise_1"
+      ],
+      "overrides": {
+        "model.base.hidden_size": 16
+      },
+      "runtime": {
+        "device": "cuda:0",
+        "elapsed_seconds": 57.86450000500008,
+        "peak_gpu_allocated_bytes": 136090624
+      },
+      "status": "completed",
+      "test_evaluation": {
+        "reason": "final test is scored only for trials selected on validation",
+        "selection_roles": [
+          "not_selected"
+        ],
+        "status": "not_selected"
+      },
+      "trial_id": "lstm_16",
+      "validation": {
+        "break_even_additional_slippage_bps": -11.052927379210354,
+        "cost_components": {
+          "fee": 214.39999999999998,
+          "funding": -0.06399999999999935,
+          "slippage": 35.00295283392364,
+          "spread": 66.29926968606514
+        },
+        "fees": 315.63822251998886,
+        "gross_pnl": 19.419768757151303,
+        "max_drawdown": 296.21845376283454,
+        "meta_classification": {
+          "accuracy": 0.7306000628338046,
+          "brier_score": 0.19344893195974078,
+          "calibration_error": 0.028603563055245244,
+          "f1": 0.0046430644225188625,
+          "log_loss": 0.5739782906761031,
+          "precision": 0.36363636363636365,
+          "recall": 0.002336448598130841,
+          "weight_sum": 6366.0
+        },
+        "net_pnl": -296.2184537628375,
+        "selection": {
+          "calibration_error": 0.028603563055245244,
+          "composite": -0.015338387599978688,
+          "composite_unavailable_reason": null,
+          "edge_rank_correlation": -0.056796704948749284,
+          "evaluated_candidate_rows": 6366,
+          "f1": 0.0046430644225188625,
+          "negative_log_loss": -0.5739782906761031,
+          "source": "held_out_outer_validation_only",
+          "trade_qualified": true
+        },
+        "trades": 268.0,
+        "turnover": 268000.0,
+        "win_rate": 0.40671641791044777
+      }
+    },
+    {
+      "cost_stress": [
+        {
+          "break_even_additional_slippage_bps": -11.227420700255218,
+          "cost_multiple": 1.0,
+          "fees": 312.56480857136756,
+          "gross_pnl": 11.669933804527709,
+          "max_drawdown": 300.8948747668328,
+          "net_pnl": -300.89487476683985,
+          "pnl_per_turnover": -0.0011227420700255218,
+          "survives": false,
+          "trades": 268.0
+        },
+        {
+          "break_even_additional_slippage_bps": -22.903532960380875,
+          "cost_multiple": 2.0,
+          "fees": 625.4846171427351,
+          "gross_pnl": 11.669933804527709,
+          "max_drawdown": 613.8146833382052,
+          "net_pnl": -613.8146833382075,
+          "pnl_per_turnover": -0.0022903532960380875,
+          "survives": false,
+          "trades": 268.0
+        },
+        {
+          "break_even_additional_slippage_bps": -57.93186974075784,
+          "cost_multiple": 5.0,
+          "fees": 1564.244042856838,
+          "gross_pnl": 11.669933804527709,
+          "max_drawdown": 1552.574109052308,
+          "net_pnl": -1552.5741090523102,
+          "pnl_per_turnover": -0.005793186974075784,
+          "survives": false,
+          "trades": 268.0
+        }
+      ],
+      "noise_control_failures": [
+        "diagnostic_noise_0"
+      ],
+      "overrides": {
+        "model.base.hidden_size": 8
+      },
+      "runtime": {
+        "device": "cuda:0",
+        "elapsed_seconds": 57.54052192100062,
+        "peak_gpu_allocated_bytes": 102417408
+      },
+      "status": "completed",
+      "test_evaluation": {
+        "reason": "trial selected on validation evidence",
+        "selection_roles": [
+          "raw_best",
+          "trade_qualified_best",
+          "classification_best"
+        ],
+        "status": "evaluated"
+      },
+      "trial_id": "lstm_8",
+      "validation": {
+        "break_even_additional_slippage_bps": -11.227420700255218,
+        "cost_components": {
+          "fee": 214.39999999999998,
+          "funding": 0.022000000000002407,
+          "slippage": 35.014967109707776,
+          "spread": 63.1278414616598
+        },
+        "fees": 312.56480857136756,
+        "gross_pnl": 11.669933804527709,
+        "max_drawdown": 300.8948747668328,
+        "meta_classification": {
+          "accuracy": 0.7237611572791628,
+          "brier_score": 0.18936856984325307,
+          "calibration_error": 0.049102498083481064,
+          "f1": 0.06850025947067982,
+          "log_loss": 0.5885021443147913,
+          "precision": 0.3492063492063492,
+          "recall": 0.0379746835443038,
+          "weight_sum": 6498.0
+        },
+        "net_pnl": -300.89487476683985,
+        "selection": {
+          "calibration_error": 0.049102498083481064,
+          "composite": 0.04353680195315826,
+          "composite_unavailable_reason": null,
+          "edge_rank_correlation": -0.004122084757810285,
+          "evaluated_candidate_rows": 6498,
+          "f1": 0.06850025947067982,
+          "negative_log_loss": -0.5885021443147913,
+          "source": "held_out_outer_validation_only",
+          "trade_qualified": true
+        },
+        "trades": 268.0,
+        "turnover": 268000.0,
+        "win_rate": 0.39925373134328357
+      }
+    },
+    {
+      "cost_stress": [
+        {
+          "break_even_additional_slippage_bps": -12.484461033491373,
+          "cost_multiple": 1.0,
+          "fees": 312.05577927120123,
+          "gross_pnl": -18.782438116320137,
+          "max_drawdown": 330.8382173875143,
+          "net_pnl": -330.83821738752135,
+          "pnl_per_turnover": -0.0012484461033491373,
+          "survives": false,
+          "trades": 265.0
+        },
+        {
+          "break_even_additional_slippage_bps": -24.26883006259331,
+          "cost_multiple": 2.0,
+          "fees": 624.3415585424026,
+          "gross_pnl": -18.782438116320137,
+          "max_drawdown": 643.1239966587164,
+          "net_pnl": -643.1239966587227,
+          "pnl_per_turnover": -0.002426883006259331,
+          "survives": false,
+          "trades": 265.0
+        },
+        {
+          "break_even_additional_slippage_bps": -59.62193714989911,
+          "cost_multiple": 5.0,
+          "fees": 1561.1988963560066,
+          "gross_pnl": -18.782438116320137,
+          "max_drawdown": 1579.9813344723225,
+          "net_pnl": -1579.9813344723266,
+          "pnl_per_turnover": -0.005962193714989911,
+          "survives": false,
+          "trades": 265.0
+        }
+      ],
+      "noise_control_failures": [
+        "diagnostic_noise_0",
+        "diagnostic_noise_1"
+      ],
+      "overrides": {
+        "model.base.hidden_size": 16,
+        "training.weight_decay": 0.001
+      },
+      "runtime": {
+        "device": "cuda:0",
+        "elapsed_seconds": 56.93364076099988,
+        "peak_gpu_allocated_bytes": 136090624
+      },
+      "status": "completed",
+      "test_evaluation": {
+        "reason": "final test is scored only for trials selected on validation",
+        "selection_roles": [
+          "not_selected"
+        ],
+        "status": "not_selected"
+      },
+      "trial_id": "lstm_regularized",
+      "validation": {
+        "break_even_additional_slippage_bps": -12.484461033491373,
+        "cost_components": {
+          "fee": 212.0,
+          "funding": 0.3390000000000015,
+          "slippage": 34.608753390768584,
+          "spread": 65.10802588043268
+        },
+        "fees": 312.05577927120123,
+        "gross_pnl": -18.782438116320137,
+        "max_drawdown": 330.8382173875143,
+        "meta_classification": {
+          "accuracy": 0.7328304258997328,
+          "brier_score": 0.19313307490110782,
+          "calibration_error": 0.0250853731509774,
+          "f1": 0.0,
+          "log_loss": 0.5739039962291583,
+          "precision": 0.0,
+          "recall": 0.0,
+          "weight_sum": 6363.0
+        },
+        "net_pnl": -330.83821738752135,
+        "selection": {
+          "calibration_error": 0.0250853731509774,
+          "composite": -0.015598782878782195,
+          "composite_unavailable_reason": null,
+          "edge_rank_correlation": -0.030560963032934946,
+          "evaluated_candidate_rows": 6363,
+          "f1": 0.0,
+          "negative_log_loss": -0.5739039962291583,
+          "source": "held_out_outer_validation_only",
+          "trade_qualified": true
+        },
+        "trades": 265.0,
+        "turnover": 265000.0,
+        "win_rate": 0.37358490566037733
+      }
+    }
+  ]
+}

@@ -31,6 +31,8 @@ def dashboard_payload(report):
                           ('classification_best', 'classification_best_trial_id'), ('calibration_best', 'calibration_best_trial_id')]
                          if report.get('selection', {}).get(name) == trial.get('trial_id')]
         item['diagnostics'] = trial.get('diagnostics', {})
+        item['base_model'] = trial.get('config', {}).get('model', {}).get('base', {})
+        item['training'] = trial.get('config', {}).get('training', {})
         item['trades'] = {}
         for split in ['validation', 'test']:
             key = 'validation_trades' if split == 'validation' else 'test_trades'

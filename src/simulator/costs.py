@@ -233,3 +233,10 @@ def dataset_cost_model(dataset, config):
         dataset['cost_model'] = CostModel(config.get('costs', {}), dataset.get('price_path'), dataset.get('feature_frame'),
                                           data_dir=config.get('data', {}).get('dir', 'data'), granularity=dataset.get('granularity', '5m'))
     return dataset['cost_model']
+
+
+def configured_notional(config):
+    alpha = config.get('alpha_backtest', {}) or {}
+    notional = float(alpha.get('position_notional', alpha.get('initial_capital', 100000.)))
+    cap = float(alpha.get('max_position_notional', notional))
+    return min(notional, cap) if cap > 0 else notional

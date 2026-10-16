@@ -33,7 +33,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.config.loader import expand_grid_search
 from src.config.search import build_search_plan
 from src.evaluation.selection import ALIASES, validation_selection_scores, comparison_budget
-from src.simulator.costs import dataset_cost_model
+from src.simulator.costs import dataset_cost_model, configured_notional
 from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_for_duration
 from src.data.side_data import DataCoverageError, source_paths, validate_split_coverage
 from src.evaluation.backtest_stats import (
@@ -1490,7 +1490,7 @@ def candidate_signals(predictions: pd.DataFrame, dataset: Mapping[str, Any], con
             horizon_bars = int((label_cfg.get("vertical_barriers", {}) or {}).get(horizon, dataset["horizon_bars"][horizon]))
             chosen_side = int(np.sign(direction_prob - .5) if config.get("candidate_mapping", {}).get("mode") == "probability_sign" else np.sign(pred_return))
             cost_quote = dataset_cost_model(dataset, config).quote({**shared, "horizon": horizon, "horizon_bars": horizon_bars,
-                         "side": chosen_side, "position_notional": config.get("alpha_backtest", {}).get("position_notional", 1000.)})
+                         "side": chosen_side, "position_notional": configured_notional(config)})
             cost_bps = cost_quote["total_cost_bps"]
             expected_edge_bps = abs(pred_return) * 10_000.0 - cost_bps
             mapping = map_forecast(pred_return, direction_prob, float(row.get("realized_vol", .001)),
@@ -1503,7 +1503,7 @@ def candidate_signals(predictions: pd.DataFrame, dataset: Mapping[str, Any], con
                     **mapping, **cost_quote,
                     "horizon": horizon,
                     "horizon_bars": horizon_bars,
-                    "position_notional": float(config.get("alpha_backtest", {}).get("position_notional", 1000.)),
+                    "position_notional": float(configured_notional(config)),
                     "pred_return": pred_return,
                     "direction_prob": direction_prob,
                     "direction_confidence": confidence,
@@ -3465,6 +3465,11 @@ def run_meta_labeling_mvp(
         "report_json_path": report_dir / "report.json",
         "report_markdown_path": report_dir / "report.md",
     }
+    from src.evaluation.evidence import assess_evidence
+    report["final_test_use_count"] = final_test_uses
+    report["evidence_assessment"] = assess_evidence(report, config_for_search)
+    report["legacy_presence_grade"] = report["evidence_grade"]
+    report["evidence_grade"] = report["evidence_assessment"]["grade"]
     _write_json(report["report_json_path"], report)
     Path(report["report_markdown_path"]).write_text(_report_markdown(report), encoding="utf-8")
     _write_json(run_dir / "manifest.json", report)
