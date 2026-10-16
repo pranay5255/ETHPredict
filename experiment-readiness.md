@@ -1,6 +1,6 @@
 # Experiment readiness — 2026-10-16
 
-Once PR #50 merges, GitHub has **20 open issues: 8 implementation issues and
+After PR #50 merged, GitHub has **20 open issues: 8 implementation issues and
 12 experiment issues**. Every archived Trackio run predates the causal-feature
 (PR #48), label/validation/side-data (PR #49), and training/calibration (PR #50)
 changes, so none of it is evidence for the current code.

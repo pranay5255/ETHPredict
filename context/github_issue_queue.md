@@ -1,7 +1,7 @@
 # GitHub issue queue
 
 Inventory reviewed on 2026-10-16: **20 open issues** (8 implementation issues and
-12 follow-up experiments) once PR #50 merges. This is a proposed dependency
+12 follow-up experiments) after PR #50 merged. This is a proposed dependency
 order, not a claim that the backlog is complete.
 
 ## Current implementation progress
