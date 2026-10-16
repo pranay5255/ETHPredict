@@ -1,38 +1,29 @@
 # GitHub issue queue
 
-Inventory reviewed through the GitHub API on 2026-10-16: **23 open issues**
-(11 implementation issues and 12 follow-up experiments). Primary `main` was
-fast-forwarded to `858f2f3` after PR #49 merged; local EDA changes were preserved.
+Inventory reviewed on 2026-10-16: **20 open issues** (8 implementation issues and
+12 follow-up experiments) once PR #50 merges. This is a proposed dependency
+order, not a claim that the backlog is complete.
 
 ## Current implementation progress
 
-#9 is merged in PR #48. #13, #15, and #8 are merged in PR #49. Their verification
-record is `context/afml_13_15_8_verification.md`.
+Merged foundations: #21, #23, and #24 (PR #47); #9 (PR #48); #13, #15, and #8
+(PR #49); #12, #11, and #18 (PR #50). Verification records are
+`context/afml_13_15_8_verification.md` and `context/afml_12_11_18_verification.md`.
+No performance experiments were run on the merged code; every archived Trackio
+run predates PR #48–#50.
 
-The next batch, #12 → #11 → #18, is implemented on
-`codex/afml-training-forecast-calibration`, pending review/merge. Keep issues open
-until merge. Verification and configuration are described in
-`context/afml_12_11_18_verification.md`. No performance experiments were run.
+Next: **#16 → #17 → #20**, followed by #19 and #22. #43–#45 form a separate
+current-state product chain. `experiment-readiness.md` lists every remaining
+issue and its experiment dependency.
 
-After this batch merges, continue with **#16 → #17 → #20**, followed by #19 and
-#22. #43–#45 form a separate current-state product chain. See the repo-root
-`experiment-readiness.md` for every remaining issue and its experiment dependency.
-
-Use isolated branches so primary-checkout EDA work remains intact. Read current
-issues/comments, finish cross-file implementation and fixture checks, and leave
-reviewable PRs. Existing utilities or archived experiments alone do not establish
-completion. #21/#23/#24 are merged foundations; verify their contracts as new
-search, benchmark, and execution work is integrated.
+Work one implementation issue per isolated branch and PR: read current issues
+and comments, finish cross-file implementation and fixture checks, and leave a
+reviewable PR. Leave the issue open until its fix is merged. Existing utilities
+or archived experiments alone do not establish completion; verify the merged
+contracts as new search, benchmark, and execution work is integrated.
 
 ## Implementation order
 
-- [#9: AFML: Fix feature reproducibility and fold-local preprocessing](https://github.com/pranay5255/ETHPredict/issues/9) — Remove future-data feature dependencies before any new evidence is trusted. First implementation PR.
-- [#13: AFML: Audit triple-barrier geometry and meta-label definitions](https://github.com/pranay5255/ETHPredict/issues/13) — Freeze reconstructable label definitions before changing validation or meta models.
-- [#15: AFML: Purge and embargo by exact label spans, then add CPCV](https://github.com/pranay5255/ETHPredict/issues/15) — Use actual label spans for purging and embargo; add CPCV before importance and path claims.
-- [#8: AFML: Add activity-driven bars and validated side-data joins](https://github.com/pranay5255/ETHPredict/issues/8) — Wire config-selected side data through alignment and per-split coverage gates.
-- [#12: AFML: Add early stopping, uniqueness weighting, and ensemble diagnostics](https://github.com/pranay5255/ETHPredict/issues/12) — Add early stopping and ensemble discipline using trustworthy validation.
-- [#11: AFML: Expand base forecast calibration and edge-ranking diagnostics](https://github.com/pranay5255/ETHPredict/issues/11) — Add calibration, rank usefulness, and a shared forecast-to-candidate interface.
-- [#18: AFML: Calibrate and benchmark meta-labeler models](https://github.com/pranay5255/ETHPredict/issues/18) — Compare and calibrate meta models after labels and validation are stable.
 - [#16: AFML: Make hyperparameter search trial-aware and meta-label scored](https://github.com/pranay5255/ETHPredict/issues/16) — Make search modes and validation-only selection metrics explicit under a fixed budget.
 - [#17: AFML: Add purged feature-importance and ablation reports](https://github.com/pranay5255/ETHPredict/issues/17) — Run purged importance, grouped ablations, and noise controls after feature and validation fixes.
 - [#20: AFML: Upgrade dynamic cost and execution modeling](https://github.com/pranay5255/ETHPredict/issues/20) — Add execution realism after side-data coverage can be enforced.

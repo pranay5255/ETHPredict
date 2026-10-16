@@ -1,15 +1,13 @@
 # Experiment readiness — 2026-10-16
 
-`main` was pulled successfully to `858f2f3` after PR #49 merged. Local EDA
-changes in the primary checkout were preserved. The GitHub API inventory has
-**23 open issues: 11 implementation issues and 12 experiment issues**.
+Once PR #50 merges, GitHub has **20 open issues: 8 implementation issues and
+12 experiment issues**. Every archived Trackio run predates the causal-feature
+(PR #48), label/validation/side-data (PR #49), and training/calibration (PR #50)
+changes, so none of it is evidence for the current code.
 
-## Current batch: #12 → #11 → #18
+## Latest batch: #12 → #11 → #18 (PR #50)
 
-Implemented on `codex/afml-training-forecast-calibration`, pending review and
-merge. These three issues remain open until the PR merges. After merge, the
-current inventory would contain **20 issues: 8 implementation and 12 experiment
-issues**, assuming no other changes to the queue.
+Merged in PR #50, which closes all three issues.
 
 - [#12](https://github.com/pranay5255/ETHPredict/issues/12): base LSTM and meta MLP
   early stopping reserve purged holdouts *inside training*. The best checkpoint
@@ -63,7 +61,7 @@ Continue in the established dependency order:
    and separate forecast-only versus trading rankings. The expanded diagnostics
    and common splits in this batch are prerequisites, not closure of #22.
 
-The **next implementation batch after this PR is #16, #17, and #20**. Then #19
+The **next implementation batch is #16, #17, and #20**. Then #19
 and #22 complete the currently listed historical-research implementation queue.
 
 ## Current-state product work
@@ -91,7 +89,7 @@ budget, policy, comparison table, and immutable final-test-use record.
 - [#33](https://github.com/pranay5255/ETHPredict/issues/33) forecast/mapping,
   [#34](https://github.com/pranay5255/ETHPredict/issues/34) training discipline,
   and [#35](https://github.com/pranay5255/ETHPredict/issues/35) meta calibration:
-  parent implementations become available after the current batch merges.
+  parent implementations are merged (PR #50).
 - [#36](https://github.com/pranay5255/ETHPredict/issues/36) benchmark trading
   comparison waits for #22.
 - [#37](https://github.com/pranay5255/ETHPredict/issues/37) feature/noise
@@ -106,7 +104,5 @@ budget, policy, comparison table, and immutable final-test-use record.
   uses merged #21/#23/#24 and #15 grouped scenarios, but still needs #16 budget
   controls and the fully frozen strategy. Report unavailable statistics honestly.
 
-We are continuing the agreed implementation-first sequence. This batch runs
-synthetic fixtures and software checks, not these performance experiments. Final
-verification passed **197 tests**, including the existing GPU smoke checks;
-37 scientific-library warnings were reported on synthetic series.
+PR #50 ran synthetic fixtures and software checks, not these performance
+experiments. Verification details are in `context/afml_12_11_18_verification.md`.
