@@ -34,9 +34,14 @@ Flag names: `no_trade_winner`, `low_trade_winner`, `poor_calibration`, `high_tur
 Metrics are grouped so they stay distinct:
 
 - `alpha.validation.*` and `alpha.test.*` are simulated backtest results
+- `forecast.validation.*` and `forecast.test.*` are forecast diagnostics for the trial's predictions: calibration (Brier, log loss, ECE), rank correlation, and gross/net edge buckets after costs
+- `forecast_baselines.validation.zero_return.*` and `.momentum.*` are the same diagnostics for the two baselines on the same rows
 - `forecast_oof_by_fold.*` is out-of-sample forecast quality
-- `training_final.*` is the final fit loss
+- `model_instability.*` is seed-ensemble dispersion, per-seed metrics, and metric variance across seeds; it reads `{"status": "single_seed"}` for one seed. It is not repeated under `forecast.*`, and `forecast_oof_by_fold.*.instability` keeps only the per-fold variance summaries
+- `training_final.*` is the final fit loss per epoch; seed ensembles log it as `training_final.seed_<seed>.*`
 - `trial_accounting.failure_modes.*` is the persisted flag object
+
+The trial run config also carries `meta_labeler` (model kind, calibration, threshold selection), `training_discipline` (early stopping, seeds, bootstrap), and `candidate_mapping`. Row-level ID lists in those audits (`*_indices`, `*_keys`, bootstrap `draws`) are logged as `<name>_count`; the full lists stay in the local trial manifest.
 
 ## Panels
 

@@ -120,3 +120,35 @@ def test_trackio_separates_forecast_and_trading_namespaces(monkeypatch, tmp_path
     assert 'forecast' not in captured['metrics']['alpha']['validation']
     assert captured['metrics']['forecast']['validation']['h']['mse'] == .1
     assert captured['metrics']['model_instability']['validation']['variance'] == .2
+
+
+def test_trackio_config_counts_row_ids_and_logs_seed_losses(monkeypatch, tmp_path):
+    import src.experiments.meta_labeling_mvp as mvp
+    captured = {}
+    monkeypatch.setattr(mvp, 'log_trackio_run', lambda config, **kwargs: captured.update(kwargs))
+    holdout = {'status': 'completed', 'fit_indices': list(range(500)), 'evaluation_indices': [500, 501],
+               'fit_sample_keys': [{'sample_index': i, 'horizon': 'h'} for i in range(500)]}
+    members = [{'training_losses': [.5, .4], 'early_stopping': holdout,
+                'bootstrap': {'mode': 'bootstrap', 'draws': [0, 0, 1]}} for _ in range(2)]
+    instability = {'metric_variance': {'h': {'return_mse': .1}}, 'per_seed': {'11': {'h': {'return': {'mse': .2}}}}}
+    trial = {'trial_id': 'one', 'manifest_path': tmp_path / 'manifest.json',
+             'metrics': {'validation': {'forecast': {'h': {'mse': .3}, 'instability': instability}, 'instability': instability}, 'test': {}},
+             'folds': [{'fold': 0, 'metrics': {'h': {'mse': .4}, 'instability': instability}}],
+             'meta_labeler': {'kind': 'logistic', 'feature_columns': ['a', 'b'], 'calibration': holdout},
+             'final_training_history': {'ensemble_seeds': [11, 29], 'members': members}}
+    mvp._log_meta_label_trial_trackio({}, run_id='fixture', trial=trial, selection_status='raw_best',
+                                    raw_best=trial, best_trading=None, selection={}, trial_count=1, smoke=True)
+    calibration = captured['run_config']['meta_labeler']['calibration']
+    assert calibration == {'status': 'completed', 'fit_indices_count': 500, 'evaluation_indices_count': 2,
+                           'fit_sample_keys_count': 500}
+    assert captured['run_config']['meta_labeler']['feature_columns'] == ['a', 'b']
+    member = captured['run_config']['training_discipline']['members'][0]
+    assert member['bootstrap'] == {'mode': 'bootstrap', 'draws_count': 3}
+    assert len(trial['meta_labeler']['calibration']['fit_indices']) == 500  # local manifest unchanged
+    assert captured['metrics']['training_final'] == {'seed_11': {'epoch_1_loss': .5, 'epoch_2_loss': .4},
+                                                     'seed_29': {'epoch_1_loss': .5, 'epoch_2_loss': .4}}
+    # Seed instability appears once; folds keep variance summaries, not per-seed copies.
+    assert captured['metrics']['forecast']['validation'] == {'h': {'mse': .3}}
+    assert captured['metrics']['model_instability']['validation'] == instability
+    assert captured['metrics']['forecast_oof_by_fold']['fold_0']['instability'] == {'metric_variance': {'h': {'return_mse': .1}}}
+    assert 'per_seed' in trial['folds'][0]['metrics']['instability']  # local manifest unchanged

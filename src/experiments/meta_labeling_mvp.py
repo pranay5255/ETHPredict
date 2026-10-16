@@ -1183,6 +1183,14 @@ def _subset(dataset: Mapping[str, Any], indices: np.ndarray) -> Tuple[torch.Tens
     return dataset["X"][indices], dataset["y_ret"][indices], dataset["y_dir"][indices], dataset["sample_weights"][indices]
 
 
+def _bootstrap_audit(mode: str, draws: np.ndarray) -> Dict[str, Any]:
+    # Without resampling the draws are just the retained rows in order.
+    audit = {"mode": mode, "draw_count": int(len(draws)), "unique_rows": int(len(np.unique(draws)))}
+    if mode != "none":
+        audit["draws"] = draws.tolist()
+    return audit
+
+
 def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: Mapping[str, Any], device: torch.device) -> Tuple[MultiHorizonLSTM, Dict[str, Any]]:
     training = config.get("training", {})
     stop_cfg = training.get("early_stopping", {}) or {}
@@ -1247,7 +1255,7 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
         return model, {"model_type": kind, "feature_summary": "latest_mean_std", "seed": seed,
                        "early_stopping": {"status": "not_applicable", "reason": "noniterative tabular fit"},
                        "sample_weight_diagnostics": weight_diagnostics,
-                       "bootstrap": {"mode": training.get("bootstrap", "none"), "draws": draws.tolist()},
+                       "bootstrap": _bootstrap_audit(training.get("bootstrap", "none"), draws),
                        "preprocessing": {"fit_scope": "train_indices_only"}}
     if kind != "lstm":
         raise ValueError(f"Unknown base model type: {kind}")
@@ -1301,7 +1309,7 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
                       best_loss=stopper.best_loss if len(validation) else None)
     return model, {
         "model_type": kind, "seed": seed, "early_stopping": stop_audit,
-        "bootstrap": {"mode": training.get("bootstrap", "none"), "draws": draws.tolist()},
+        "bootstrap": _bootstrap_audit(training.get("bootstrap", "none"), draws),
         "sample_weight_fit_scope": "retained_training_rows_only",
         "sample_weight_diagnostics": weight_diagnostics,
         "training_losses": losses,
@@ -2936,6 +2944,41 @@ def _selection_status_for_trial(
     return "unselected"
 
 
+_ROW_LEVEL_SUFFIXES = ("_indices", "_keys")
+
+
+def _trackio_compact(value: Any) -> Any:
+    """Replace row-level ID lists with counts; the local manifest keeps them."""
+    if isinstance(value, Mapping):
+        compact: Dict[str, Any] = {}
+        for key, item in value.items():
+            if isinstance(item, (list, tuple)) and (str(key).endswith(_ROW_LEVEL_SUFFIXES) or key == "draws"):
+                compact[f"{key}_count"] = len(item)
+            else:
+                compact[key] = _trackio_compact(item)
+        return compact
+    if isinstance(value, (list, tuple)):
+        return [_trackio_compact(item) for item in value]
+    return value
+
+
+def _fold_metrics_for_trackio(metrics: Mapping[str, Any]) -> Dict[str, Any]:
+    # Per-fold seed variance stays; full per-seed metric copies stay in the manifest.
+    metrics = dict(metrics or {})
+    instability = metrics.get("instability")
+    if isinstance(instability, Mapping):
+        metrics["instability"] = {key: value for key, value in instability.items() if key != "per_seed"}
+    return metrics
+
+
+def _training_loss_metrics(history: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    history = history or {}
+    if history.get("members"):
+        return {f"seed_{seed}": _training_loss_metrics(member)
+                for seed, member in zip(history.get("ensemble_seeds", []), history["members"])}
+    return {f"epoch_{index + 1}_loss": loss for index, loss in enumerate(history.get("training_losses", []))}
+
+
 def _log_meta_label_trial_trackio(
     config: Mapping[str, Any],
     *,
@@ -2990,8 +3033,8 @@ def _log_meta_label_trial_trackio(
         "sample_weight_diagnostics": (trial.get("dataset", {}) or {}).get("sample_weight_diagnostics"),
         "bar_clock_diagnostics": (trial.get("dataset", {}) or {}).get("bar_clock_diagnostics"),
         "side_data_manifest": (trial.get("dataset", {}) or {}).get("side_data_manifest"),
-        "meta_labeler": trial.get("meta_labeler"),
-        "training_discipline": trial.get("final_training_history"),
+        "meta_labeler": _trackio_compact(trial.get("meta_labeler")),
+        "training_discipline": _trackio_compact(trial.get("final_training_history")),
         "candidate_mapping": trial.get("candidate_mapping"),
         "cost_model": trial.get("cost_model"),
         "resolved_base_model": trial.get("config", {}).get("model", {}).get("base", {}),
@@ -3004,20 +3047,19 @@ def _log_meta_label_trial_trackio(
         "alpha": {split: {key: value for key, value in payload.items()
                           if key not in {"forecast", "forecast_baselines", "instability"}}
                   for split, payload in split_metrics.items()},
-        "forecast": {split: payload.get("forecast", {}) for split, payload in split_metrics.items()},
+        # Seed instability is logged once, under model_instability.
+        "forecast": {split: {key: value for key, value in (payload.get("forecast", {}) or {}).items() if key != "instability"}
+                     for split, payload in split_metrics.items()},
         "forecast_baselines": {split: payload.get("forecast_baselines", {}) for split, payload in split_metrics.items()},
         "model_instability": {split: payload.get("instability", {}) for split, payload in split_metrics.items()},
         "feature_importance": {f"{row['model']}.{row['feature']}": {"negative_log_loss_drop": row["negative_log_loss_drop"], "fold_std": row["fold_std"], "f1_drop": row["f1_drop"]} for row in trial.get("feature_importance", {}).get("summary", [])},
         "cost_stress": {str(row["cost_multiple"]): row for row in trial.get("cost_stress", {}).get("rows", [])},
         "runtime": trial.get("runtime", {}),
         "forecast_oof_by_fold": {
-            f"fold_{fold.get('fold')}": fold.get("metrics", {})
+            f"fold_{fold.get('fold')}": _fold_metrics_for_trackio(fold.get("metrics", {}))
             for fold in trial.get("folds", []) or []
         },
-        "training_final": {
-            f"epoch_{index + 1}_loss": loss
-            for index, loss in enumerate((trial.get("final_training_history", {}) or {}).get("training_losses", []))
-        },
+        "training_final": _training_loss_metrics(trial.get("final_training_history")),
         "selection": {
             "is_raw_best": is_raw_best,
             "is_best_trade_qualified": is_best_trading,
