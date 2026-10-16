@@ -41,3 +41,21 @@ def test_grid_expansion_uses_dotted_paths_and_max_trials():
     assert trials[0]["overrides"]["model.base.hidden_size"] == 16
     assert get_dotted(trials[0]["config"], "model.base.hidden_size") == 16
     assert get_dotted(trials[1]["config"], "alpha_backtest.edge_threshold_bps") in {5.0, 10.0}
+
+
+def test_training_and_meta_controls_validate_tabular_models(tmp_path):
+    config = yaml.safe_load(Path('configs/config.yml').read_text())
+    config['model']['base'] = {'type': 'linear'}
+    config['model']['meta_labeler'] = {'type': 'logistic', 'calibration': {'method': 'platt'}}
+    config['training']['ensemble_seeds'] = [11, 29]
+    config['candidate_mapping']['mode'] = 'horizon_agreement'
+    path = tmp_path / 'linear.yml'
+    path.write_text(yaml.safe_dump(config))
+    assert ConfigManager().load_config(str(path)).model_type.value == 'linear'
+
+
+def test_verification_configs_disable_final_test():
+    for name in ['training_discipline_smoke', 'forecast_diagnostics_smoke']:
+        cfg = ConfigManager().load_config(f'configs/{name}.yml')
+        assert cfg.raw_config['research']['final_test_guard']['evaluate'] is False
+        assert cfg.training['ensemble_seeds'] == [11, 29]

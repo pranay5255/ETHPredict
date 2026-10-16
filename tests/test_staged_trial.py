@@ -523,6 +523,9 @@ def test_v2_staged_trial_runs_meta_labeling_alpha_smoke(tmp_path):
     assert trial_manifest["final_test_evaluation"]["count"] >= 1
     assert trial_manifest["test_evaluation"]["status"] == "evaluated"
     assert "net_pnl" in trial_manifest["metrics"]["test"]
+    assert "forecast" in trial_manifest["metrics"]["test"]
+    assert Path(trial_manifest["artifact_paths"]["forecast_diagnostics_test"]).exists()
+    assert trial_manifest["diagnostics"]["test"]["threshold_sweep_status"] == "not_run_on_final_test"
     assert trial_manifest["dataset"]["feature_manifest"]["code_identity"]["hash"]
     assert result["run_identity"]["research_spec_hash"]
     assert result["run_identity"]["raw_data_guard"]["status"] in {"first_seen", "unchanged", "changed"}

@@ -1,27 +1,28 @@
 # GitHub issue queue
 
-Inventory reviewed on 2026-10-09: 27 open issues (15 implementation issues and
-12 freeze-controlled follow-up experiments). Snapshot: `main` at `add585e`.
-This is a proposed dependency order, not a claim that the backlog is complete.
-
-The latest 2026-10-02 audits on #8, #9, #17, and #43 identify concrete gaps.
-#21, #23, and #24 are closed following merged PR #47; verify their contracts
-when integrating dependent work. Existing uncommitted EDA changes are separate.
-
-Work one implementation issue per isolated branch and PR: read current code and
-issue comments, address the remaining acceptance criteria, run meaningful
-fixtures and required checks, then make the result reviewable. Leave the issue
-open until its fix is merged. Reuse existing implementations and archived
-experiment evidence where appropriate; do not infer completion from a utility
-function or an old experiment alone.
+Inventory reviewed through the GitHub API on 2026-10-16: **23 open issues**
+(11 implementation issues and 12 follow-up experiments). Primary `main` was
+fast-forwarded to `858f2f3` after PR #49 merged; local EDA changes were preserved.
 
 ## Current implementation progress
 
-#9 is merged in PR #48. The next three issues (#13, #15 and #8) are implemented
-on `codex/afml-labels-validation-side-data`, pending PR review and merge. Their
-cross-file fixture gates and limits are documented in
-`context/afml_13_15_8_verification.md`. Issue closure follows merge; no new
-performance experiments were run. Continue with #12 after this batch.
+#9 is merged in PR #48. #13, #15, and #8 are merged in PR #49. Their verification
+record is `context/afml_13_15_8_verification.md`.
+
+The next batch, #12 → #11 → #18, is implemented on
+`codex/afml-training-forecast-calibration`, pending review/merge. Keep issues open
+until merge. Verification and configuration are described in
+`context/afml_12_11_18_verification.md`. No performance experiments were run.
+
+After this batch merges, continue with **#16 → #17 → #20**, followed by #19 and
+#22. #43–#45 form a separate current-state product chain. See the repo-root
+`experiment-readiness.md` for every remaining issue and its experiment dependency.
+
+Use isolated branches so primary-checkout EDA work remains intact. Read current
+issues/comments, finish cross-file implementation and fixture checks, and leave
+reviewable PRs. Existing utilities or archived experiments alone do not establish
+completion. #21/#23/#24 are merged foundations; verify their contracts as new
+search, benchmark, and execution work is integrated.
 
 ## Implementation order
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import importlib.metadata
 import math
 from copy import deepcopy
 from pathlib import Path
@@ -135,6 +136,10 @@ class TimesFMZeroShotAdapter:
     ):
         if input_series not in {"close", "log_close"}:
             raise ValueError("TimesFM input_series must be 'close' or 'log_close'")
+        if min(int(context_length), int(horizon_length), int(batch_size)) < 1:
+            raise ValueError("TimesFM context, horizon, and batch size must be positive")
+        self.backend = "injected_model" if model is not None else "not_loaded"
+        self.effective_compile_kwargs = None
         self.context_length = int(context_length)
         self.horizon_length = int(horizon_length)
         self.checkpoint = str(checkpoint)
@@ -169,6 +174,8 @@ class TimesFMZeroShotAdapter:
                     "fix_quantile_crossing": True,
                 }
                 compile_kwargs.update(self.compile_kwargs)
+                self.backend = "timesfm_2p5_torch"
+                self.effective_compile_kwargs = dict(compile_kwargs)
                 model.compile(config_cls(**compile_kwargs))
                 return model
             except Exception as exc:  # pragma: no cover - optional package path
@@ -185,6 +192,7 @@ class TimesFMZeroShotAdapter:
                     num_layers=50,
                     model_dims=1280,
                 )
+                self.backend = "legacy_timesfm"
                 checkpoint = timesfm.TimesFmCheckpoint(huggingface_repo_id=self.checkpoint)
                 return timesfm.TimesFm(hparams=hparams, checkpoint=checkpoint)
             except Exception as exc:  # pragma: no cover - optional package path
@@ -305,13 +313,14 @@ def _edge_bucket_table(
     labels = ["lt_0", "0_5", "5_10", "10_25", "25_50", "50_plus"]
     pred_edge = np.abs(pred_return) * 10_000.0 - cost_bps
     side = np.sign(pred_return)
-    realized_net_edge = side * true_return * 10_000.0 - cost_bps
+    realized_net_edge = side * true_return * 10_000.0 - (side != 0) * cost_bps
     correct = np.sign(true_return) == side
     buckets = pd.cut(pred_edge, bins=bins, labels=labels, include_lowest=True)
     table = pd.DataFrame(
         {
             "bucket": buckets,
             "predicted_edge_bps": pred_edge,
+            "realized_gross_edge_bps": side * true_return * 10_000.0,
             "realized_net_edge_bps": realized_net_edge,
             "correct_direction": correct,
         }
@@ -323,6 +332,8 @@ def _edge_bucket_table(
             {
                 "bucket": label,
                 "count": int(len(part)),
+                "coverage": float(len(part) / max(len(table), 1)),
+                "mean_realized_gross_edge_bps": float(part["realized_gross_edge_bps"].mean()) if len(part) else 0.,
                 "mean_predicted_edge_bps": float(part["predicted_edge_bps"].mean()) if len(part) else 0.0,
                 "mean_realized_net_edge_bps": float(part["realized_net_edge_bps"].mean()) if len(part) else 0.0,
                 "directional_accuracy": float(part["correct_direction"].mean()) if len(part) else 0.0,
@@ -332,13 +343,15 @@ def _edge_bucket_table(
 
 
 def forecast_metrics(frame: pd.DataFrame, dataset: Mapping[str, Any], config: Mapping[str, Any]) -> Dict[str, Any]:
+    from src.evaluation.forecast_diagnostics import forecast_diagnostics
     metrics = _prediction_metrics(frame, dataset["horizon_names"])
     for horizon in dataset["horizon_names"]:
         true_return = frame[f"{horizon}_true_return"].to_numpy(dtype=float)
         pred_return = frame[f"{horizon}_pred_return"].to_numpy(dtype=float)
         cost_bps = _total_cost_bps(config, int(dataset["horizon_bars"][horizon]), str(dataset["granularity"]))
+        metrics[horizon].update(forecast_diagnostics(frame, horizon, cost_bps))
         side = np.sign(pred_return)
-        realized_net_edge = side * true_return * 10_000.0 - cost_bps
+        realized_net_edge = side * true_return * 10_000.0 - (side != 0) * cost_bps
         metrics[horizon]["edge"] = {
             "cost_bps": float(cost_bps),
             "mean_predicted_edge_bps": float(np.mean(np.abs(pred_return) * 10_000.0 - cost_bps)) if len(pred_return) else 0.0,
@@ -362,14 +375,18 @@ def _run_meta_backtest_for_predictions(
     oof_predictions = collapse_scenario_predictions(oof_predictions)
     oof_candidates = add_meta_labels(candidate_signals(oof_predictions, dataset, config), dataset, config)
     test_candidates = add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config)
-    meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device)
     splits = build_validation_splits(dataset, config)
     meta_frames, meta_audits, scenario_metrics = [], [], []
     provider = None
-    if model_id != "lstm":
+    if model_id not in {"lstm", "linear", "tree"}:
         def provider(indices):
             sample_ids = dataset["samples"].iloc[indices]["sample_index"]
             return oof_predictions[oof_predictions["sample_index"].isin(sample_ids)].copy()
+    if model_id in {"lstm", "linear", "tree"}:
+        from src.experiments.meta_labeling_mvp import fit_outer_meta_model
+        meta_model, _ = fit_outer_meta_model(dataset, splits["development"], config, device)
+    else:
+        meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device, dataset=dataset)
     for fold in splits["folds"]:
         sample_ids = dataset["samples"].iloc[fold["validation"]]["sample_index"]
         predictions = scenario_predictions[scenario_predictions["sample_index"].isin(sample_ids)].copy()
@@ -426,7 +443,7 @@ def _write_model_result(
     model_dir.mkdir(parents=True, exist_ok=True)
     oof_predictions = oof_predictions.copy()
     test_predictions = test_predictions.copy()
-    oof_predictions["prediction_role"] = "base_oof" if model_id == "lstm" else "untrained_baseline"
+    oof_predictions["prediction_role"] = "base_oof" if model_id in {"lstm", "linear", "tree"} else "untrained_baseline"
     test_predictions["prediction_role"] = "final_test"
     paths = {
         "oof_predictions": model_dir / "predictions_oof.parquet",
@@ -438,9 +455,11 @@ def _write_model_result(
     metrics = {
         "forecast": {
             "validation": forecast_metrics(oof_predictions, dataset, config),
-            "test": forecast_metrics(test_predictions, dataset, config),
+            "test": forecast_metrics(test_predictions, dataset, config) if len(test_predictions) else {},
         }
     }
+    paths["forecast_diagnostics"] = model_dir / "forecast_diagnostics.json"
+    _write_json(paths["forecast_diagnostics"], metrics["forecast"])
     meta_payload: Dict[str, Any] = {}
     if status == "success" and _benchmark_config(config).get("route_to_meta_backtest", True):
         meta_payload = _run_meta_backtest_for_predictions(
@@ -459,7 +478,8 @@ def _write_model_result(
         "kind": kind,
         "status": status,
         "reason": reason,
-        "prediction_schema": _prediction_schema(dataset, test_predictions),
+        "prediction_schema": _prediction_schema(dataset, oof_predictions),
+        "test_evaluation": {"status": "completed" if len(test_predictions) else "disabled"},
         "artifact_paths": {**paths, **meta_payload.get("artifact_paths", {})},
         "metrics": metrics,
         "meta_labeler": meta_payload.get("meta_labeler"),
@@ -499,13 +519,15 @@ def _count_benchmark_test_use(
     model_id: str,
     split_hash: str,
     smoke: bool,
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """Count one forecast-benchmark read of the final test split.
 
     Nested benchmark directories live under the run folder. The ledger stays next
     to the run, in the same file the meta-label guard uses.
     """
 
+    if (config.get("research", {}).get("final_test_guard", {}) or {}).get("evaluate", True) is False:
+        return None
     anchor = run_dir.parent if run_dir.name == "forecast_benchmark" else run_dir
     return _record_final_test_evaluation(
         config,
@@ -583,9 +605,11 @@ def run_forecast_benchmark_from_dataset(
 ) -> Dict[str, Any]:
     bench_cfg = _benchmark_config(config)
     run_dir.mkdir(parents=True, exist_ok=True)
-    if (config.get("research", {}).get("final_test_guard", {}) or {}).get("evaluate", True) is False:
-        raise ValueError("Forecast benchmark evaluates final test; disable benchmark for validation-only verification")
+    evaluate_test = (config.get("research", {}).get("final_test_guard", {}) or {}).get("evaluate", True) is not False
+    if not evaluate_test and bench_cfg.get("route_to_meta_backtest", True):
+        raise ValueError("Validation-only forecast benchmark requires route_to_meta_backtest: false")
     splits = build_validation_splits(dataset, config)
+    test_indices = splits["test"] if evaluate_test else np.array([], dtype=int)
     split_manifest = _split_manifest(dataset, splits)
     _write_json(run_dir / "split_manifest.json", split_manifest)
     split_manifest_hash = _stable_hash(split_manifest)
@@ -594,6 +618,11 @@ def run_forecast_benchmark_from_dataset(
     resolved_device = device or torch.device("cpu")
 
     model_ids = [str(item) for item in bench_cfg.get("models", DEFAULT_BENCHMARK_MODELS)]
+    if "zero_return" not in model_ids and "naive" not in model_ids:
+        model_ids.insert(0, "zero_return")
+    unknown = set(model_ids) - {"zero_return", "naive", "momentum", "lstm", "linear", "tree", "timesfm"}
+    if unknown:
+        raise ValueError(f"Unknown forecast benchmark models: {sorted(unknown)}")
     model_manifests: List[Dict[str, Any]] = []
     tracking_run_id = _infer_benchmark_run_id(run_dir, run_id)
 
@@ -609,7 +638,7 @@ def run_forecast_benchmark_from_dataset(
             "zero_return",
             run_dir / "models" / "zero_return",
             zero_return_predictions(dataset, _concat_fold_indices(splits["folds"], "validation")),
-            zero_return_predictions(dataset, splits["test"]),
+            zero_return_predictions(dataset, test_indices),
             dataset,
             config,
             kind="baseline",
@@ -630,7 +659,7 @@ def run_forecast_benchmark_from_dataset(
             "momentum",
             run_dir / "models" / "momentum",
             momentum_predictions(dataset, _concat_fold_indices(splits["folds"], "validation")),
-            momentum_predictions(dataset, splits["test"]),
+            momentum_predictions(dataset, test_indices),
             dataset,
             config,
             kind="baseline",
@@ -639,40 +668,28 @@ def run_forecast_benchmark_from_dataset(
         momentum_manifest["final_test_evaluation"] = momentum_evaluation
         model_manifests.append(momentum_manifest)
 
-    if "lstm" in model_ids:
-        lstm_dir = run_dir / "models" / "lstm"
-        lstm_dir.mkdir(parents=True, exist_ok=True)
-        oof_frames: List[pd.DataFrame] = []
+    for model_id in [name for name in ["lstm", "linear", "tree"] if name in model_ids]:
+        model_dir = run_dir / "models" / model_id
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_config = deepcopy(config)
+        model_config.setdefault("model", {}).setdefault("base", {})["type"] = model_id
+        oof_frames, histories = [], []
         for fold in splits["folds"]:
-            model, _ = train_base_model(dataset, fold["train"], config, resolved_device)
+            model, history = train_base_model(dataset, fold["train"], model_config, resolved_device)
+            histories.append({"fold": int(fold["fold"]), "history": history})
             fold_pred = predict_base_model(model, dataset, fold["validation"], resolved_device, batch_size=batch_size)
             fold_pred["fold"] = int(fold["fold"])
             oof_frames.append(fold_pred)
         oof_predictions = pd.concat(oof_frames, ignore_index=True).sort_values("timestamp")
-        final_model, _ = train_base_model(dataset, splits["development"], config, resolved_device)
-        torch.save(final_model.state_dict(), lstm_dir / "base_multi_horizon_lstm.pt")
-        lstm_evaluation = _count_benchmark_test_use(
-            config,
-            run_dir,
-            model_id="lstm",
-            split_hash=split_manifest_hash,
-            smoke=smoke,
-        )
-        test_predictions = predict_base_model(final_model, dataset, splits["test"], resolved_device, batch_size=batch_size)
-        manifest = _write_model_result(
-            "lstm",
-            lstm_dir,
-            oof_predictions,
-            test_predictions,
-            dataset,
-            config,
-            kind="multi_horizon_lstm",
-            device=resolved_device,
-        )
-        manifest["model_path"] = lstm_dir / "base_multi_horizon_lstm.pt"
-        manifest["checkpoint_id"] = _sha256_path(Path(manifest["model_path"]))
-        manifest["final_test_evaluation"] = lstm_evaluation
-        _write_json(lstm_dir / "manifest.json", manifest)
+        final_model, final_history = train_base_model(dataset, splits["development"], model_config, resolved_device)
+        model_path = model_dir / f"base_multi_horizon_{model_id}.pt"
+        torch.save(final_model.state_dict(), model_path)
+        evaluation = _count_benchmark_test_use(config, run_dir, model_id=model_id, split_hash=split_manifest_hash, smoke=smoke)
+        test_predictions = predict_base_model(final_model, dataset, test_indices, resolved_device, batch_size=batch_size)
+        manifest = _write_model_result(model_id, model_dir, oof_predictions, test_predictions, dataset, model_config,
+                                       kind=f"multi_horizon_{model_id}", device=resolved_device)
+        manifest.update(model_path=model_path, checkpoint_id=_sha256_path(model_path),
+                        final_test_evaluation=evaluation, training_folds=histories, final_training_history=final_history)
         model_manifests.append(manifest)
 
     timesfm_cfg = bench_cfg.get("timesfm", {}) or {}
@@ -695,7 +712,7 @@ def run_forecast_benchmark_from_dataset(
                 split_hash=split_manifest_hash,
                 smoke=smoke,
             )
-            test_predictions = timesfm_predictions(dataset, splits["test"], adapter)
+            test_predictions = timesfm_predictions(dataset, test_indices, adapter)
             timesfm_manifest = _write_model_result(
                 "timesfm",
                 timesfm_dir,
@@ -706,6 +723,23 @@ def run_forecast_benchmark_from_dataset(
                 kind="timesfm_zero_shot",
                 device=resolved_device,
             )
+            try:
+                package_version = importlib.metadata.version("timesfm")
+            except importlib.metadata.PackageNotFoundError:
+                package_version = None
+            timesfm_manifest["timesfm"] = {
+                "configuration": dict(timesfm_cfg), "checkpoint": adapter.checkpoint,
+                "context_length": adapter.context_length, "input_series": adapter.input_series,
+                "package_version": package_version, "backend": adapter.backend,
+                "scaling": {"adapter_transform": adapter.input_series,
+                            "library_normalize_inputs": (adapter.effective_compile_kwargs or {}).get("normalize_inputs"),
+                            "library_mode": "explicit_compile_config" if adapter.effective_compile_kwargs else "backend_defined"},
+                "effective_compile_kwargs": adapter.effective_compile_kwargs,
+                "horizon_alignment": {name: int(bars) - 1 for name, bars in dataset["horizon_bars"].items()},
+                "context_boundary": "through completed forecast anchor bar only",
+                "direction_probability": "sigmoid(return / causal realized volatility); uncalibrated heuristic",
+                "calibration": "held-out descriptive reports; no base calibration fitted",
+            }
             timesfm_manifest["final_test_evaluation"] = timesfm_evaluation
             model_manifests.append(timesfm_manifest)
         except Exception as exc:
@@ -718,6 +752,7 @@ def run_forecast_benchmark_from_dataset(
                 "status": "skipped",
                 "reason": str(exc),
                 "skip_reason": str(exc),
+                "configuration": dict(timesfm_cfg), "failure_type": type(exc).__name__,
                 "manifest_path": timesfm_dir / "manifest.json",
             }
             _write_json(timesfm_dir / "manifest.json", manifest)
@@ -731,6 +766,7 @@ def run_forecast_benchmark_from_dataset(
             "status": "skipped",
             "reason": "TimesFM benchmark disabled in config",
             "skip_reason": "TimesFM benchmark disabled in config",
+            "configuration": dict(timesfm_cfg),
             "manifest_path": timesfm_dir / "manifest.json",
         }
         _write_json(timesfm_dir / "manifest.json", manifest)
@@ -759,6 +795,7 @@ def run_forecast_benchmark_from_dataset(
         "split_manifest_path": run_dir / "split_manifest.json",
         "split_manifest_hash": split_manifest_hash,
         "final_test_evaluations": final_test_evaluations,
+        "test_evaluation_status": "completed" if evaluate_test else "disabled",
         "test_evaluation_count": len(final_test_evaluations),
         "forecast_metrics_are_primary": True,
         "backtest_metrics_are_secondary": True,

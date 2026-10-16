@@ -27,6 +27,8 @@ class ModelType(str, Enum):
     LIGHTGBM = "lightgbm"
     CATBOOST = "catboost"
     LSTM = "lstm"
+    LINEAR = "linear"
+    TREE = "tree"
 
 
 @dataclass
