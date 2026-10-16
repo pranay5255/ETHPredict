@@ -1,7 +1,8 @@
-"""Lighter-only OHLCV feature engineering.
+"""Lighter OHLCV features and coverage-gated historical side features.
 
 The active data path intentionally reads only public Lighter candle exports from
-``data/raw/*-lighter-*.csv``. Multi-source TVL, Santiment, and Binance-specific
+``data/raw/*-lighter-*.csv`` with explicitly configured historical Lighter side
+sources. Multi-source TVL, Santiment, and Binance-specific
 feature code is archived under ``archive/legacy_data_sources``.
 """
 
@@ -18,6 +19,7 @@ import pandas as pd
 from statsmodels.tsa.stattools import adfuller
 
 from src.data.lighter_client import RESOLUTION_TO_MS
+from src.data.side_data import DataCoverageError, enabled_groups, join_configured_side_data, side_feature_columns
 
 warnings.filterwarnings("ignore")
 
@@ -163,6 +165,8 @@ def construct_activity_bars(df: pd.DataFrame, *, bar_type: str, threshold: float
             group += 1
             running = 0.0
 
+    ordered["dollar_volume_source"] = _clean_numeric(ordered["close"]) * _clean_numeric(ordered["volume"])
+    ordered["source_candle_count"] = 1
     grouped = ordered.groupby(group_ids, sort=True)
     bars = grouped.agg(
         open_time=("open_time", "first"),
@@ -178,6 +182,8 @@ def construct_activity_bars(df: pd.DataFrame, *, bar_type: str, threshold: float
         taker_buy_quote_asset_volume=("taker_buy_quote_asset_volume", "sum"),
         ignore=("ignore", "last"),
         timestamp=("timestamp", "last"),
+        dollar_volume_source=("dollar_volume_source", "sum"),
+        source_candle_count=("source_candle_count", "sum"),
     )
     return bars.reset_index(drop=True)
 
@@ -277,7 +283,7 @@ def save_features(asset: str, bar_type: str, df: pd.DataFrame) -> Path:
 
 
 class DataPreprocessor:
-    """Build model inputs from Lighter OHLCV CSV exports only."""
+    """Build Lighter model inputs with optional validated historical side data."""
 
     def __init__(
         self,
@@ -286,12 +292,17 @@ class DataPreprocessor:
         granularities: Optional[Sequence[str]] = None,
         feature_config: Optional[Mapping[str, Any]] = None,
         bar_config: Optional[Mapping[str, Any]] = None,
+        side_data_config: Optional[Mapping[str, Any]] = None,
     ):
         self.data_dir = Path(data_dir)
         self.granularities = list(granularities or [DEFAULT_GRANULARITY])
         self.include_santiment = include_santiment
         self.feature_config = dict(feature_config or {})
         self.bar_config = dict(bar_config or {})
+        self.side_data_config = dict(side_data_config or {})
+        self._price_frames: Dict[str, pd.DataFrame] = {}
+        self._source_timestamps: Dict[str, pd.DatetimeIndex] = {}
+        self._side_manifest: Dict[str, Any] = {"enabled_groups": [], "coverage": {}, "status": "disabled"}
         self._last_bar_reports: Dict[str, Dict[str, Any]] = {}
         self._last_fracdiff: Dict[str, Any] = {}
 
@@ -304,41 +315,80 @@ class DataPreprocessor:
         }
 
     def load_price_data(self) -> Dict[str, pd.DataFrame]:
-        data: Dict[str, pd.DataFrame] = {}
-        raw_dir = self.data_dir / "raw"
+        data = {}
         for granularity in self.granularities:
-            candidates = sorted(raw_dir.glob(f"ETHUSDT-{granularity}-lighter-*.csv"))
-            frames = []
-            for csv_path in candidates:
-                try:
-                    df = pd.read_csv(csv_path, header=None, names=OHLCV_COLUMNS)
-                    df["open_time"] = pd.to_numeric(df["open_time"], errors="coerce")
-                    df = df.dropna(subset=["open_time"])
-                    df["open_time"] = df["open_time"].astype("int64")
-                    df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.tz_convert(None)
-                    for column in OHLCV_COLUMNS:
-                        df[column] = _clean_numeric(df[column])
-                    frames.append(df)
-                except Exception as exc:
-                    print(f"Warning: Could not load {csv_path}: {exc}")
-            if frames:
-                price = pd.concat(frames, ignore_index=True)
-                source_rows = len(price)
-                price = price.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
-                bar_type = str(self.bar_config.get("type", self.bar_config.get("bar_type", "time"))).lower()
-                if bar_type != "time":
-                    threshold = _bar_threshold(self.bar_config, bar_type)
-                    price = construct_activity_bars(price, bar_type=bar_type, threshold=threshold)
-                report = bar_coverage_report(price, granularity=granularity, bar_type=bar_type, source_rows=source_rows)
-                min_rows = int(self.bar_config.get("min_rows", 1) or 1)
-                if int(report["rows"]) < min_rows:
-                    raise ValueError(
-                        f"Insufficient {bar_type} bar coverage for {granularity}: "
-                        f"rows={report['rows']}, min_rows={min_rows}"
-                    )
-                self._last_bar_reports[granularity] = report
-                data[granularity] = price.reset_index(drop=True)
+            interval = RESOLUTION_TO_MS[granularity]
+            frames, paths = [], []
+            for path in sorted((self.data_dir / "raw").glob(f"ETHUSDT-{granularity}-lighter-*.csv")):
+                frame = pd.read_csv(path, header=None, names=OHLCV_COLUMNS)
+                for column in OHLCV_COLUMNS:
+                    frame[column] = pd.to_numeric(frame[column], errors="coerce")
+                critical = frame[["open_time", "close_time", "open", "high", "low", "close", "volume", "quote_asset_volume"]]
+                if not np.isfinite(critical).all().all():
+                    raise DataCoverageError("Invalid raw OHLCV values", {"source": str(path)})
+                if (frame[["open", "high", "low", "close"]] <= 0).any().any() or (frame[["volume", "quote_asset_volume"]] < 0).any().any():
+                    raise DataCoverageError("Nonpositive prices or negative volume", {"source": str(path)})
+                if ((frame["high"] < frame[["open", "close"]].max(axis=1)) |
+                    (frame["low"] > frame[["open", "close"]].min(axis=1)) |
+                    (frame["close_time"] != frame["open_time"] + interval - 1)).any():
+                    raise DataCoverageError("Invalid OHLC or candle interval", {"source": str(path)})
+                frame["timestamp"] = pd.to_datetime(frame["open_time"], unit="ms", utc=True).dt.tz_localize(None)
+                frames.append(frame)
+                paths.append(str(path))
+            if not frames:
+                continue
+            price = pd.concat(frames, ignore_index=True)
+            source_rows = len(price)
+            source_monotonic = bool(price["timestamp"].is_monotonic_increasing)
+            if price.groupby("timestamp")[OHLCV_COLUMNS].nunique(dropna=False).gt(1).any().any():
+                raise DataCoverageError("Conflicting duplicate candles", {"sources": paths})
+            price = price.drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
+            self._source_timestamps[granularity] = pd.DatetimeIndex(price["timestamp"])
+            unique_rows = len(price)
+            interval = RESOLUTION_TO_MS[granularity]
+            if ((price["open_time"].diff().dropna() % interval) != 0).any():
+                raise DataCoverageError("Source candles do not align with the declared interval", {"granularity": granularity})
+            expected = int((price["open_time"].iloc[-1] - price["open_time"].iloc[0]) / interval) + 1
+            missing = expected - unique_rows
+            bar_type = str(self.bar_config.get("type", self.bar_config.get("bar_type", "time"))).lower()
+            source_report = {"expected_intervals": expected, "missing_intervals": missing,
+                             "coverage_ratio": unique_rows / expected, "duplicate_rows_removed": source_rows - unique_rows,
+                             "source_monotonic": source_monotonic, "sources": paths}
+            allowed_missing = float(self.bar_config.get("max_missing_fraction", 0. if bar_type != "time" else 1.))
+            if not 0 <= allowed_missing <= 1:
+                raise ValueError("bars.max_missing_fraction must be between zero and one")
+            if missing / expected > allowed_missing:
+                raise DataCoverageError("Source interval coverage gate failed", source_report)
+            incomplete = False
+            if bar_type != "time":
+                threshold = _bar_threshold(self.bar_config, bar_type)
+                price = construct_activity_bars(price, bar_type=bar_type, threshold=threshold)
+                metric = (pd.Series(1., index=price.index) if bar_type == "tick" else price["volume"] if bar_type == "volume" else price["dollar_volume_source"])
+                if bar_type == "tick":
+                    metric = price["source_candle_count"]
+                incomplete = bool(len(price) and metric.iloc[-1] < threshold)
+                if incomplete:
+                    price = price.iloc[:-1].copy()
+            report = bar_coverage_report(price, granularity=granularity, bar_type=bar_type, source_rows=source_rows)
+            report.update(source_coverage=source_report, incomplete_terminal_bar_excluded=incomplete,
+                          construction="time" if bar_type == "time" else "OHLCV aggregation proxy; not tick-level reconstruction")
+            retained = int(price["source_candle_count"].sum()) if bar_type != "time" else len(price)
+            report.update(retained_source_rows=retained, excluded_terminal_source_rows=unique_rows - retained)
+            if len(price) < int(self.bar_config.get("min_rows", 1)):
+                raise DataCoverageError("Insufficient completed bar coverage", report)
+            self._last_bar_reports[granularity] = report
+            data[granularity] = price.reset_index(drop=True)
+        self._price_frames = data
         return data
+
+    def price_frame(self, granularity=DEFAULT_GRANULARITY):
+        return self._price_frames[granularity].copy()
+
+    def side_data_manifest(self):
+        return dict(self._side_manifest)
+
+    def source_timestamps(self, granularity=DEFAULT_GRANULARITY):
+        return self._source_timestamps[granularity].copy()
 
     def fracdiff(self, series: pd.Series, d: float, thres: float = 0.01) -> pd.Series:
         # Keep the legacy entry point, but never shorten the convolution width
@@ -530,6 +580,9 @@ class DataPreprocessor:
             raise ValueError(f"Lighter OHLCV data required for {granularity}")
 
         feature_frame = self._feature_frame(price_data, granularity)
+        feature_frame, self._side_manifest = join_configured_side_data(
+            feature_frame, price_data, self.side_data_config, self.data_dir,
+        )
         features_df = feature_frame[self.get_feature_cols()].fillna(0)
         targets_df = feature_frame[["close", "volume"]].fillna(0)
         return features_df, targets_df
@@ -569,13 +622,13 @@ class DataPreprocessor:
 
     def get_feature_cols(self) -> List[str]:
         include = self.feature_config.get("include")
-        return feature_columns_for_families(include)
+        return feature_columns_for_families(include) + side_feature_columns(self.side_data_config)
 
     def feature_manifest(self) -> Dict[str, Any]:
         include = self.feature_config.get("include")
         families = include if isinstance(include, list) else DEFAULT_FEATURE_FAMILIES
         return {
-            "families": list(families),
+            "families": list(families) + [f"side_data:{group}" for group in enabled_groups(self.side_data_config)],
             "columns": self.get_feature_cols(),
             "fracdiff": dict(self._last_fracdiff),
             "causality": {

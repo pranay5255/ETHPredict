@@ -44,13 +44,55 @@ oneOf:
               type: string
           lighter:
             type: object
+          bar_type:
+            enum: [time, volume, dollar, tick]
+          side_data:
+            type: object
+            properties:
+              groups:
+                type: object
+                additionalProperties: false
+                properties:
+                  funding:
+                    $ref: '#/$defs/sideDataSource'
+                  mark_basis:
+                    $ref: '#/$defs/sideDataSource'
+                  open_interest:
+                    $ref: '#/$defs/sideDataSource'
+                  exchange_volume:
+                    $ref: '#/$defs/sideDataSource'
+                  order_book:
+                    $ref: '#/$defs/sideDataSource'
+                  trade_flow:
+                    $ref: '#/$defs/sideDataSource'
       bars:
         type: object
         properties:
           type:
-            type: string
+            enum: [time, volume, dollar, tick]
           time_interval:
             type: string
+          threshold_volume:
+            type: number
+            exclusiveMinimum: 0
+          threshold_usd:
+            type: number
+            exclusiveMinimum: 0
+          threshold_ticks:
+            type: integer
+            minimum: 1
+          min_rows:
+            type: integer
+            minimum: 1
+          max_missing_fraction:
+            type: number
+            minimum: 0
+            maximum: 1
+          min_rows_per_split:
+            type: object
+            additionalProperties:
+              type: integer
+              minimum: 1
       features:
         type: object
         properties:
@@ -287,6 +329,8 @@ oneOf:
             properties:
               do_not_reuse_test:
                 type: boolean
+              evaluate:
+                type: boolean
               ledger_path:
                 type: string
               evaluate_selection_roles:
@@ -413,3 +457,56 @@ oneOf:
         type: object
       backtest:
         type: object
+
+$defs:
+  sideDataSource:
+    type: object
+    properties:
+      enabled:
+        type: boolean
+      historical:
+        const: true
+      paths:
+        type: array
+        minItems: 1
+        items:
+          type: string
+      timestamp_column:
+        type: string
+      timestamp_unit:
+        enum: [s, ms, us, ns]
+      available_at_column:
+        type: string
+      available_at_unit:
+        enum: [s, ms, us, ns]
+      availability_delay:
+        type: string
+      tolerance:
+        type: string
+      columns:
+        type: object
+        additionalProperties:
+          type: string
+      min_source_rows:
+        type: integer
+        minimum: 2
+      min_coverage:
+        type: number
+        minimum: 0
+        maximum: 1
+      min_split_coverage:
+        type: number
+        minimum: 0
+        maximum: 1
+      fill_policy:
+        enum: [reject, zero_with_indicator]
+    if:
+      properties:
+        enabled:
+          const: false
+      required: [enabled]
+    else:
+      required: [paths, historical]
+      anyOf:
+        - required: [available_at_column]
+        - required: [availability_delay]

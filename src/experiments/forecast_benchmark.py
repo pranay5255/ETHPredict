@@ -364,7 +364,7 @@ def _run_meta_backtest_for_predictions(
     test_candidates = add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config)
     meta_model = fit_meta_labeler(oof_candidates, config, dataset["horizon_names"], device)
     splits = build_validation_splits(dataset, config)
-    meta_frames, meta_audits = [], []
+    meta_frames, meta_audits, scenario_metrics = [], [], []
     provider = None
     if model_id != "lstm":
         def provider(indices):
@@ -378,9 +378,13 @@ def _run_meta_backtest_for_predictions(
         part, audit = evaluate_meta_fold(predictions, dataset, fold, config, device, provider)
         meta_frames.append(part)
         meta_audits.append(audit)
+        path_metrics, _ = run_alpha_backtest(part, config)
+        scenario_metrics.append({"fold": int(fold["fold"]), "metrics": path_metrics, "available": audit["status"] == "completed"})
     oof_candidates = collapse_scenario_predictions(pd.concat(meta_frames, ignore_index=True), candidates=True)
     test_candidates = add_meta_probabilities(test_candidates, meta_model)
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
+    validation_metrics["path_dispersion"] = {"path_type": splits.get("path_type"),
+        "scenarios": scenario_metrics, "scenario_count": len(scenario_metrics), "stitched_cpcv": False}
     test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
 
     paths = {
@@ -388,11 +392,15 @@ def _run_meta_backtest_for_predictions(
         "test_candidates": model_dir / "meta_candidates_test.parquet",
         "validation_trades": model_dir / "alpha_trades_validation.parquet",
         "test_trades": model_dir / "alpha_trades_test.parquet",
+        "meta_scenarios": model_dir / "meta_candidates_scenarios.parquet",
+        "meta_validation": model_dir / "meta_validation.json",
     }
     oof_candidates.to_parquet(paths["oof_candidates"], index=False)
     test_candidates.to_parquet(paths["test_candidates"], index=False)
     validation_trades.to_parquet(paths["validation_trades"], index=False)
     test_trades.to_parquet(paths["test_trades"], index=False)
+    pd.concat(meta_frames, ignore_index=True).to_parquet(paths["meta_scenarios"], index=False)
+    _write_json(paths["meta_validation"], {"folds": meta_audits})
 
     return {
         "meta_labeler": meta_model.manifest(),
@@ -416,6 +424,10 @@ def _write_model_result(
     device: Optional[torch.device] = None,
 ) -> Dict[str, Any]:
     model_dir.mkdir(parents=True, exist_ok=True)
+    oof_predictions = oof_predictions.copy()
+    test_predictions = test_predictions.copy()
+    oof_predictions["prediction_role"] = "base_oof" if model_id == "lstm" else "untrained_baseline"
+    test_predictions["prediction_role"] = "final_test"
     paths = {
         "oof_predictions": model_dir / "predictions_oof.parquet",
         "test_predictions": model_dir / "predictions_test.parquet",
@@ -451,6 +463,7 @@ def _write_model_result(
         "artifact_paths": {**paths, **meta_payload.get("artifact_paths", {})},
         "metrics": metrics,
         "meta_labeler": meta_payload.get("meta_labeler"),
+        "meta_validation": meta_payload.get("meta_validation"),
         "manifest_path": model_dir / "manifest.json",
     }
     _write_json(model_dir / "manifest.json", manifest)

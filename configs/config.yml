@@ -11,6 +11,8 @@ data:
   granularity: 5m
   sources:
     - lighter
+  side_data:
+    groups: {}  # Historical sources remain disabled until their coverage gates pass.
   lighter:
     base_url: "https://mainnet.zklighter.elliot.ai"
     symbol: "ETH"

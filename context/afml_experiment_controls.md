@@ -247,3 +247,91 @@ The forecast benchmark explicitly refuses this mode because it is a test-
 evaluating comparison. Rank stability is reported only for actually evaluated
 selected trials, and is unavailable when there is insufficient evidence.
 Cross-scheme performance comparisons remain the separate frozen #31 experiment.
+
+## Historical side-data contracts and bar coverage (#8)
+
+The baseline still uses time bars with no side data (`data.side_data.groups: {}`).
+Enable only explicit historical files. This example describes the existing
+hourly funding export; its timestamps must represent actual availability:
+
+```yaml
+data:
+  side_data:
+    groups:
+      funding:
+        historical: true
+        paths: [lighter/fundings_ETH_perp_1h_20260328_20260628.csv]
+        timestamp_column: timestamp
+        available_at_column: timestamp
+        columns: {rate: funding_rate}
+        tolerance: 1h
+        min_source_rows: 24
+        min_coverage: 0.99
+        min_split_coverage: 0.99
+        fill_policy: zero_with_indicator
+```
+
+Alternatively declare a nonnegative `availability_delay` from event time. For
+mark candles whose timestamp is the candle open, use at least their actual
+completion/publication delay; daily aggregate OI or exchange volume needs its
+own end-of-period publication contract. Numeric timestamps require an explicit
+`timestamp_unit` (`s`, `ms`, `us`, `ns`). Units are normalized before joins.
+Mapping keys are source columns and values are canonical model columns.
+The caller is responsible for the truth of a declared availability contract;
+a timestamp field or a passed coverage gate alone does not establish it.
+
+Canonical input groups:
+
+- `funding`: `funding_rate` (native `rate` can be mapped).
+- `mark_basis`: `mark_price` (native `close` can be mapped); adds mark/close basis.
+- `open_interest`: `open_interest` (native `data` can be mapped).
+- `exchange_volume`: `exchange_volume` (native `data` can be mapped).
+- `order_book`: `bid_price`, `ask_price`, `bid_depth`, `ask_depth`; adds spread
+  in basis points and depth imbalance.
+- `trade_flow`: historical `buy_volume`, `sell_volume` aggregates; adds imbalance.
+
+Book/flow inputs must be genuine historical aggregates with availability times.
+The collected `*_latest.csv` files cannot satisfy this contract. There is no
+claim that the repo's current book/trade snapshots provide historical coverage.
+Paths are relative to `data.dir` unless absolute; supported formats are CSV
+with headers and Parquet. Unknown groups, conflicting duplicates, invalid
+availability, negative delays, and latest snapshots fail explicitly. Identical
+duplicates are removed and counted; source order and hashes are recorded.
+
+Joins are backward, bounded by `tolerance`, and anchored to each completed
+bar's close time. `fill_policy: reject` disallows any missing observation.
+`zero_with_indicator` permits zero filling only after the declared global and
+per-split coverage gates pass and always adds a group missingness feature.
+No future, unbounded, or silent filling is offered. Source/feature families,
+column order, raw side hashes, lag and missingness evidence appear in manifests.
+Side-group selection is controlled by `data.side_data.groups`; `features.include`
+continues to select base OHLCV-derived families independently.
+
+`bars.max_missing_fraction` gates source candle intervals (defaults to zero for
+activity bars). Conflicting raw duplicates/invalid OHLCV fail; identical duplicates
+are audited. `bars.min_rows` gates the resulting completed bars and
+`bars.min_rows_per_split: {train: 32, validation: 16, test: 16}` gates actual
+sample populations before fitting. Source/aggregation coverage and incomplete
+terminal-bar exclusion are recorded. Group coverage is checked on the union of
+actual sequence input windows for every outer and inner partition, not inferred
+from the full dataset. Coverage failures carry structured reports.
+
+Volume/dollar bars are explicitly OHLCV aggregation proxies, not reconstructed
+trade-tick bars. Incomplete terminal groups are excluded; dollar thresholds use
+summed constituent dollar volume. Persisted `stage0_features/bars.parquet`
+contains the price path even if OHLCV columns are excluded from the model matrix.
+Rolling windows/horizons remain configured bar counts; elapsed time changes on
+activity clocks. Annualised Sharpe is unavailable on activity clocks instead of
+applying the nominal five-minute factor. This does not add dynamic execution or
+holding-period funding (#20); use zero static funding for activity-clock audits
+until actual holding-time execution costs are implemented.
+
+Freeze all downstream features/labels/model/validation/costs/policy/seeds when
+varying only a clock; freeze the clock and change one side group when studying
+joins. Those performance comparisons remain experiments after fixture gates pass.
+
+Explicit `data.bar_type` overrides the baseline `bars.type`; its thresholds and
+coverage controls still come from `bars`. Label first-touch timestamps identify
+source bars; OHLC inputs do not provide an observed intrabar touch time or order.
+Meta audits additionally apply actual realized `t1` intervals to candidate rows,
+including a reconstructable candidate-key map and all removal decisions.

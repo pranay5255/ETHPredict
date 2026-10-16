@@ -454,6 +454,7 @@ def meta_triple_barrier_labels(
             row.update(exit_reason="invalid_ohlc", label_exclusion_reason="invalid_ohlc")
         else:
             entry = float(path.loc[start, "close"])
+            row["entry_price"] = entry
             vol = float(row.get("realized_vol", np.nan))
             cost = float(row.get("total_cost_bps", _meta_label_total_cost_bps(costs, horizon, granularity))) / 10_000.0
             if not np.isfinite(vol) or vol <= 0 or not np.isfinite(cost) or cost < 0:
@@ -503,7 +504,8 @@ def meta_triple_barrier_labels(
         row.update({
             "label_holding_bars": max(0, end - start),
             "t1_idx": end, "t1_timestamp": timestamp(end),
-            "first_touch_type": row["exit_reason"], "first_touch_timestamp": timestamp(end),
+            "first_touch_type": row["exit_reason"] if row["label_status"] == "valid" or row["ambiguity_flag"] else None,
+            "first_touch_timestamp": timestamp(end) if row["label_status"] == "valid" or row["ambiguity_flag"] else pd.NaT,
             "label_span_start_idx": start, "label_span_end_idx": end,
             "label_span_start_timestamp": timestamp(start), "label_span_end_timestamp": timestamp(end),
         })

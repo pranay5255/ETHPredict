@@ -75,6 +75,9 @@ def test_nested_meta_validation_and_path_artifacts(tmp_path, method):
     candidates = pd.read_parquet(result['artifact_paths']['oof_candidates'])
     assert 'held_out' in set(candidates.meta_evaluation_status)
     for fold in result['folds']:
+        if fold['meta_validation'].get('realized_t1_purge'):
+            assert fold['meta_validation']['realized_t1_purge']['span_kind'] == 'meta_realized_t1'
+            assert fold['meta_validation']['realized_t1_purge']['overlap_count_after'] == 0
         outer_validation = build_validation_splits(dataset, cfg)['folds'][fold['fold']]['validation']
         for inner in fold['meta_validation']['inner_folds']:
             assert not set(inner['fit_indices']) & set(outer_validation)
@@ -105,3 +108,21 @@ def test_outer_evaluation_outcomes_cannot_change_meta_training(tmp_path):
     if hasattr(model, 'model'):
         for name, value in model.model.state_dict().items():
             assert torch.equal(value, other.model.state_dict()[name])
+
+
+def test_purge_normalizes_timestamp_resolutions():
+    # pandas preserves input precision; milliseconds and microseconds are not
+    # comparable as raw integer representations until both normalize to ns.
+    frame = pd.DataFrame({'label_span_start_idx': [0, 1], 'label_span_end_idx': [1, 1]})
+    frame['label_span_start_timestamp'] = pd.Series(pd.date_range('2026-01-01', periods=2, freq='5min')).astype('datetime64[ms]')
+    frame['label_span_end_timestamp'] = pd.Series([pd.Timestamp('2026-01-01 00:05')] * 2).astype('datetime64[us]')
+    retained, audit = purge_training_spans(frame, [0], [1])
+    assert len(retained) == 0
+    assert audit['purged_indices'] == [0]
+
+
+def test_scenario_summary_uses_predeclared_order_not_sort_tie_order():
+    from src.experiments.meta_labeling_mvp import collapse_scenario_predictions
+    frame = pd.DataFrame({'sample_index': [0, 0], 'horizon': ['h', 'h'], 'meta_fold': [2, 0],
+                          'meta_prob': [.9, .2], 'timestamp': [pd.Timestamp('2026-01-01')] * 2})
+    assert collapse_scenario_predictions(frame, candidates=True).iloc[0].meta_prob == .2

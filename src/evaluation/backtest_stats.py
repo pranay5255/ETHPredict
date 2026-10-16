@@ -378,7 +378,7 @@ def summarize_single_path(
     underwater = underwater_statistics(equity)
     return {
         "path_type": "single_path",
-        "annualisation": ANNUALISATION_NOTE,
+        "annualisation": sharpe["annualisation"],
         "periods_per_year": sharpe["periods_per_year"],
         "sharpe_per_period": sharpe["per_period"],
         "sharpe_annualised": sharpe["annualised"],

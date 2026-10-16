@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.config.loader import expand_grid_search
 from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_for_duration
+from src.data.side_data import DataCoverageError, source_paths, validate_split_coverage
 from src.evaluation.backtest_stats import (
     ANNUALISATION_NOTE,
     attach_cross_trial_statistics,
@@ -203,6 +204,7 @@ CRITICAL_PATH_PREFIXES = (
 )
 FEATURE_CODE_FILES = (
     "src/data/features_all.py",
+    "src/data/side_data.py",
     "src/features/labeling.py",
     "src/features/sample_weights.py",
 )
@@ -277,6 +279,7 @@ def _raw_data_manifest(config: Mapping[str, Any]) -> Dict[str, Any]:
     granularity = data_cfg.get("granularity", data_cfg.get("lighter", {}).get("resolution", DEFAULT_GRANULARITY))
     raw_dir = Path(data_cfg.get("dir", "data")) / "raw"
     files = sorted(raw_dir.glob(f"ETHUSDT-{granularity}-lighter-*.csv"))
+    files += [path for _, path in source_paths(data_cfg.get("dir", "data"), data_cfg.get("side_data", {}))]
     return {
         "raw_dir": raw_dir,
         "granularity": granularity,
@@ -820,13 +823,16 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     volatility_window = int(label_cfg.get("volatility_window", bars_for_duration(granularity, hours=24)))
 
     bar_cfg = dict(config.get("bars", {}) or data_cfg.get("bars", {}) or {})
-    if data_cfg.get("bar_type") is not None and "type" not in bar_cfg:
+    if data_cfg.get("bar_type") is not None:
         bar_cfg["type"] = data_cfg.get("bar_type")
+    if bar_cfg.get("type", "time") != "time" and float(config.get("costs", {}).get("funding_bps_per_hour", 0.)) != 0.:
+        raise ValueError("Activity bars require elapsed-time funding costs (#20); use zero static funding for clock audits")
     preprocessor = DataPreprocessor(
         data_dir=data_cfg.get("dir", "data"),
         granularities=[granularity],
         feature_config=config.get("features", {}) or {},
         bar_config=bar_cfg,
+        side_data_config=data_cfg.get("side_data", {}),
     )
     features_df, targets_df = preprocessor.get_base_dataset(granularity=granularity)
 
@@ -844,6 +850,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
             f"sequence_length={sequence_length}, max_horizon={max_horizon}"
         )
 
+    price_frame = preprocessor.price_frame(granularity).set_index("timestamp").reindex(features_df.index)
     prices = targets_df["close"].astype(float)
     log_returns = np.log(prices.replace(0, np.nan)).diff().replace([np.inf, -np.inf], np.nan).fillna(0.0)
     realized_vol = log_returns.rolling(volatility_window, min_periods=2).std()
@@ -873,6 +880,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         y_ret.append(ret_row)
         y_dir.append(dir_row)
         feature_row = features_df.iloc[label_idx]
+        price_row = price_frame.iloc[label_idx]
         horizon_span_meta: Dict[str, Any] = {}
         for horizon_name, horizon_bars in horizons:
             horizon_end_idx = int(label_idx + horizon_bars)
@@ -883,10 +891,10 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
                 "timestamp": prices.index[label_idx],
                 "sample_index": label_idx,
                 "close": entry,
-                "open": float(feature_row.get("open", entry)),
-                "high": float(feature_row.get("high", entry)),
-                "low": float(feature_row.get("low", entry)),
-                "volume": float(feature_row.get("volume", 0.0)),
+                "open": float(price_row["open"]),
+                "high": float(price_row["high"]),
+                "low": float(price_row["low"]),
+                "volume": float(price_row["volume"]),
                 "realized_vol": float(realized_vol.iloc[label_idx]),
                 "vol_regime": float(feature_row.get("vol_regime", 0.0)),
                 "event_trigger_type": event_metadata.get(label_idx, {}).get("trigger_type", "unknown"),
@@ -898,8 +906,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
             }
         )
 
-    path_columns = [col for col in ["open", "high", "low", "close", "volume"] if col in features_df.columns]
-    price_path = features_df[path_columns].copy()
+    price_path = price_frame[["open_time", "open", "high", "low", "close", "volume", "close_time"]].copy()
     price_path["timestamp"] = features_df.index
     price_path["realized_vol"] = realized_vol.to_numpy(dtype=float)
     if "vol_regime" in features_df.columns:
@@ -963,7 +970,11 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         "event_diagnostics": event_diagnostics,
         "sample_weight_diagnostics": sample_weight_diag,
         "bar_clock_diagnostics": bar_clock_diagnostics,
-        "side_data_manifest": {"enabled_groups": [], "coverage": {}, "status": "disabled"},
+        "side_data_manifest": preprocessor.side_data_manifest(),
+        "feature_frame": features_df,
+        "source_timestamps": preprocessor.source_timestamps(granularity),
+        "coverage_config": {"bars": bar_cfg, "side_data": data_cfg.get("side_data", {}),
+                            "source_interval_ms": int(pd.Timedelta(granularity).total_seconds() * 1000)},
     }
 
 
@@ -1018,7 +1029,9 @@ def build_validation_splits(dataset: Mapping[str, Any], config: Mapping[str, Any
     """
     cfg = config.get("validation", {})
     if cfg.get("method", "purged_walk_forward") != "purged_walk_forward":
-        return exact_validation_splits(dataset, cfg)
+        splits = exact_validation_splits(dataset, cfg)
+        splits["data_coverage"] = validate_split_coverage(dataset, splits)
+        return splits
     splits = purged_walk_forward_splits(len(dataset["X"]), cfg)
     clock = dataset["price_path"]["timestamp"]
     guard = {"embargo_bars": 0}
@@ -1036,10 +1049,11 @@ def build_validation_splits(dataset: Mapping[str, Any], config: Mapping[str, Any
         if not len(fold["train"]):
             raise ValueError("Insufficient training coverage after fixed-gap label-span safety guard")
     splits.update(method="purged_walk_forward", path_type="walk_forward", span_guard=True)
+    splits["data_coverage"] = validate_split_coverage(dataset, splits)
     return splits
 
 
-def fit_outer_meta_model(dataset, training_indices, config, device, prediction_provider=None):
+def fit_outer_meta_model(dataset, training_indices, config, device, prediction_provider=None, evaluation_spans=None):
     """Nested base OOF predictions from the outer training population only.
 
     In purged k-fold/grouped scenarios even another outer fold's base model
@@ -1063,6 +1077,9 @@ def fit_outer_meta_model(dataset, training_indices, config, device, prediction_p
         if not len(train):
             audits.append({**audit, "status": "unavailable", "reason": "no inner training rows after purging"})
             continue
+        audit["data_coverage"] = validate_split_coverage(dataset, {"folds": [
+            {"fold": index, "train": train, "validation": validation}
+        ]}, include_final=False)
         if prediction_provider is None:
             model, _ = train_base_model(dataset, train, config, device)
             predictions = predict_base_model(model, dataset, validation, device)
@@ -1077,14 +1094,29 @@ def fit_outer_meta_model(dataset, training_indices, config, device, prediction_p
     if not frames:
         return ConstantMetaModel(0.0, []), {"status": "unavailable", "reason": "no nested base OOF training candidates", "inner_folds": audits}
     candidates = pd.concat(frames, ignore_index=True)
+    realized_audit = None
+    if evaluation_spans is not None and len(evaluation_spans):
+        combined = pd.concat([candidates, evaluation_spans], ignore_index=True)
+        retained, realized_audit = purge_training_spans(
+            combined, np.arange(len(candidates)), np.arange(len(candidates), len(combined)),
+            config.get("validation", {}), clock=clock,
+            max_horizon=dataset["max_horizon_bars"], sequence_length=dataset["sequence_length"],
+        )
+        realized_audit["span_kind"] = "meta_realized_t1"
+        realized_audit["candidate_keys"] = combined[["sample_index", "horizon", "t1_idx"]].to_dict("records")
+        candidates = candidates.iloc[retained].copy()
     model = fit_meta_labeler(candidates, config, dataset["horizon_names"], device)
-    return model, {"status": "completed", "outer_train_indices": list(map(int, training_indices)),
-                   "candidate_count": len(candidates), "inner_folds": audits}
+    labeled_count = int((candidates["is_candidate"] & candidates["meta_label"].notna()).sum())
+    return model, {"status": "completed" if labeled_count else "unavailable",
+                   "reason": None if labeled_count else "no labeled nested training candidates",
+                   "labeled_candidate_count": labeled_count, "model": model.manifest(), "outer_train_indices": list(map(int, training_indices)),
+                   "candidate_count": len(candidates), "inner_folds": audits,
+                   "realized_t1_purge": realized_audit}
 
 
 def evaluate_meta_fold(predictions, dataset, fold, config, device, prediction_provider=None):
     candidates = add_meta_labels(candidate_signals(predictions, dataset, config), dataset, config)
-    model, audit = fit_outer_meta_model(dataset, fold["train"], config, device, prediction_provider)
+    model, audit = fit_outer_meta_model(dataset, fold["train"], config, device, prediction_provider, candidates)
     candidates = add_meta_probabilities(candidates, model)
     candidates["meta_evaluation_status"] = "held_out" if audit["status"] == "completed" else "unavailable"
     candidates["meta_fold"] = int(fold["fold"])
@@ -1098,6 +1130,9 @@ def collapse_scenario_predictions(frame, *, candidates=False):
     This deterministic summary is not a stitched CPCV path.
     """
     keys = ["sample_index"] + (["horizon"] if candidates else [])
+    priority = "meta_fold" if candidates and "meta_fold" in frame else "fold"
+    if priority in frame:
+        frame = frame.sort_values(priority, kind="stable")
     return frame.drop_duplicates(keys).sort_values("timestamp").reset_index(drop=True)
 
 
@@ -1583,6 +1618,9 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
     total_rows = max(1, int(candidates["timestamp"].nunique()) if "timestamp" in candidates else len(candidates))
     candidate_count = int(candidates["is_candidate"].sum()) if "is_candidate" in candidates else 0
     granularity = str((config.get("data") or {}).get("granularity", "5m"))
+    bar_type = config.get("data", {}).get("bar_type") or (config.get("bars", {}) or {}).get("type", "time")
+    if bar_type != "time":
+        granularity = f"activity:{bar_type}"
 
     def _statistics(net_pnl: float, turnover: float) -> Dict[str, Any]:
         holding = trades_df["label_holding_bars"] if "label_holding_bars" in trades_df.columns else []
@@ -1649,6 +1687,8 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
 def probability_bucket_table(candidates: pd.DataFrame, bins: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]:
     bins = list(bins or np.linspace(0.0, 1.0, 11))
     frame = candidates[candidates["is_candidate"]].copy() if "is_candidate" in candidates else candidates.copy()
+    if "meta_evaluation_status" in frame:
+        frame = frame[frame["meta_evaluation_status"] == "held_out"]
     if frame.empty or "meta_prob" not in frame:
         return []
     frame["bucket"] = pd.cut(frame["meta_prob"].astype(float), bins=bins, include_lowest=True)
@@ -1697,6 +1737,8 @@ def meta_threshold_table(candidates: pd.DataFrame, thresholds: Optional[Sequence
     if candidates.empty or "meta_prob" not in candidates or "meta_label" not in candidates:
         return []
     base = candidates[candidates["is_candidate"]].copy() if "is_candidate" in candidates else candidates.copy()
+    if "meta_evaluation_status" in base:
+        base = base[base["meta_evaluation_status"] == "held_out"]
     labeled = base[base["meta_label"].notna()].copy()
     positives = float((labeled["meta_label"] == 1.0).sum())
     if "sample_weight" in labeled.columns:
@@ -1792,6 +1834,7 @@ def _split_manifest(dataset: Mapping[str, Any], splits: Mapping[str, Any]) -> Di
         "path_type": splits.get("path_type", "walk_forward"),
         "final_boundary_audit": splits.get("final_boundary_audit"),
         "span_guard": splits.get("span_guard", True),
+        "data_coverage": splits.get("data_coverage", {}),
         "purge_bars": int(splits["purge_bars"]),
         "embargo_bars": int(splits["embargo_bars"]),
         "development": describe(splits["development"]),
@@ -1808,6 +1851,8 @@ def _write_stage0(dataset: Mapping[str, Any], run_dir: Path) -> Dict[str, Any]:
     stage_dir = run_dir / "stage0_features"
     stage_dir.mkdir(parents=True, exist_ok=True)
     samples_path = stage_dir / "samples.parquet"
+    bars_path = stage_dir / "bars.parquet"
+    dataset["price_path"].to_parquet(bars_path, index=False)
     dataset["samples"].to_parquet(samples_path, index=False)
     manifest = {
         "stage": "stage0_features",
@@ -1829,6 +1874,7 @@ def _write_stage0(dataset: Mapping[str, Any], run_dir: Path) -> Dict[str, Any]:
         "X_shape": list(dataset["X"].shape),
         "y_ret_shape": list(dataset["y_ret"].shape),
         "samples_path": samples_path,
+        "bars_path": bars_path,
     }
     _write_json(stage_dir / "manifest.json", manifest)
     return manifest
@@ -1898,11 +1944,11 @@ def _run_one_trial(
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
     diagnostics = {"validation": alpha_diagnostics(oof_candidates, config)}
     validation_metrics["meta_classification"] = diagnostics["validation"]["labels"]["classification"]
-    path_values = [item["simulated_validation"]["net_pnl"] for item in fold_manifests]
+    path_values = [item["simulated_validation"]["net_pnl"] for item in fold_manifests if item["meta_validation"]["status"] == "completed"]
     validation_metrics["path_dispersion"] = {
-        "path_type": splits.get("path_type"), "scenario_count": len(path_values),
-        "net_pnl_quantiles": {str(q): float(np.quantile(path_values, q)) for q in [.1, .5, .9]},
-        "scenarios": [{"fold": item["fold"], "metrics": item["simulated_validation"]} for item in fold_manifests],
+        "path_type": splits.get("path_type"), "scenario_count": len(fold_manifests), "available_scenario_count": len(path_values),
+        "net_pnl_quantiles": {str(q): float(np.quantile(path_values, q)) for q in [.1, .5, .9]} if path_values else None,
+        "scenarios": [{"fold": item["fold"], "metrics": item["simulated_validation"], "available": item["meta_validation"]["status"] == "completed"} for item in fold_manifests],
         "stitched_cpcv": False,
     }
 
@@ -2017,6 +2063,7 @@ def _score_trial_on_test(
         device,
         batch_size=int(context["batch_size"]),
     )
+    test_predictions["prediction_role"] = "final_test"
     test_candidates = add_meta_probabilities(
         add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config),
         meta_model,
@@ -2142,6 +2189,7 @@ def _failed_trial_manifest(spec: Mapping[str, Any], run_dir: Path, *, smoke: boo
         "reason": str(error),
         "skip_reason": str(error),
         "error_type": type(error).__name__,
+        "coverage_report": getattr(error, "report", None),
         "traceback": traceback.format_exc(),
         "overrides": spec.get("overrides", {}),
         "config": config,
@@ -2588,7 +2636,7 @@ def _log_meta_label_summary_trackio(config: Mapping[str, Any], *, run_id: str, r
         "evidence_grade": report.get("evidence_grade"),
         "path_type": report.get("path_type"),
         "pbo": report.get("pbo"),
-        "annualisation": ANNUALISATION_NOTE,
+        "annualisation": best.get("metrics", {}).get("validation", {}).get("statistics", {}).get("annualisation", ANNUALISATION_NOTE),
     }
     metrics = {
         "selection": selection,
@@ -2767,7 +2815,7 @@ def _report_markdown(report: Mapping[str, Any]) -> str:
         "- Test coverage: `{}`".format((best["metrics"].get("test") or {}).get("coverage", "not_evaluated")),
         "- Evidence grade: `{}`".format(report.get("evidence_grade", "debugging_only")),
         "- Path type: `{}`".format(report.get("path_type", "single_path")),
-        "- Annualisation: `{}`".format(ANNUALISATION_NOTE),
+        "- Annualisation: `{}`".format(best["metrics"]["validation"].get("statistics", {}).get("annualisation", ANNUALISATION_NOTE)),
         "- Validation Sharpe (per period): `{}`".format(_statistic_value(best, "validation", "sharpe_per_period")),
         "- Validation PSR: `{}`".format(_statistic_value(best, "validation", "psr")),
         "- Validation DSR: `{}`".format(_statistic_value(best, "validation", "dsr")),
@@ -2868,7 +2916,11 @@ def run_meta_labeling_mvp(
         "environment_path": environment_path,
     }
     _write_json(run_dir / "run_identity.json", run_identity)
-    stage0_dataset = build_multi_horizon_lighter_dataset(config_for_search, smoke=smoke)
+    try:
+        stage0_dataset = build_multi_horizon_lighter_dataset(config_for_search, smoke=smoke)
+    except DataCoverageError as error:
+        _write_json(run_dir / "coverage_failure.json", error.report)
+        raise
     stage0 = _write_stage0(stage0_dataset, run_dir)
     benchmark_summary = None
     if (config_for_search.get("benchmark", {}) or {}).get("enabled", True):
@@ -2956,7 +3008,7 @@ def run_meta_labeling_mvp(
         "validation_test_rank_stability": validation_test_rank_stability(trial_manifests),
         "evidence_grade": evidence_grade,
         "pbo": cross_trial["pbo"],
-        "annualisation": ANNUALISATION_NOTE,
+        "annualisation": best.get("metrics", {}).get("validation", {}).get("statistics", {}).get("annualisation", ANNUALISATION_NOTE),
         "status": "success",
         "report_json_path": report_dir / "report.json",
         "report_markdown_path": report_dir / "report.md",

@@ -4,6 +4,7 @@ Grouped scenarios are independently fitted held-out group combinations. They
 are not advertised as stitched CPCV backtest paths.
 """
 from itertools import combinations
+from math import comb
 from typing import Any, Mapping
 
 import numpy as np
@@ -16,7 +17,7 @@ def interval_coordinates(samples):
         arrays = [pd.to_datetime(samples[name], utc=True, errors='coerce') for name in names]
         if any(array.isna().any() for array in arrays):
             raise ValueError('Label spans require valid timestamps')
-        starts, ends = [array.astype('int64').to_numpy() for array in arrays]
+        starts, ends = [array.astype('datetime64[ns, UTC]').astype('int64').to_numpy() for array in arrays]
     else:
         starts, ends = [pd.to_numeric(samples[name], errors='raise').to_numpy() for name in
                         ['label_span_start_idx', 'label_span_end_idx']]
@@ -63,6 +64,8 @@ def embargo_width(samples, evaluation, config, *, max_horizon=1, sequence_length
 
 def purge_training_spans(samples, train, evaluation, config=None, *, clock=None, max_horizon=1, sequence_length=1):
     train, evaluation = np.asarray(train, dtype=int), np.asarray(evaluation, dtype=int)
+    if any((indices < 0).any() or (indices >= len(samples)).any() for indices in (train, evaluation)):
+        raise ValueError('Split row IDs are outside the sample population')
     starts, ends = interval_coordinates(samples)
     config = config or {}
     width = embargo_width(samples, evaluation, config, max_horizon=max_horizon,
@@ -71,7 +74,7 @@ def purge_training_spans(samples, train, evaluation, config=None, *, clock=None,
     embargo_end = ends[evaluation].copy()
     if width:
         if clock is not None:
-            time = pd.DatetimeIndex(pd.to_datetime(clock, utc=True)).asi8
+            time = pd.DatetimeIndex(pd.to_datetime(clock, utc=True)).astype('datetime64[ns, UTC]').asi8
             source_end = samples.iloc[evaluation].label_span_end_idx.to_numpy(dtype=int)
             position = source_end + width
             embargo_end = time[np.minimum(position, len(time) - 1)]
@@ -122,9 +125,9 @@ def exact_validation_splits(dataset: Mapping[str, Any], config: Mapping[str, Any
         held_groups = 1 if method == 'purged_kfold' else int(config.get('scenario_test_groups', 2))
         if not 1 <= held_groups < count:
             raise ValueError('Held-out group count must be positive and smaller than folds')
-        scenarios = list(combinations(range(count), held_groups))
-        if len(scenarios) > int(config.get('max_scenarios', 100)):
+        if comb(count, held_groups) > int(config.get('max_scenarios', 100)):
             raise ValueError('Scenario count exceeds max_scenarios; reduce folds/test groups')
+        scenarios = list(combinations(range(count), held_groups))
         proposed_folds = [(np.concatenate([g for i, g in enumerate(groups) if i not in chosen]),
                            np.concatenate([groups[i] for i in chosen])) for chosen in scenarios]
     else:
