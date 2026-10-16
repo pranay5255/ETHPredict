@@ -196,3 +196,18 @@ least `max(min_validation_trades, 1)` trades, DSR is available, the final-test
 ledger count is exactly one, and the run is not smoke. Every other run is
 `debugging_only`. `failure_modes.concentrated_pnl` uses the positive-return
 HHI (default threshold 0.5), not trade coverage.
+
+## Auditable meta labels (#13)
+
+The default label geometry remains `asymmetric`, `success_mode` remains
+`positive_net_at_vertical`, and `intrabar_ordering` remains `stop_first`.
+Set `geometry: symmetric` for equal cost-adjusted widths, `success_mode:
+profit_take_only` for strict target-touch success, or `intrabar_ordering:
+profit_first` / `exclude` for explicit alternative OHLC ambiguity assumptions.
+Both multipliers must be finite and positive. Candidate tables retain entry,
+volatility, barrier return/price levels, planned expiry, actual first touch,
+cost/config identity, ambiguity, and exclusion reasons. Missing/invalid OHLC
+and unfinished paths remain unlabeled; an observed early touch completes a
+label even when its planned expiry has not arrived. No missing prices are
+backfilled. Diagnostics report class balance, classification/calibration,
+threshold coverage, and ambiguity separately from simulated PnL.

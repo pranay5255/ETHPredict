@@ -127,10 +127,16 @@ oneOf:
             properties:
               profit_kappa:
                 type: number
-                minimum: 0
+                exclusiveMinimum: 0
               stop_kappa:
                 type: number
-                minimum: 0
+                exclusiveMinimum: 0
+              geometry:
+                enum: [symmetric, asymmetric]
+              success_mode:
+                enum: [positive_net_at_vertical, profit_take_only]
+              intrabar_ordering:
+                enum: [stop_first, profit_first, exclude]
               vertical_barriers:
                 type: object
                 additionalProperties:

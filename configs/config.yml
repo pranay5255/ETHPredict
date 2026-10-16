@@ -74,6 +74,9 @@ research:
 
 labels:
   meta_triple_barrier:
+    geometry: asymmetric
+    success_mode: positive_net_at_vertical
+    intrabar_ordering: stop_first
     profit_kappa: 1.5
     stop_kappa: 1.0
     vertical_barriers:

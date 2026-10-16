@@ -180,7 +180,7 @@ def test_meta_triple_barrier_labels_profit_stop_vertical_and_no_signal():
     path = pd.DataFrame(
         {
             "open": [100.0, 100.0, 100.0],
-            "high": [100.0, 101.2, 100.5],
+            "high": [100.0, 101.2, 101.1],
             "low": [100.0, 99.8, 99.5],
             "close": [100.0, 100.8, 101.0],
         }
@@ -206,6 +206,7 @@ def test_meta_triple_barrier_labels_profit_stop_vertical_and_no_signal():
     stop_path = path.copy()
     stop_path.loc[1, "high"] = 100.2
     stop_path.loc[1, "low"] = 98.0
+    stop_path.loc[1, "close"] = 100.0
     stopped = meta_triple_barrier_labels(pd.DataFrame([{**base, "is_candidate": True}]), stop_path, {"profit_kappa": 1.0, "stop_kappa": 1.0}, {}, granularity="5m")
     assert stopped.iloc[0]["exit_reason"] == "stop_loss"
     assert stopped.iloc[0]["meta_label"] == 0.0

@@ -1279,6 +1279,8 @@ def _meta_feature_columns(frame: pd.DataFrame, horizons: Sequence[str]) -> List[
 def fit_meta_labeler(candidates: pd.DataFrame, config: Mapping[str, Any], horizons: Sequence[str], device: torch.device) -> Any:
     feature_columns = _meta_feature_columns(candidates, horizons)
     train = candidates[(candidates["is_candidate"]) & candidates["meta_label"].notna()].copy()
+    if "prediction_role" in train and not train["prediction_role"].isin(["base_oof", "untrained_baseline"]).all():
+        raise ValueError("Meta training requires out-of-fold base predictions")
     if train.empty:
         return ConstantMetaModel(0.0, feature_columns)
     y = train["meta_label"].astype(float).to_numpy()
@@ -1428,6 +1430,10 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
         & (candidates["meta_prob"] >= meta_threshold)
         & (candidates["expected_edge_bps"] >= effective_edge_threshold)
     ].copy()
+    if "label_status" in eligible:
+        eligible = eligible[eligible["label_status"] == "valid"].copy()
+    if "meta_evaluation_status" in eligible:
+        eligible = eligible[eligible["meta_evaluation_status"] == "held_out"].copy()
     if horizon_choice != "best":
         eligible = eligible[eligible["horizon"] == horizon_choice].copy()
     if not eligible.empty:
@@ -1624,9 +1630,42 @@ def alpha_diagnostics(candidates: pd.DataFrame, config: Mapping[str, Any]) -> Di
     alpha = config.get("alpha_backtest", {}) or {}
     thresholds = alpha.get("meta_threshold_grid")
     return {
+        "labels": label_diagnostics(candidates, config),
         "probability_buckets": probability_bucket_table(candidates),
         "predicted_edge_buckets": predicted_edge_bucket_table(candidates),
         "meta_label_thresholds": meta_threshold_table(candidates, thresholds),
+    }
+
+
+def label_diagnostics(candidates: pd.DataFrame, config: Mapping[str, Any]) -> Dict[str, Any]:
+    labeled = candidates[candidates["is_candidate"] & candidates["meta_label"].notna()].copy()
+    evaluated = labeled[np.isfinite(pd.to_numeric(labeled.get("meta_prob", pd.Series(np.nan, index=labeled.index)), errors="coerce"))]
+    if "meta_evaluation_status" in evaluated:
+        evaluated = evaluated[evaluated["meta_evaluation_status"] == "held_out"]
+    classification = None
+    if len(evaluated):
+        truth = evaluated["meta_label"].to_numpy(dtype=float)
+        probability = evaluated["meta_prob"].to_numpy(dtype=float)
+        classification = _weighted_binary_classification_summary(truth, probability, np.ones(len(evaluated)))
+        classification["brier_score"] = float(np.mean((truth - probability) ** 2))
+        buckets = np.minimum((np.clip(probability, 0, 1) * 10).astype(int), 9)
+        classification["calibration_error"] = float(sum(
+            (buckets == bucket).mean() * abs(truth[buckets == bucket].mean() - probability[buckets == bucket].mean())
+            for bucket in np.unique(buckets)
+        ))
+    return {
+        "candidate_rows": int(candidates["is_candidate"].sum()),
+        "labeled_rows": int(len(labeled)), "evaluated_rows": int(len(evaluated)),
+        "positive_rate": float(labeled["meta_label"].mean()) if len(labeled) else None,
+        "ambiguous_rows": int(candidates.get("ambiguity_flag", pd.Series(False, index=candidates.index)).sum()),
+        "exclusion_reasons": candidates.get("label_exclusion_reason", pd.Series(dtype=object)).value_counts().to_dict(),
+        "classification": classification,
+        "geometry": dict((config.get("labels", {}) or {}).get("meta_triple_barrier", {})),
+        "edge_threshold_coverage": [
+            {"threshold_bps": threshold, "eligible_rows": int((candidates["expected_edge_bps"] >= threshold).sum()),
+             "coverage": float((candidates["expected_edge_bps"] >= threshold).mean()) if len(candidates) else 0.0}
+            for threshold in [0.0, 5.0, 10.0, 25.0, 50.0]
+        ],
     }
 
 
@@ -1720,6 +1759,7 @@ def _run_one_trial(
         model, history = train_base_model(dataset, fold["train"], config, device)
         fold_pred = predict_base_model(model, dataset, fold["validation"], device, batch_size=batch_size)
         fold_pred["fold"] = int(fold["fold"])
+        fold_pred["prediction_role"] = "base_oof"
         oof_frames.append(fold_pred)
         fold_manifests.append(
             {
@@ -1745,6 +1785,7 @@ def _run_one_trial(
 
     validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
     diagnostics = {"validation": alpha_diagnostics(oof_candidates, config)}
+    validation_metrics["meta_classification"] = diagnostics["validation"]["labels"]["classification"]
 
     model_path = trial_dir / "base_multi_horizon_lstm.pt"
     torch.save(final_model.state_dict(), model_path)
