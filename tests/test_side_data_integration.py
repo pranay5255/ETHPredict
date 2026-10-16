@@ -233,12 +233,17 @@ def test_group_order_is_deterministic_and_incomplete_activity_bar_is_excluded(tm
     assert report['retained_source_rows'] == 18
 
 
-def test_nonzero_static_hourly_funding_is_rejected_on_activity_clock(tmp_path):
+def test_static_hourly_funding_uses_actual_elapsed_activity_clock(tmp_path):
     cfg = fixture(tmp_path)
     cfg['bars'] = {'type': 'volume', 'threshold_volume': 50}
     cfg['costs']['funding_bps_per_hour'] = 1.
-    with pytest.raises(ValueError, match='elapsed-time funding'):
-        build_multi_horizon_lighter_dataset(cfg)
+    dataset = build_multi_horizon_lighter_dataset(cfg)
+    from src.simulator.costs import dataset_cost_model
+    model = dataset_cost_model(dataset, cfg)
+    start, end = 2, 5
+    quote = model.quote({'sample_index': start, 'horizon_bars': 3, 'side': 1}, exit_index=end)
+    elapsed = (model.timestamp(end) - model.timestamp(start)).total_seconds() / 3600.
+    assert quote['funding_bps'] == pytest.approx(elapsed)
 
 
 def test_data_bar_type_override_controls_the_active_clock(tmp_path):

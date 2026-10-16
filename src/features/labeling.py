@@ -375,6 +375,7 @@ def meta_triple_barrier_labels(
     costs: dict,
     *,
     granularity: str = "5m",
+    cost_model=None,
 ) -> pd.DataFrame:
     """Reconstructable side-adjusted labels; unavailable outcomes stay unlabeled.
 
@@ -426,14 +427,16 @@ def meta_triple_barrier_labels(
     rows = []
     for _, signal in signals.iterrows():
         row = signal.to_dict()
-        start = integer(row.get("sample_index"))
+        signal_start = integer(row.get("sample_index"))
+        start = signal_start + (cost_model.delay if cost_model is not None else 0)
+        row["entry_idx"] = start
         horizon = integer(row.get("horizon_bars"))
         expiry = start + horizon
         end = min(max(start, 0), max(len(path) - 1, 0))
         side = integer(row.get("side", 0), 0)
         candidate = bool(row.get("is_candidate", False)) and side in {-1, 1}
         row.update({
-            "label_schema_version": 2, "label_config_hash": identity,
+            "label_schema_version": 3 if cost_model is not None else 2, "label_config_hash": identity,
             "label_geometry": geometry, "label_success_mode": success,
             "intrabar_ordering": ordering, "ambiguity_flag": False,
             "label_status": "unavailable", "label_exclusion_reason": None,
@@ -456,12 +459,17 @@ def meta_triple_barrier_labels(
             entry = float(path.loc[start, "close"])
             row["entry_price"] = entry
             vol = float(row.get("realized_vol", np.nan))
-            cost = float(row.get("total_cost_bps", _meta_label_total_cost_bps(costs, horizon, granularity))) / 10_000.0
-            if not np.isfinite(vol) or vol <= 0 or not np.isfinite(cost) or cost < 0:
+            estimated = cost_model.quote(row) if cost_model is not None else None
+            cost = float(estimated["total_cost_bps"] if estimated is not None else row.get("total_cost_bps", _meta_label_total_cost_bps(costs, horizon, granularity))) / 10_000.0
+            if estimated is not None:
+                row.update(estimated)
+                row.update(cost_model.fill(row))
+                row["expected_total_cost_bps"] = cost * 10000.
+            if not np.isfinite(vol) or vol <= 0 or not np.isfinite(cost) or (cost_model is None and cost < 0):
                 row.update(exit_reason="invalid_label_inputs", label_exclusion_reason="invalid_label_inputs")
             else:
                 profit = max(profit_kappa * vol, min_edge + cost)
-                stop = max(stop_kappa * vol, cost)
+                stop = max(stop_kappa * vol, cost, 0.)
                 if geometry == "symmetric":
                     profit = stop = max(profit, stop)
                 row.update(entry_price=entry, profit_barrier=profit, stop_barrier=stop,
@@ -493,12 +501,23 @@ def meta_triple_barrier_labels(
                         row["exit_reason"] = "vertical"
                         gross = side * np.log(bar["close"] / entry)
                 if np.isfinite(gross):
-                    net = gross - cost
+                    realized = cost_model.quote(row, exit_index=end) if cost_model is not None else None
+                    actual_cost = realized["total_cost_bps"] / 10000. if realized is not None else cost
+                    factor = float(row.get("fill_factor", 1.))
+                    net = (gross - actual_cost) * factor
+                    if realized is not None:
+                        row.update({f"realized_{key}": value for key, value in realized.items()
+                                    if key in {"fee_bps", "spread_bps", "slippage_bps", "funding_bps", "total_cost_bps"}})
+                        row["event_gross_return"] = gross
+                        row["entry_completed_at"] = cost_model.timestamp(start)
+                        row["exit_completed_at"] = cost_model.timestamp(end)
                     label = row["exit_reason"] == "profit_take" or (
                         success == "positive_net_at_vertical" and row["exit_reason"] == "vertical" and net > 0
                     )
-                    row.update(meta_label=float(label), label_gross_return=float(gross),
+                    row.update(meta_label=float(label), label_gross_return=float(gross * factor),
                                label_net_return=float(net), label_status="valid")
+                    if not row.get("filled", True):
+                        row.update(meta_label=np.nan, label_status="not_filled", label_exclusion_reason="missed_fill")
                 elif row["label_exclusion_reason"] is None:
                     row["label_exclusion_reason"] = "incomplete_path"
         row.update({
@@ -506,8 +525,8 @@ def meta_triple_barrier_labels(
             "t1_idx": end, "t1_timestamp": timestamp(end),
             "first_touch_type": row["exit_reason"] if row["label_status"] == "valid" or row["ambiguity_flag"] else None,
             "first_touch_timestamp": timestamp(end) if row["label_status"] == "valid" or row["ambiguity_flag"] else pd.NaT,
-            "label_span_start_idx": start, "label_span_end_idx": end,
-            "label_span_start_timestamp": timestamp(start), "label_span_end_timestamp": timestamp(end),
+            "label_span_start_idx": signal_start, "label_span_end_idx": end,
+            "label_span_start_timestamp": timestamp(signal_start), "label_span_end_timestamp": timestamp(end),
         })
         rows.append(row)
     if rows:

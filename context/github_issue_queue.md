@@ -1,28 +1,35 @@
 # GitHub issue queue
 
-Inventory reviewed through the GitHub API on 2026-10-16: **23 open issues**
-(11 implementation issues and 12 follow-up experiments). Primary `main` was
-fast-forwarded to `858f2f3` after PR #49 merged; local EDA changes were preserved.
+Inventory reviewed through the GitHub API on 2026-10-16: **20 open issues**
+(8 implementation issues and 12 follow-up experiments). PR #50 is merged at
+`7e43335`; local EDA/notebook changes in the primary checkout were preserved.
 
 ## Current implementation progress
 
-#9 is merged in PR #48. #13, #15, and #8 are merged in PR #49. Their verification
-record is `context/afml_13_15_8_verification.md`.
+#9 is merged in PR #48; #13, #15 and #8 in PR #49; #12, #11 and #18 in PR #50.
+Their verification records remain under `context/`.
 
-The next batch, #12 → #11 → #18, is implemented on
-`codex/afml-training-forecast-calibration`, pending review/merge. Keep issues open
-until merge. Verification and configuration are described in
-`context/afml_12_11_18_verification.md`. No performance experiments were run.
+**#16, #17 and #20 are implemented on `codex/afml-search-importance-execution`,
+pending review/merge.** Keep issues open until merge. This batch adds seeded
+bounded search, purged importance/noise/ablation diagnostics, shared causal and
+realized execution costs, a frozen local runner and an offline stats dashboard.
+Verification is in `context/afml_16_17_20_verification.md`.
 
-After this batch merges, continue with **#16 → #17 → #20**, followed by #19 and
-#22. #43–#45 form a separate current-state product chain. See the repo-root
-`experiment-readiness.md` for every remaining issue and its experiment dependency.
+The first four-trial RTX 4090 batch has run. All four lost after validation costs;
+the sole test-selected LSTM lost 136.174 across 103 trades. See root
+`first-experiment-results.md` and `experimental-runs.md`. This is exploratory
+negative evidence, with one test use and no promoted model.
+
+After this batch merges, **17 issues remain: #19 and #22 historical-research
+extensions, #43–#45 current-state product work, and 12 experiments**. None of those
+five implementation extensions blocks bounded fixed-notional local studies.
+They still gate their specific sizing, benchmark and current-inference work.
+The initial batch does not complete the full studies #37/#38/#40/#41.
 
 Use isolated branches so primary-checkout EDA work remains intact. Read current
-issues/comments, finish cross-file implementation and fixture checks, and leave
+issues/comments, finish cross-file implementation and checks, and leave
 reviewable PRs. Existing utilities or archived experiments alone do not establish
-completion. #21/#23/#24 are merged foundations; verify their contracts as new
-search, benchmark, and execution work is integrated.
+completion. See repo-root `experiment-readiness.md` for remaining dependencies.
 
 ## Implementation order
 

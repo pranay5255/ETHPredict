@@ -1,0 +1,250 @@
+# Frozen first-study recipe. Prepare immutable data/config copies before running.
+version: 2
+experiment:
+  id: first_bounded_fixed_notional_v1
+  name: First bounded ETH backtest
+  seed: 17
+  trials: 4
+data:
+  dir: data
+  granularity: 5m
+  sources:
+  - lighter
+  side_data:
+    groups: {}
+  lighter:
+    base_url: https://mainnet.zklighter.elliot.ai
+    symbol: ETH
+    market_type: perp
+    market_id: 0
+    pipeline_symbol: ETHUSDT
+    resolution: 5m
+    funding_resolution: 1h
+    start_date: '2026-03-28'
+    end_date: '2026-06-28'
+    count_back: 500
+    request_pause_seconds: 0.1
+bars:
+  type: time
+  time_interval: 5m
+features:
+  include:
+  - ohlcv
+  - returns
+  - realized_volatility
+  - volume
+  frac_diff_mode: none
+targets:
+  horizons:
+    next_5m:
+      bars: 1
+    next_hour:
+      bars: 12
+validation:
+  method: exact_span_walk_forward
+  folds: 2
+  test_fraction: 0.2
+  purge_bars: 12
+  embargo_bars: 12
+  embargo_mode: fixed_bars
+  meta_inner_folds: 2
+sampling:
+  mode: dense
+  cusum_threshold_bps: 10.0
+  volatility_multiplier: 1.0
+  min_threshold_bps: 1.0
+sample_weights:
+  base_mode: uniform
+  meta_mode: uniform
+  normalize: sum_one
+research:
+  evidence_scope: first_bounded_backtest
+  final_test_guard:
+    evaluate: true
+    do_not_reuse_test: true
+    evaluate_selection_roles:
+    - trade_qualified_best
+labels:
+  meta_triple_barrier:
+    geometry: asymmetric
+    success_mode: positive_net_at_vertical
+    intrabar_ordering: stop_first
+    profit_kappa: 1.5
+    stop_kappa: 1.0
+    vertical_barriers:
+      next_5m: 1
+      next_hour: 12
+    volatility_window: 288
+    min_edge_bps: 5.0
+    cost_mode: configured
+model:
+  type: hierarchical_meta_labeling
+  base:
+    type: lstm
+    hidden_size: 16
+    num_layers: 1
+    dropout: 0.0
+  meta_labeler:
+    type: logistic
+    hidden_size: 16
+    num_layers: 1
+    dropout: 0.1
+    enabled: true
+    calibration:
+      method: platt
+      validation_fraction: 0.2
+    selection:
+      enabled: false
+      validation_fraction: 0.2
+  confidence_head:
+    enabled: false
+    report_as: event_confidence
+candidate_mapping:
+  mode: expected_edge
+  min_scaled_edge: 0.0
+training:
+  ensemble_seeds:
+  - 17
+  bootstrap: none
+  early_stopping:
+    enabled: true
+    validation_fraction: 0.2
+    patience: 2
+    min_delta: 0.0
+    min_rows: 2
+  sequence_length: 48
+  epochs: 6
+  batch_size: 128
+  learning_rate: 0.001
+  weight_decay: 1.0e-05
+  loss_weights:
+    return: 1.0
+    direction: 0.25
+costs:
+  mode: dynamic
+  fee_bps: 4.0
+  spread_bps: 2.0
+  slippage_bps: 1.0
+  funding_bps_per_hour: 0.0
+  dynamic_funding:
+    enabled: true
+    historical: true
+    paths:
+    - lighter/funding_payments.csv
+    timestamp_column: timestamp
+    rate_column: rate
+    rate_unit: percent
+    direction_column: direction
+    direction_semantics: payer
+    payment_period_hours: 1
+    max_gap: 1h
+    availability_delay: 1min
+  dynamic_spread:
+    enabled: true
+    source: high_low_proxy
+    range_fraction: 0.1
+    floor_bps: 1.0
+  dynamic_slippage:
+    enabled: true
+    volatility_coefficient: 0.02
+  execution:
+    mode: taker
+    entry_delay_bars: 0
+    missed_fill_probability: 0.0
+    fill_policy: sampled
+    seed: 17
+  stress_report_multipliers:
+  - 1.0
+  - 2.0
+  - 5.0
+alpha_backtest:
+  initial_capital: 100000.0
+  horizon: next_hour
+  meta_threshold_selection:
+    enabled: true
+    metric: f1
+    min_trades: 10
+  meta_threshold: 0.5
+  edge_threshold_bps: 5.0
+  position_sizing: fixed_notional
+  position_notional: 1000.0
+  max_position_notional: 1000.0
+  edge_safety_margin_bps: 0.0
+  cooldown_bars: 12
+  max_trades_per_day: 288
+  meta_threshold_grid:
+  - 0.2
+  - 0.3
+  - 0.4
+  - 0.5
+  - 0.6
+benchmark:
+  enabled: false
+tracking:
+  trackio:
+    enabled: true
+    project: ethpredict_first_batch
+    auto_log_gpu: true
+    gpu_log_interval: 2.0
+    auto_log_cpu: true
+execution:
+  glft:
+    enabled: false
+pipeline:
+  artifact_root: artifacts/runs
+  run_name: first_bounded_fixed_notional_v1
+  selection_metric: composite
+  selection_mode: max
+  min_validation_trades: 30
+  composite_weights:
+    f1: 1.0
+    calibration: 0.5
+    edge_rank: 0.1
+search:
+  mode: shuffled_grid
+  seed: 17
+  max_trials: 4
+  trials:
+  - id: linear_baseline
+    overrides:
+      model.base.type: linear
+  - id: lstm_8
+    overrides:
+      model.base.hidden_size: 8
+  - id: lstm_16
+    overrides:
+      model.base.hidden_size: 16
+  - id: lstm_regularized
+    overrides:
+      model.base.hidden_size: 16
+      training.weight_decay: 0.001
+smoke:
+  max_rows: 420
+  max_trials: 1
+  folds: 2
+  sequence_length: 24
+  epochs: 1
+  hidden_size: 8
+  batch_size: 16
+local_batch:
+  source_candles: raw/ETHUSDT-5m-lighter-20260328-20260628.csv
+  source_funding: lighter/fundings_ETH_perp_1h_20260328_20260628.csv
+  rows: 8192
+  warmup_bars: 2016
+  repair_funding_gaps: true
+feature_importance:
+  enabled: true
+  seed: 17
+  noise_features: 2
+  repeats: 3
+  max_folds: 2
+  base_features:
+  - log_return
+  - return_vol_24h
+  - volume_zscore_24h
+  single_feature: true
+  ablation_groups:
+  - returns
+  - volume
+reporting:
+  dashboard: true

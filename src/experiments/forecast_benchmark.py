@@ -348,12 +348,19 @@ def forecast_metrics(frame: pd.DataFrame, dataset: Mapping[str, Any], config: Ma
     for horizon in dataset["horizon_names"]:
         true_return = frame[f"{horizon}_true_return"].to_numpy(dtype=float)
         pred_return = frame[f"{horizon}_pred_return"].to_numpy(dtype=float)
-        cost_bps = _total_cost_bps(config, int(dataset["horizon_bars"][horizon]), str(dataset["granularity"]))
+        from src.simulator.costs import dataset_cost_model, configured_notional
+        cost_model = dataset_cost_model(dataset, config)
+        cost_bps = np.array([cost_model.quote({**row.to_dict(), "horizon_bars": int(dataset["horizon_bars"][horizon]),
+                            "side": int(np.sign(row[f"{horizon}_pred_return"])),
+                            "position_notional": configured_notional(config)})["total_cost_bps"]
+                             for _, row in frame.iterrows()], dtype=float)
         metrics[horizon].update(forecast_diagnostics(frame, horizon, cost_bps))
         side = np.sign(pred_return)
         realized_net_edge = side * true_return * 10_000.0 - (side != 0) * cost_bps
         metrics[horizon]["edge"] = {
-            "cost_bps": float(cost_bps),
+            "cost_bps": float(np.mean(cost_bps)) if len(cost_bps) else None,
+            "cost_model_id": cost_model.identity,
+            "cost_quote_scope": "causal_candidate_time_estimate",
             "mean_predicted_edge_bps": float(np.mean(np.abs(pred_return) * 10_000.0 - cost_bps)) if len(pred_return) else 0.0,
             "mean_realized_net_edge_bps": float(np.mean(realized_net_edge)) if len(realized_net_edge) else 0.0,
             "positive_realized_net_edge_rate": float(np.mean(realized_net_edge > 0.0)) if len(realized_net_edge) else 0.0,

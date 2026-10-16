@@ -396,17 +396,28 @@ def summarize_single_path(
     }
 
 
+def period_pnl_series(candidates: pd.DataFrame, trades: pd.DataFrame) -> pd.Series:
+    if candidates is None or candidates.empty or "timestamp" not in candidates:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([], tz="UTC"))
+    column = "bar_close_timestamp" if "bar_close_timestamp" in candidates else "timestamp"
+    clock = pd.DatetimeIndex(pd.to_datetime(candidates[column], utc=True)).drop_duplicates().sort_values()
+    if column == "bar_close_timestamp" and "vertical_barrier_timestamp" in candidates:
+        offset = pd.to_datetime(candidates[column], utc=True) - pd.to_datetime(candidates.timestamp, utc=True)
+        end = pd.to_datetime(candidates.vertical_barrier_timestamp, utc=True).max() + offset.iloc[0]
+        # A fixed five-minute source clock supports dense period accounting.
+        differences = np.diff(clock.astype('datetime64[ns, UTC]').asi8)
+        if len(differences) and np.all(differences == pd.Timedelta('5min').value):
+            clock = pd.date_range(clock.min(), max(clock.max(), end), freq='5min')
+    pnl = pd.Series(0., index=clock)
+    if trades is not None and not trades.empty and "net_pnl" in trades:
+        key = "pnl_timestamp" if "pnl_timestamp" in trades else "timestamp"
+        grouped = trades.assign(_pnl_time=pd.to_datetime(trades[key], utc=True)).groupby('_pnl_time').net_pnl.sum()
+        pnl = pnl.add(grouped, fill_value=0.).sort_index().fillna(0.)
+    return pnl
+
+
 def period_pnl_by_timestamp(candidates: pd.DataFrame, trades: pd.DataFrame) -> np.ndarray:
-    if candidates is None or candidates.empty or "timestamp" not in candidates.columns:
-        return np.asarray([], dtype=float)
-    clock = pd.to_datetime(candidates["timestamp"], utc=True).drop_duplicates().sort_values()
-    pnl = pd.Series(0.0, index=clock)
-    if trades is not None and not trades.empty and "timestamp" in trades.columns and "net_pnl" in trades.columns:
-        grouped = trades.copy()
-        grouped["timestamp"] = pd.to_datetime(grouped["timestamp"], utc=True)
-        summed = grouped.groupby("timestamp")["net_pnl"].sum()
-        pnl = pnl.add(summed, fill_value=0.0).reindex(clock).fillna(0.0)
-    return pnl.to_numpy(dtype=float)
+    return period_pnl_series(candidates, trades).to_numpy(dtype=float)
 
 
 def attach_cross_trial_statistics(trials: Sequence[Dict[str, Any]], *, trial_count: int) -> Dict[str, Any]:
@@ -414,6 +425,7 @@ def attach_cross_trial_statistics(trials: Sequence[Dict[str, Any]], *, trial_cou
 
     sharpes = []
     matrix_rows = []
+    timestamp_rows = []
     for trial in trials:
         if trial.get("status") != "completed":
             continue
@@ -424,6 +436,7 @@ def attach_cross_trial_statistics(trials: Sequence[Dict[str, Any]], *, trial_cou
         returns = validation.get("period_returns") or []
         if returns:
             matrix_rows.append([float(value) for value in returns])
+            timestamp_rows.append(validation.get("period_timestamps"))
     for trial in trials:
         metrics = trial.get("metrics") or {}
         if not isinstance(metrics, dict):
@@ -434,6 +447,12 @@ def attach_cross_trial_statistics(trials: Sequence[Dict[str, Any]], *, trial_cou
             if not isinstance(stats_block, dict) or "period_returns" not in stats_block:
                 continue
             stats_block["dsr"] = deflated_sharpe_ratio(stats_block["period_returns"], sharpes, trial_count)
+    alignment = "legacy_equal_length"
+    if matrix_rows and all(timestamp_rows):
+        aligned = pd.concat([pd.Series(values, index=pd.to_datetime(times, utc=True))
+                             for values, times in zip(matrix_rows, timestamp_rows)], axis=1, join='inner').sort_index()
+        matrix_rows = [aligned.iloc[:, i].tolist() for i in range(aligned.shape[1])]
+        alignment = "common_recorded_timestamps"
     lengths = {len(row) for row in matrix_rows}
     if len(matrix_rows) >= 2 and len(lengths) == 1:
         pbo = probability_of_backtest_overfitting(np.asarray(matrix_rows, dtype=float).T)
@@ -441,4 +460,5 @@ def attach_cross_trial_statistics(trials: Sequence[Dict[str, Any]], *, trial_cou
         pbo = _unavailable("trial-by-period return matrix is too small for CSCV", path_type="multi_path")
     else:
         pbo = _unavailable("trial period-return series have different lengths", path_type="multi_path")
+    pbo["period_alignment"] = alignment
     return {"pbo": pbo, "path_type": "single_path"}

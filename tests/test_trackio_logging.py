@@ -364,3 +364,18 @@ def test_forecast_benchmark_requires_trackio_when_not_smoke(tmp_path):
 
     with pytest.raises(RuntimeError, match="Trackio is required"):
         run_forecast_benchmark(config_path, smoke=False, allow_cpu=True)
+
+
+def test_local_readback_finds_virtualenv_cli_when_not_on_shell_path(monkeypatch, tmp_path):
+    import src.utils.trackio_logging as logging
+    sibling = tmp_path / 'trackio'
+    sibling.write_text('test CLI placeholder')
+    monkeypatch.setattr(logging.sys, 'executable', str(tmp_path / 'python'))
+    monkeypatch.setattr(logging.shutil, 'which', lambda _: None)
+    calls = []
+    def run(command, **kwargs):
+        calls.append(command)
+        return types.SimpleNamespace(stdout=json.dumps({'run':'finished', 'metrics':['trackio.status.completed']}))
+    monkeypatch.setattr(logging.subprocess, 'run', run)
+    logging._verify_local_run('fixture', 'finished', 'completed')
+    assert calls[0][0] == str(sibling)
