@@ -14,3 +14,6 @@ artifacts/
 data/processed_features/
 logs/
 results/
+
+# Local parquet lake for backfilled market data (scripts/lighter_backfill_lake.py)
+data/lake/
