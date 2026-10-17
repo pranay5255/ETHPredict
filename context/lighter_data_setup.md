@@ -1,88 +1,60 @@
-# Lighter Data Setup for ETHPredict
+# Lighter data setup — 2026-10-17
 
-This is the data-first Lighter integration. It collects public market data and
-writes artifacts that the active Lighter-only training code can consume without
-account keys or transaction signing.
+Public data collection uses REST without account credentials or signed orders.
+The primary research market is ETH perpetual (`market_id: 0`). Collection now
+also covers BTC, SOL, HYPE and NEAR in a separate historical Parquet lake.
 
-## Current Scope
+## Existing CSV research path
 
-Implemented data endpoints:
-
-- `/api/v1/orderBookDetails` to resolve and snapshot market metadata.
-- `/api/v1/candles` for OHLCV training data. Lighter returns at most 500
-  candles per call, so the collector chunks longer ranges.
-- `/api/v1/markPriceCandles` for mark-price side data.
-- `/api/v1/fundings` and `/api/v1/funding-rates` for funding features.
-- `/api/v1/orderBookOrders` for a latest order book depth snapshot.
-- `/api/v1/recentTrades` for a latest trades snapshot.
-- `/api/v1/exchangeMetrics` for optional daily volume and open-interest side tables when Lighter accepts the requested period/filter combination.
-
-ETH perp is configured as `market_id: 0`. The collector writes model-compatible
-OHLCV rows to `data/raw/ETHUSDT-<resolution>-lighter-<start>-<end>.csv`.
-`DataPreprocessor.load_price_data()` intentionally reads only files matching that
-Lighter filename pattern.
-
-## Install
-
-The public SDK documented by Lighter currently lives at:
+Use the uv-managed environment and date-bounded collector:
 
 ```bash
-pip install git+https://github.com/elliottech/lighter-python.git
+uv sync
+uv run python scripts/lighter_collect_data.py --config configs/config.yml
 ```
 
-The data collector uses public REST endpoints directly because no account auth
-or signer is needed for training data.
-
-## Collect Training Data
-
-Use the defaults from `configs/config.yml`:
+It writes model OHLCV to
+`data/raw/ETHUSDT-<resolution>-lighter-<start>-<end>.csv` and side tables/snapshots
+under `data/lighter/`. `DataPreprocessor` deliberately accepts the Lighter raw
+filename pattern. Build features from these CSVs:
 
 ```bash
-python scripts/lighter_collect_data.py --config configs/config.yml
+uv run python -m src.data.features_all full_features --data-dir data --granularity 5m --sequence-length 288 --out-dir /tmp/ethpredict-lighter-features
 ```
 
-Or collect an explicit range:
+Historical side groups are config-controlled in `data.side_data.groups` and use
+availability-time alignment plus per-split coverage gates. None is enabled in the
+default config. Latest order-book/recent-trade snapshots are not historical tape.
+
+## Mainnet history lake
 
 ```bash
-python scripts/lighter_collect_data.py \
-  --symbol ETH \
-  --market-type perp \
-  --market-id 0 \
-  --resolution 1h \
-  --start 2025-01-17 \
-  --end 2025-02-01
+uv run python scripts/lighter_backfill_lake.py --symbols ETH BTC SOL HYPE NEAR
 ```
 
-Outputs:
+The completed snapshot spans June 4, 2025 through a partial October 16, 2026:
+1m/5m/1h candles, 5m mark candles (from August 25, 2025) and hourly funding.
+All 25 dataset directories load with `pd.read_parquet(directory)` and all 425
+partition hashes match manifests. Size: 303.10 MB (289.06 MiB).
 
-- `data/raw/ETHUSDT-1h-lighter-20250117-20250201.csv`
-- `data/lighter/candles_ETH_perp_1h_20250117_20250201.csv`
-- `data/lighter/mark_price_candles_ETH_perp_1h_20250117_20250201.csv`
-- `data/lighter/fundings_ETH_perp_1h_20250117_20250201.csv`
-- `data/lighter/funding_rates_latest.csv`
-- `data/lighter/order_book_details_ETH_perp.json`
-- `data/lighter/order_book_orders_ETH_perp_latest.csv`
-- `data/lighter/recent_trades_ETH_perp_latest.csv`
-- Optional: `data/lighter/exchange_metric_volume_ETH_perp_daily.csv`
-- Optional: `data/lighter/exchange_metric_open_interest_ETH_perp_daily.csv`
+Funding has 31 shared missing hours, tracked in
+[#54](https://github.com/pranay5255/ETHPredict/issues/54); six exist in an older
+ETH archive. These are unresolved collection gaps, not verified exchange-wide
+absence. Do not zero-fill. Schema repair does not recover missing rows.
 
-## Training Pipeline
+See [the lake runbook](lighter_data_lake.md) for exact observed bounds, audit,
+repair and rerun semantics. Normal reruns skip existing closed-month files and
+refresh the current UTC month. No general training lake reader exists yet; freeze
+an explicit provenance-preserving reader/export before using this new history.
 
-After collection, the active feature stack can build OHLCV-only sequence features from the raw Lighter CSV:
+## Endpoint roles
 
-```bash
-python -m src.data.features_all full_features --data-dir data --sequence-length 24
-```
+`orderBookDetails` supplies market metadata; `candles` supplies OHLCV;
+`markPriceCandles` and `fundings` supply historical side data. `funding-rates`,
+`orderBookOrders` and `recentTrades` supply latest snapshots. Exchange metrics are
+best effort and subject to their own historical coverage. Pace public requests
+and run one backfill at a time. No historical order-book depth is in this lake.
 
-The side-data CSVs are intentionally saved separately. Funding, mark price,
-open interest, order-book depth, and recent trades are not joined into active
-features in this pass.
-
-## Notes
-
-- Lighter public REST rate limits are strict for standard accounts. The
-  collector sleeps between paged candle requests via `request_pause_seconds`.
-- Lighter mainnet ETH market history starts around January 17, 2025. Avoid
-  requesting pre-genesis training ranges from Lighter.
-- Trading, account state, API key creation, nonce management, and signed
-  `sendTx` calls are deliberately out of this first data pass.
+Separate non-mainnet output under `data/lake/lighter-testnet/`. Keep signed
+trading setup in [lighter_integration.md](lighter_integration.md) and the root
+README; it is separate from this public collection path.
