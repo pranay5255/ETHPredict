@@ -1,5 +1,11 @@
 # AFML Freeze Experiment Report
 
+> Status note (2026-10-17): this document preserves its original review, protocol
+> or historical results; it does not describe the newly collected lake as an
+> experiment input. Use [current project status](../PROJECT_STATUS.md) and
+> [the lake runbook](lighter_data_lake.md) for current code/PR boundaries,
+> coverage, unresolved funding gaps (#54) and next steps.
+
 Update 2026-08-02: the original `/tmp/ethpredict-afml-freeze` artifacts referenced below were regenerated into `artifacts/afml_freeze_regen_20260802`. Use `context/afml_freeze_regen_20260802_report.md` as the current evidence summary for GitHub issues #25-#29.
 
 Generated from local GPU freeze runs for GitHub issues #25-#29. All experiment artifacts are under `/tmp/ethpredict-afml-freeze`; derived reports are under `/tmp/ethpredict-afml-freeze/reports`.
