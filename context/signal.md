@@ -1,5 +1,11 @@
 # ETH Price Prediction Signal Design Guide
 
+> Status note (2026-10-17): this document preserves its original review, protocol
+> or historical results; it does not describe the newly collected lake as an
+> experiment input. Use [current project status](../PROJECT_STATUS.md) and
+> [the lake runbook](lighter_data_lake.md) for current code/PR boundaries,
+> coverage, unresolved funding gaps (#54) and next steps.
+
 ## 1. Philosophy
 
 We treat **ETH/USD** as a complex adaptive system driven by *on‑chain activity, macro liquidity, micro‑structure, and social attention*.  
