@@ -2,6 +2,21 @@
 
 Trackio mirrors local artifacts. Panels should read manifest fields and receipt paths, not recompute selection or failure modes. Publishing a Hugging Face Space is a later decision; this note only defines the fields and panels a local or future Space view would show.
 
+## Current evidence and dashboard boundary — 2026-10-17
+
+The first bounded PR #51 study and development PR #53 study have recorded reports
+and Trackio readback, but both PRs remain unmerged. The former lost 136.174 net on
+its single final test; the latter rejected every strategy and used no new final
+test. Do not rank older archived cohorts against these runs as if code, data,
+splits and costs matched. Repeated deterministic seeds are not independent bets.
+
+`eda_frontend/` and `scripts/experiment_eda.py` summarize recorded evidence in
+`ethpredict_eda`; they do not complete the fresh snapshot/inference dashboard #45.
+The five-market lake is not automatically a dashboard input or training source.
+Show source bounds, manifest identity, 31 unresolved funding gaps (#54), the later
+mark start and stale/unavailable states before exposing lake-derived views.
+See [project status](../PROJECT_STATUS.md) and [the lake audit](lighter_data_lake.md).
+
 ## Run identity
 
 Each non-smoke research run logs three Trackio runs in group `meta_label_mvp`:
