@@ -73,12 +73,13 @@ The completed lake supplies more research coverage, not a demonstrated edge.
 
 The active construction task is the frozen autoresearch harness. P0 merged in
 [#60](https://github.com/pranay5255/ETHPredict/pull/60); P1 supplies data contracts.
-P2 (#56) is verified: the human sealed 150 partitions and 97 recovery files;
+P2 (#56) is merged in PR #62 at `86a9df0`: the human sealed 150 partitions and 97 recovery files;
 ethgrader owns the private root (0700), and the real agent received 259
 PermissionErrors. A tested dev-only Docker tool worker excludes old CSV/Git/
 artifact copies, with fresh code-only history and no external network.
 See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
-grader/environment, driver and untuned seeds, have not started. No grader-v1 tag or runnable
+grader/environment, driver and untuned seeds, remain incomplete. P3 replay accounting
+and worker restrictions have targeted tests; P4–P5 have not started. No grader-v1 tag or runnable
 secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.
 Historical backfill alone completes no experiment acceptance criterion.
 

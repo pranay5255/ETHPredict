@@ -1,7 +1,8 @@
 # Frozen research harness design
 
 Status: P0 merged in #60; P1 merged in #61, 2026-10-27. P2 sealing/isolation is verified (human seal, 259 OS denials and a tested
-dev-only agent tool worker); PR #62 is ready to merge. P3–P5 have not started. This project builds a research environment, grader and bounded
+dev-only agent tool worker) and merged in #62 at `86a9df0`. P3 is in progress;
+P4–P5 have not started. This project builds a research environment, grader and bounded
 driver. It does not search for an edge during construction, submit orders, sign
 transactions, read credentials or promote a strategy. Existing bounded studies
 lost money after costs. No strategy edge is claimed.

@@ -10,7 +10,7 @@ private partitions and 97 recovery files were moved into protected storage.
 
 The evidence receipt is [grader_p2_isolation_receipt.json](grader_p2_isolation_receipt.json).
 No strategy, holdout or previously consumed test evaluation was performed. P0
-and P1 are merged; P2 acceptance is verified and PR #62 is ready to merge.
+and P1 are merged; P2 acceptance is verified and PR #62 is merged at `86a9df0`.
 P3–P5 have not started. No grader-v1 freeze or working research loop is claimed.
 
 ## Tier and block contract
@@ -171,4 +171,4 @@ as ethgrader; this account is never added to the Docker group here.
 - [x] Actual agent UID receives PermissionError at all 259 planned private paths.
 - [x] Designated loop-agent tool worker excludes legacy files/history and passes real isolation probes.
 - [x] Full suite passes with real permission and Docker integration enabled.
-- [ ] Merge P2 PR #62; only then start P3.
+- [x] P2 PR #62 merged at `86a9df0`; P3 work follows that merge.

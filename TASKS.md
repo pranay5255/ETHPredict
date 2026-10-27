@@ -14,8 +14,8 @@ before the next phase. See [design and open decisions](context/autoresearch_desi
 
 - [x] P0 housekeeping/design merged in [#60](https://github.com/pranay5255/ETHPredict/pull/60): fresh 317-test baseline, 25-directory/425-hash audit, #54 closed and P1–P5 issues created.
 - [x] [#55 P1](https://github.com/pranay5255/ETHPredict/issues/55) Merged in [#61](https://github.com/pranay5255/ETHPredict/pull/61): standalone lake loader, provenance and availability contract; 26,496-row exact CSV parity and 355-test full suite.
-- [ ] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Tiers/splits and sealing verified: human moved 247 files, 259 real OS denials, code-only agent sandbox with real isolation probes; PR #62 ready to merge. See [runbook](context/grader_tier_sealing.md).
-- [ ] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) Frozen grader, inner environment, five baselines, all ten red-team fixtures and pushed grader-v1 tag.
+- [x] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Merged in [#62](https://github.com/pranay5255/ETHPredict/pull/62): human moved 247 files, 259 real OS denials, code-only agent sandbox with real isolation probes; 428 passed, one historical pre-sealing CSV test skipped. See [runbook](context/grader_tier_sealing.md).
+- [ ] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) In progress: frozen grader, inner environment, five baselines, all ten red-team fixtures and pushed grader-v1 tag. Replay accounting and worker restrictions have targeted tests; no freeze tag yet.
 - [ ] [#58 P4](https://github.com/pranay5255/ETHPredict/issues/58) Driver/program, three-attempt dry run, complete ledger and private shadow results.
 - [ ] [#59 P5](https://github.com/pranay5255/ETHPredict/issues/59) Untuned frozen-head/full-finetune TimesFM seeds with Tier 0 and measured resource reports; GRPO optional.
 

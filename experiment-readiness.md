@@ -56,9 +56,9 @@ of profitability or automatic approval for a new study.
 
 ## Which remaining issues block which experiments
 
-P0 is merged (#60); P1 adds the verified loader. P2 (#56) is verified: human sealing completed, all 259 private opens are denied,
+P0 is merged (#60); P1 adds the verified loader. P2 (#56) is merged in #62: human sealing completed, all 259 private opens are denied,
 and a dev-only isolated tool worker excludes legacy files/history; see the
-[runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59) have not started. The secure grader, freeze tag, driver and TimesFM seeds are not
+[runbook](context/grader_tier_sealing.md). P3 (#57) is in progress; P4–P5 (#58–#59) have not started. The secure grader, freeze tag, driver and TimesFM seeds are not
 ready. No open-ended loop or holdout evaluation should be started during construction.
 #30–#35 have merged parent controls, but still require individual frozen protocols.
 #36 needs #22 benchmark trading parity; #37 and #38 now have their #17/#16 controls;
