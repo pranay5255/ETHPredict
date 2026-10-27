@@ -17,7 +17,6 @@ import pyarrow.parquet as pq
 
 from .data import DataContractError, LoadedDataset, MarketData, RESOLUTIONS
 from .env import ReplayData, ReplayEnv, TorchReplayBatch
-from .feature_contract import FEATURE_FAMILY_COLUMNS
 
 
 @dataclass(frozen=True)
@@ -55,8 +54,9 @@ class Declaration:
             values = value[name]
             if not isinstance(values, list) or any(not isinstance(v, str) for v in values) or len(set(values)) != len(values):
                 raise DataContractError(f'Invalid {name}')
-        if set(value['engineered_features']) - set(FEATURE_FAMILY_COLUMNS):
-            raise DataContractError('Unknown engineered feature family')
+        if any(not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}',name) or name.startswith('diagnostic_noise_')
+               for name in value['engineered_features']):
+            raise DataContractError('Invalid predeclared engineered feature family')
         return cls(**{**value, 'markets': tuple(markets),
                       'engineered_features': tuple(value['engineered_features']),
                       'pretrained_models': tuple(value['pretrained_models'])})
@@ -87,6 +87,11 @@ class FitContext:
     dev_lake: Path | None           # grader-produced, availability-filtered view
     train_anchor_end_ms: int | None
     models: dict[str, Path]
+
+    def noise(self, timestamps_ms, *, market):
+        """Frozen causal control stream for the model's actual fitted inputs."""
+        from .feature_packets import feature_noise
+        return feature_noise(timestamps_ms, seed=self.seed, market=market)
 
 
 def write_market_data(data: MarketData, directory: Path):

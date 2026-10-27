@@ -1,17 +1,6 @@
-import numpy as np
-from grader.baselines.common import Baseline
-from grader.data import RESOLUTIONS
+from grader.baselines.common import MomentumBaseline
 
 
-class Strategy(Baseline):
+class Strategy(MomentumBaseline):
     name = 'momentum-1h'
-    engineered_features = ['returns']
     hours = 1
-
-    def __init__(self):
-        self.bars = self.hours * 3_600_000 // RESOLUTIONS[self.resolution]
-        self.lookback_bars = self.bars + 1
-
-    def predict(self, history, decision_times):
-        return self.positions(history, decision_times,
-            lambda data: np.sign(data.close.div(data.close.shift(self.bars)).to_numpy() - 1.))

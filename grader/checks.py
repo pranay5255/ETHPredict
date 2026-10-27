@@ -11,6 +11,7 @@ import pandas as pd
 
 from .data import DataContractError, LoadedDataset, MarketData, RESOLUTIONS
 from .runner import WorkerFailure
+from .feature_packets import same_packet
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,8 @@ def _same_positions(left: pd.DataFrame, right: pd.DataFrame, tolerance):
 
 
 def causality_check(runner, state, history, decision_times, declaration, reference,
-                    *, block, seed, cutoffs=20, tolerance=1e-9):
+                    *, block, seed, cutoffs=20, tolerance=1e-9, reference_features=None):
+    reference_features = reference_features if reference_features is not None else runner.last_features
     times = pd.DatetimeIndex(decision_times)
     if type(cutoffs) is not int or cutoffs < 20 or len(times) <= cutoffs:
         raise DataContractError('Causality requires at least 20 distinct proper-prefix cutoffs per block')
@@ -63,19 +65,24 @@ def causality_check(runner, state, history, decision_times, declaration, referen
         positions = runner.predict(state, prefix, clock, declaration)
         expected = reference[reference.timestamp.le(clock[-1])]
         checked.append(end)
-        if not _same_positions(positions, expected, tolerance):
+        features_agree = same_packet(reference_features,runner.last_features,cutoff=clock[-1],tolerance=tolerance)
+        if not _same_positions(positions, expected, tolerance) or not features_agree:
             return CheckResult('causality', False, {'block': block, 'cutoffs_ms': checked,
-                'requested_cutoffs': cutoffs, 'mismatch_at_ms': end, 'tolerance': tolerance})
+                'requested_cutoffs': cutoffs, 'mismatch_at_ms': end, 'tolerance': tolerance,
+                'feature_inputs_agree':bool(features_agree)})
     return CheckResult('causality', True, {'block': block, 'cutoffs_ms': checked, 'tolerance': tolerance})
 
 
 def determinism_check(runner, train, history, decision_times, declaration, reference,
                       *, replay=None, dev_lake=None, train_anchor_end_ms=None, tolerance=1e-9):
+    original_features = runner.last_features
     state = runner.fit(train, replay=replay, dev_lake=dev_lake,
                        train_anchor_end_ms=train_anchor_end_ms)
     repeated = runner.predict(state, history, decision_times, declaration)
-    return CheckResult('determinism', bool(_same_positions(repeated, reference, tolerance)),
-                       {'seed': runner.seed, 'repeated_fit_and_predict': True, 'tolerance': tolerance})
+    features_agree = same_packet(original_features,runner.last_features,tolerance=tolerance)
+    return CheckResult('determinism', bool(_same_positions(repeated, reference, tolerance) and features_agree),
+                       {'seed': runner.seed, 'repeated_fit_and_predict': True, 'tolerance': tolerance,
+                        'feature_inputs_agree':bool(features_agree)})
 
 
 def verify_frozen_grader(root: Path, *, tag='grader-v1') -> CheckResult:

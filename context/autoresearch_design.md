@@ -245,6 +245,9 @@ purged permutation evidence of at least one family beating noise controls.
 A trade is an entry from flat or a sign flip, not every position adjustment.
 Missing importance evidence fails that gate. Preserve the existing purged
 importance/noise methodology rather than accepting a candidate-authored claim.
+The [numeric input protocol](grader_feature_inputs.md) verifies that exposed
+inputs reproduce the actual policy, audits their causal prefixes, and uses
+fresh input-only workers for the unchanged vendored permutation/noise tests.
 
 Tier 2 maps each component to `[0,1]`, clips linear maps, and averages the
 weighted score over two grader-selected seeds:

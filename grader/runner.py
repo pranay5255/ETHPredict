@@ -20,6 +20,7 @@ from .contracts import Declaration, check_regular_file, read_positions, regular_
 from .data import DataContractError, MarketData
 from .sandbox import protect_parent_memory
 from .resources import GPU_CAP_BYTES, RSS_CAP_BYTES, GpuGuard, GpuMonitor
+from .feature_packets import read_packet, write_packet
 
 
 class WorkerFailure(RuntimeError):
@@ -104,6 +105,7 @@ class StrategyRunner:
         self.model_paths = {key: str(Path(p).resolve(strict=True)) for key, p in (registered_model_paths or {}).items()}
         self.calls = []
         self.declaration = None
+        self.last_features = None
         self.lake_view = lake_view
         self.elapsed = 0.
         self.limit = 600.
@@ -225,7 +227,7 @@ class StrategyRunner:
         raise WorkerFailure('Aggregate fit/predict budget exhausted', status='timeout', reasons=['budget'])
 
     def _call(self, operation, *, data=None, state=None, replay=None, decision_times=None,
-              dev_lake=None, train_anchor_end_ms=None):
+              dev_lake=None, train_anchor_end_ms=None, feature_packet=None):
         if self.elapsed >= self.limit:
             raise WorkerFailure('Aggregate fit/predict budget exhausted', status='timeout', reasons=['budget'])
         call = self.directory / f'call-{len(self.calls):04d}-{operation}'
@@ -236,7 +238,9 @@ class StrategyRunner:
             write_market_data(data, inputs / 'market')
         if replay is not None:
             write_replay(replay, inputs / 'replay.npz')
-        if self.declaration is not None and self.declaration.uses_dev_lake and self.lake_view is not None:
+        if feature_packet is not None:
+            write_packet(feature_packet, inputs/'features')
+        if data is not None and self.declaration is not None and self.declaration.uses_dev_lake and self.lake_view is not None:
             cutoff = max(int(item.frame.available_at_ms.max()) for item in data.datasets.values())
             dev_lake = self.lake_view(cutoff)
         read, write = runtime_paths(gpu=self.device == 'cuda')
@@ -264,6 +268,7 @@ class StrategyRunner:
             'replay': str(inputs / 'replay.npz') if replay is not None else None,
             'state': str(state) if state is not None else None, 'seed': self.seed, 'device': self.device,
             'models': models,
+            'features': str(inputs/'features') if feature_packet is not None else None,
             'deadline': self.deadline, 'decision_times_ms': [] if decision_times is None else list(
                 pd.DatetimeIndex(decision_times).as_unit('ms').asi8.astype(int).tolist()),
             'dev_lake': str(dev_lake) if dev_lake is not None else None,
@@ -343,6 +348,7 @@ class StrategyRunner:
         return path
 
     def predict(self, state, history: MarketData, decision_times, declaration):
+        self.last_features = None
         times = pd.DatetimeIndex(decision_times)
         if self.declaration != declaration or set(history.datasets) != set(declaration.markets) or not len(times):
             raise DataContractError('Prediction does not match the declared market population')
@@ -351,4 +357,19 @@ class StrategyRunner:
                for item in history.datasets.values()):
             raise DataContractError('Prediction history contains unavailable observations')
         result = self._call('predict', state=state, data=history, decision_times=decision_times)
-        return read_positions(result.output / 'positions.parquet', declaration, decision_times)
+        positions = read_positions(result.output / 'positions.parquet', declaration, decision_times)
+        if declaration.engineered_features:
+            status = json.loads(regular_bytes(result.output/'feature_status.json',maximum=4096))
+            if set(status) != {'available'} or type(status['available']) is not bool:
+                raise DataContractError('Unknown feature status')
+            if status['available']:
+                self.last_features = read_packet(result.output/'features',declaration,decision_times,seed=self.seed)
+                reconstructed = read_positions(result.output/'feature_positions.parquet',declaration,decision_times)
+                if not np.allclose(positions.target_position,reconstructed.target_position,rtol=0,atol=1e-9):
+                    raise DataContractError('Exposed feature inputs do not reproduce the actual policy')
+        return positions
+
+    def predict_features(self, state, packet, declaration):
+        times = pd.DatetimeIndex(packet.frame.timestamp.drop_duplicates().sort_values())
+        result = self._call('predict_features',state=state,feature_packet=packet,decision_times=times)
+        return read_positions(result.output/'positions.parquet',declaration,times)

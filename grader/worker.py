@@ -30,6 +30,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot  # libraries only; font discovery stays out of candidate calls
 
 from .contracts import FitContext, ReplayFactory, read_market_data, read_replay
+from .feature_packets import FeaturePacket, read_packet, write_packet
 from .sandbox import allow_worker_trace, close_inherited_descriptors, kill_with_parent, protect_parent_memory, restrict_filesystem, restrict_syscalls
 
 
@@ -115,10 +116,26 @@ def execute(request_path, expected_parent):
             cloudpickle.dump(strategy, target, protocol=5)
     elif specification['operation'] == 'predict':
         times = pd.DatetimeIndex(pd.to_datetime(specification['decision_times_ms'], unit='ms', utc=True))
-        result = strategy.predict(read_market_data(Path(specification['data'])), times)
+        history = read_market_data(Path(specification['data']))
+        result = strategy.predict(history, times)
         if not isinstance(result, pd.DataFrame):
             raise TypeError('predict must return a pandas DataFrame')
         result.to_parquet(output / 'positions.parquet', index=False)
+        if getattr(strategy,'engineered_features',[]):
+            available = callable(getattr(strategy,'feature_packet',None)) and callable(getattr(strategy,'predict_features',None))
+            (output/'feature_status.json').write_text(json.dumps({'available':available}))
+            if available:
+                packet = strategy.feature_packet(history,times)
+                write_packet(packet,output/'features')
+                strategy.predict_features(packet).to_parquet(output/'feature_positions.parquet',index=False)
+    elif specification['operation'] == 'predict_features':
+        # This operation receives no raw history or lake view. Fitted state is
+        # reloaded fresh, so a validation cache cannot bypass the permutation.
+        times = pd.DatetimeIndex(pd.to_datetime(specification['decision_times_ms'], unit='ms', utc=True))
+        from .contracts import Declaration
+        declaration = Declaration.parse(_declaration(strategy))
+        packet = read_packet(Path(specification['features']),declaration,times,seed=seed,verify_noise=False)
+        strategy.predict_features(packet).to_parquet(output/'positions.parquet',index=False)
     else:
         raise ValueError('Unknown worker operation')
 

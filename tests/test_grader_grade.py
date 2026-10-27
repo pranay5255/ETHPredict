@@ -49,3 +49,24 @@ def test_unknown_report_envelope_fields_are_rejected(tmp_path):
     import pytest
     with pytest.raises(jsonschema.ValidationError):
         write_report({**result.report,'unrecognized':True},tmp_path/'invalid.json')
+
+
+def test_full_engineered_grade_uses_actual_policy_importance_for_both_seeds(tmp_path):
+    import json
+    source=materialize('momentum_1h',tmp_path/'source',markets=['ETH'],resolution='1h')
+    result=_evaluate(source,tmp_path/'grade',lambda declaration:fixture_data(),mode='fixture',tier='dev',
+        frozen_check=CheckResult('grader_hash',True,{'synthetic_fixture':True}),
+        baseline_count=6,baseline_net_by_seed={'17':0.,'29':0.},compute_uncertainty=False,device='cpu')
+    report=read_report(tmp_path/'grade/grade_report.json')
+    assert len(result.seed_blocks)==2 and all(len(blocks)==5 for blocks in result.seed_blocks)
+    assert all(check['passed'] for check in report['integrity'])
+    assert len(report['feature_importance'])==2
+    for seed in report['feature_importance']:
+        importance=seed['report']
+        assert importance['status']=='completed' and len(importance['folds'])==5
+        assert {row['feature'] for row in importance['summary']}=={'returns','diagnostic_noise_0','diagnostic_noise_1'}
+        for block in range(1,6):
+            saved=json.loads((tmp_path/f'grade/seed-{seed["seed"]}/block-{block}/feature_importance.json').read_text())
+            assert saved['available'] and saved['permutation_scope'].startswith('within-market')
+    assert sum(call['operation']=='predict_features' for call in report['resources']['calls'])==100
+    assert all('credible_features' in row['gates'] for row in report['economics'])

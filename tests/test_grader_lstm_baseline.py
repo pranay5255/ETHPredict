@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import pytest
 import torch
@@ -25,5 +26,11 @@ def test_existing_recipe_fits_in_real_worker_and_predicts_causally_without_futur
         times=pd.DatetimeIndex(pd.to_datetime(data.candles.frame.available_at_ms.iloc[600:628],unit='ms',utc=True))
         positions=runner.predict(state,history,times,declaration)
         assert len(positions)==28 and positions.target_position.abs().le(1).all()
+        packet=runner.last_features
+        assert packet is not None and set(packet.families)==set(declaration.engineered_features)
+        decoded=runner.predict_features(state,packet,declaration)
+        pd.testing.assert_frame_equal(positions.assign(timestamp=positions.timestamp.dt.as_unit('ns')),decoded)
+        request=json.loads((runner.calls[-1].output.parent/'request.json').read_text())
+        assert request['data'] is None and request['dev_lake'] is None
         check=causality_check(runner,state,history,times,declaration,positions,block=1,seed=17)
         assert check.passed

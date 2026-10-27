@@ -15,7 +15,7 @@ from .models import sha256_file
 from .score import BlockEvidence
 
 
-FIELDS = {'version','trial_id','mode','tier','status','score','pre_gate_score','started_at_utc','finished_at_utc',
+FIELDS = {'version','trial_id','mode','tier','status','score','pre_gate_score','started_at_utc','finished_at_utc','feature_importance',
           'grader','strategy','data','seeds','integrity','economics','metrics','resources','uncertainty',
           'failures','artifacts','qualitative'}
 SCHEMA = {'type':'object','additionalProperties':False,'required':sorted(FIELDS),'properties':{
@@ -29,6 +29,7 @@ SCHEMA = {'type':'object','additionalProperties':False,'required':sorted(FIELDS)
     'integrity':{'type':'array','items':{'type':'object','additionalProperties':False,
         'required':['name','passed','details'],'properties':{'name':{'type':'string'},'passed':{'type':'boolean'},'details':{'type':'object'}}}},
     'economics':{'type':'array','items':{'type':'object'}},'metrics':{'type':'array','items':{'type':'object'}},
+    'feature_importance':{'type':'array','items':{'type':'object'}},
     'resources':{'type':'object'},'uncertainty':{'type':['object','null']},
     'failures':{'type':'array','items':{'type':'object','additionalProperties':False,'required':['check','message'],
         'properties':{'check':{'type':'string'},'message':{'type':'string'}}}},

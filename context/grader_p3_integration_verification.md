@@ -38,6 +38,12 @@ No `grader-v1` tag exists; P3 acceptance is not complete.
 - The production CLI rejects the untagged grader at zero before reading market
   data. Initial flat control and qualitative judge prompt exist; qualitative
   review cannot override the strict numeric keep rule.
+- Engineered-feature evaluation now perturbs actual fitted-policy numeric inputs
+  in fresh isolated workers without raw evaluation history or lake access. The
+  unchanged vendored permutation/noise calculations feed the economic gate.
+  Input-only targets must reproduce normal targets; feature packets themselves
+  pass prefix causality and repeat-fit determinism. The momentum and LSTM
+  wrappers expose the required inputs. See [the contract](grader_feature_inputs.md).
 
 Full suite before the additional targeted checks below:
 
@@ -59,20 +65,32 @@ LSTM CUDA + post-exit peak-RSS enforcement: 2 passed in 38.90s
 O_PATH/proc descriptor-alias denial:        1 passed in 0.07s
 ```
 
+After the feature-input integration, targeted tests passed:
+
+```text
+pytest tests/test_grader_lstm_baseline.py tests/test_grader_baselines.py \
+  tests/test_grader_checks.py tests/test_grader_score.py tests/test_grader_grade.py -xq
+22 passed in 204.08s (0:03:24)
+```
+
+This includes the original LSTM on CPU/CUDA with 20 proper prefixes and an
+additional input-only prediction reproducing its normal positions. A complete
+synthetic engineered-feature grade runs both seeds and all five blocks, records
+100 budgeted permutation calls, and supplies real summaries to the economic
+gate. No policy threshold, gate, model hyperparameter or component map changed.
+Timestamp storage units are normalized without rounding before packet grid
+comparison; a regression fixture covers the pandas/Arrow mixed-unit issue.
+
 ## Still required before freeze
 
-1. Wire trusted engineered-feature permutation/noise evaluation to actual fitted
-   predictions in isolated calls. Currently importance is explicitly unavailable
-   and engineered-feature candidates fail closed. Do not freeze this unfinished
-   functionality.
-2. Finish production baseline-bank integration for changed markets/clocks,
+1. Finish production baseline-bank integration for changed markets/clocks,
    cache validation, nested report validation and artifact persistence.
-3. Run all baselines on the full common dev blocks; commit per-block numbers and
+2. Run all baselines on the full common dev blocks; commit per-block numbers and
    measured runtimes in `grader_v1_baselines.md`. No full real-data bank has run.
-4. Calibrate only pre-gate component maps under the approved interpretation,
+3. Calibrate only pre-gate component maps under the approved interpretation,
    preserve every gate and rejected score zero, run the final full suite, then
    push `grader-v1` and complete PR #63.
-5. P4 private broker/driver and P5 untuned scaffolds follow P3 acceptance/merge.
+4. P4 private broker/driver and P5 untuned scaffolds follow P3 acceptance/merge.
    Private runtime provisioning still requires the human: ethgrader cannot
    traverse the human's 0750 home.
 

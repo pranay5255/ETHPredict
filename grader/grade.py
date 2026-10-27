@@ -23,6 +23,7 @@ from .runner import StrategyRunner, WorkerFailure
 from .score import block_evidence, component_score, economic_report, load_rubric
 from .tiers import load_tiers
 from .uncertainty import score_standard_error
+from .policy_importance import policy_fold_importance, summarize_policy_importance
 
 
 def now():
@@ -72,7 +73,8 @@ def rescore(result, *, trial_sharpes, trial_count, baseline_net_by_seed, compute
         metrics['blocks'] = [{name:getattr(block,name) for name in ['block','net_1x_bps','net_2x_bps','turnover','trades','daily_sharpe']} for block in evidence]
         report['metrics'].append(metrics)
         economics = economic_report(evidence,best_baseline_net_bps=baseline_net_by_seed.get(str(seed)),
-            engineered_features=report['strategy']['declaration']['engineered_features'],importance={},rubric=rubric)
+            engineered_features=report['strategy']['declaration']['engineered_features'],
+            importance=next((row['report'] for row in report['feature_importance'] if row['seed']==seed),{}),rubric=rubric)
         economics['seed'] = seed
         report['economics'].append(economics)
     report['pre_gate_score'] = float(np.mean([row['pre_gate_score'] for row in report['metrics']]))
@@ -105,7 +107,7 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
     report = {'version':1,'trial_id':trial_id or str(uuid.uuid4()),'mode':mode,'tier':tier,'status':'rejected',
         'score':0.,'pre_gate_score':0.,'started_at_utc':now(),'finished_at_utc':'',
         'grader':{'tag':rubric['frozen_tag'],'calibration':rubric['calibration']},'strategy':{},'data':{},
-        'seeds':rubric['seeds'],'integrity':[],'economics':[],'metrics':[],'resources':{},'uncertainty':None,
+        'seeds':rubric['seeds'],'integrity':[],'economics':[],'metrics':[],'feature_importance':[],'resources':{},'uncertainty':None,
         'failures':[],'artifacts':{'seed_blocks':[]},'qualitative':{'status':'not_run','tie_breaker_only':True}}
     result = EvaluationResult(report,[])
     frozen_check = frozen_check or verify_frozen_grader(Path(__file__).resolve().parent.parent)
@@ -141,7 +143,7 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
             clock = next(iter(data.candles.datasets.values())).frame.timestamp_ms.to_numpy()
             for seed in rubric['seeds']:
                 runner.seed = seed
-                evidence,paths = [],[]
+                evidence,paths,importance_folds = [],[],[]
                 for block in blocks:
                     block_number = block.block+1
                     block_dir = directory/f'seed-{seed}'/f'block-{block_number}'
@@ -154,6 +156,7 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
                     state = runner.fit(raw_train,replay=train_replay,train_anchor_end_ms=int(clock[block.train[-1]]))
                     stage = 'schema'
                     positions = runner.predict(state,permitted,times,declaration)
+                    packet = runner.last_features
                     if block_number == 1:
                         stage = 'determinism'
                         check = determinism_check(runner,raw_train,permitted,times,declaration,positions,
@@ -163,7 +166,8 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
                             raise WorkerFailure('Same-seed repeat fit/predict differs',status='nondeterministic',reasons=['determinism'])
                     stage = 'causality'
                     check = causality_check(runner,state,permitted,times,declaration,positions,block=block_number,seed=seed,
-                        cutoffs=rubric['integrity']['causality_cutoffs_per_block'],tolerance=rubric['integrity']['position_tolerance'])
+                        cutoffs=rubric['integrity']['causality_cutoffs_per_block'],tolerance=rubric['integrity']['position_tolerance'],
+                        reference_features=packet)
                     report['integrity'].append(asdict(check))
                     if not check.passed:
                         raise WorkerFailure('Proper-prefix predictions differ',reasons=['causality'])
@@ -171,12 +175,19 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
                     replay = data.replay(data.market_slice(np.r_[block.evaluation,block.evaluation[-1]+1]),block_dir/'score-replay')
                     targets = positions.pivot(index='timestamp',columns='market',values='target_position').reindex(index=times,columns=replay.markets).to_numpy()
                     scored = block_evidence(replay,targets,block=block_number)
+                    if declaration.engineered_features:
+                        stage = 'feature_importance'
+                        importance = policy_fold_importance(runner,state,packet,declaration,positions,replay,block)
+                        importance_folds.append(importance)
+                        (block_dir/'feature_importance.json').write_text(json.dumps(importance,allow_nan=False))
                     evidence.append(scored)
                     positions.to_parquet(block_dir/'positions.parquet',index=False)
                     (block_dir/'split_audit.json').write_text(json.dumps(block.audit,allow_nan=False))
                     paths.append(save_evidence(scored,block_dir/'evidence'))
                 result.seed_blocks.append(evidence)
                 report['artifacts']['seed_blocks'].append(paths)
+                if declaration.engineered_features:
+                    report['feature_importance'].append({'seed':seed,'report':summarize_policy_importance(importance_folds)})
             report['integrity'] += [asdict(CheckResult(name,True,{'calls':len(runner.calls)})) for name in ['schema','tier_isolation','budget']]
         history = history or {'count':0,'sharpes':[],'trials':{}}
         existing = history['trials'].get(report['trial_id'],{})
