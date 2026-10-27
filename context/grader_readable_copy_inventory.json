@@ -1,0 +1,108 @@
+{
+  "scope": "Path inventory only; no source values or strategy outcomes read",
+  "tracked_sources_requiring_restriction": [
+    {
+      "file": "data/lighter/candles_ETH_perp_1h_20260328_20260628.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/candles_ETH_perp_5m_20260328_20260628.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/candles_ETH_perp_5m_20260628_20260630.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/exchange_metric_open_interest_ETH_perp_all.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/exchange_metric_volume_ETH_perp_all.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/funding_rates_latest.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/fundings_ETH_perp_1h_20260328_20260628.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/mark_price_candles_ETH_perp_1h_20260328_20260628.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/mark_price_candles_ETH_perp_5m_20260328_20260628.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/order_book_details_ETH_perp.json",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/order_book_orders_ETH_perp_latest.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/lighter/recent_trades_ETH_perp_latest.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/raw/ETHUSDT-1h-lighter-20260328-20260628.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/raw/ETHUSDT-5m-lighter-20260328-20260628.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    },
+    {
+      "file": "data/raw/ETHUSDT-5m-lighter-20260628-20260630.csv",
+      "readable": true,
+      "reason": "overlaps private periods or has no bounded timestamp contract"
+    }
+  ],
+  "worktrees_requiring_agent_view_review": [
+    "/home/pranay5255/Documents/ethpredict/ETHPredict",
+    "/home/pranay5255/.codex/worktrees/afml-search-importance-execution/ETHPredict",
+    "/home/pranay5255/.codex/worktrees/forecast-opportunity-economics/ETHPredict",
+    "/home/pranay5255/.codex/worktrees/issue-9-feature-reproducibility/ETHPredict",
+    "/tmp/ethpredict-autoresearch-p0",
+    "/tmp/ethpredict-autoresearch-p1",
+    "/tmp/ethpredict-autoresearch-p2",
+    "/tmp/ethpredict-pr51-review"
+  ],
+  "readable_git_object_store": "/home/pranay5255/Documents/ethpredict/ETHPredict/.git",
+  "raw_funding_recovery_receipt_in_git": "/home/pranay5255/Documents/ethpredict/ETHPredict/context/funding_gap_recovery_20261027.json",
+  "derived_directories_requiring_review": [
+    {
+      "directory": "artifacts",
+      "files_requiring_review": 1217
+    },
+    {
+      "directory": "data/processed_features",
+      "files_requiring_review": 6
+    },
+    {
+      "directory": "results",
+      "files_requiring_review": 3
+    }
+  ],
+  "isolation_status": "not established while legacy files/history remain agent-readable",
+  "required_action": "Human must provision a dev-only restricted agent view without private-period CSVs, raw recovery receipts, derived outputs or historical Git objects; restrict network/raw-source access for hidden grading. Preserve originals privately rather than rewriting historical evidence."
+}

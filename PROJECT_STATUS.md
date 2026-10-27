@@ -1,4 +1,4 @@
-# ETHPredict project status — autoresearch P1, 2026-10-27
+# ETHPredict project status — autoresearch P2 pending human sealing, 2026-10-27
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, all 31 funding gaps per market are recovered on main, and no
@@ -70,8 +70,11 @@ The completed lake supplies more research coverage, not a demonstrated edge.
 
 The active construction task is the frozen autoresearch harness. P0 merged in
 [#60](https://github.com/pranay5255/ETHPredict/pull/60); P1 supplies data contracts.
-P2–P5 (#56–#59) remain unimplemented: physical sealing, frozen grader/inner
-environment, trial driver and untuned TimesFM seeds. No grader-v1 tag or runnable
+P2 (#56) has tested tiers/splits/sealing tooling, with a read-only plan for 150
+partitions and 97 recovery files. Human execution and actual denial remain
+pending; historical CSV/Git/artifact copies also need a restricted agent view.
+See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
+grader/environment, driver and untuned seeds, have not started. No grader-v1 tag or runnable
 secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.
 Historical backfill alone completes no experiment acceptance criterion.
 

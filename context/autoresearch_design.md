@@ -1,7 +1,7 @@
 # Frozen research harness design
 
-Status: P0 merged in #60; P1 implementation in progress, 2026-10-27.
-P2–P5 are later gates, not completed capabilities. This project builds a research environment, grader and bounded
+Status: P0 merged in #60; P1 merged in #61, 2026-10-27. P2 tooling is
+implemented but awaits human sealing/isolation acceptance. P3–P5 have not started. This project builds a research environment, grader and bounded
 driver. It does not search for an edge during construction, submit orders, sign
 transactions, read credentials or promote a strategy. Existing bounded studies
 lost money after costs. No strategy edge is claimed.

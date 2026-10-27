@@ -1,4 +1,4 @@
-# Experiment readiness — autoresearch P1, 2026-10-27
+# Experiment readiness — autoresearch P2 pending human sealing, 2026-10-27
 
 Bounded offline research has already run on the PR #51/#53 branches. It produced
 negative or insufficient economic evidence, not a promoted strategy. The #51
@@ -55,8 +55,9 @@ of profitability or automatic approval for a new study.
 
 ## Which remaining issues block which experiments
 
-P0 is merged (#60); P1 adds the verified loader. P2–P5 (#56–#59) remain
-outstanding. The secure grader, freeze tag, driver and TimesFM seeds are not
+P0 is merged (#60); P1 adds the verified loader. P2 (#56) has tested tooling but awaits human execution, real permission
+denial and restricted access to historical copies; see the
+[runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59) have not started. The secure grader, freeze tag, driver and TimesFM seeds are not
 ready. No open-ended loop or holdout evaluation should be started during construction.
 #30–#35 have merged parent controls, but still require individual frozen protocols.
 #36 needs #22 benchmark trading parity; #37 and #38 now have their #17/#16 controls;
