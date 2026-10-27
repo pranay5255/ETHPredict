@@ -12,7 +12,7 @@ Build the environment, grader and loop; do not tune a strategy to pass. Each pha
 gets its own `autoresearch/p<N>-<slug>` branch and PR, with acceptance evidence
 before the next phase. See [design and open decisions](context/autoresearch_design.md).
 
-- [ ] P0 housekeeping/design PR: fresh 317-test baseline and 25-directory/425-hash audit complete; #54 closed; P1–P5 issues created. Complete when design is merged.
+- [x] P0 housekeeping/design merged in [#60](https://github.com/pranay5255/ETHPredict/pull/60): fresh 317-test baseline, 25-directory/425-hash audit, #54 closed and P1–P5 issues created.
 - [ ] [#55 P1](https://github.com/pranay5255/ETHPredict/issues/55) Lake loader, provenance, availability-time contract and CSV parity.
 - [ ] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Tier/block tests and human-executed physical sealing with PermissionError evidence.
 - [ ] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) Frozen grader, inner environment, five baselines, all ten red-team fixtures and pushed grader-v1 tag.

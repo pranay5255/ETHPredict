@@ -1,4 +1,4 @@
-# Experiment readiness — 2026-10-27 merge review
+# Experiment readiness — autoresearch P1, 2026-10-27
 
 Bounded offline research has already run on the PR #51/#53 branches. It produced
 negative or insufficient economic evidence, not a promoted strategy. The #51
@@ -18,7 +18,7 @@ verification is recorded in [the merge audit](context/pr51_merge_review_20261027
 The five-market lake is collected and readable: 25 directories, 425 matching
 partition hashes, June 2025–October 2026 coverage. General training ingestion
 remains CSV-based. The #54 fix recovered all 31 funding gaps per market from
-source; zero internal gaps remain. The code awaits merge. See
+source; zero internal gaps remain. The fix is merged at c365a81 and #54 is closed. See
 [verification](context/funding_gap_fix_20261027.md) and
 [the lake runbook](context/lighter_data_lake.md).
 
@@ -29,9 +29,12 @@ source; zero internal gaps remain. The code awaits merge. See
 2. Use the repaired funding history and verify its frozen source hashes; reject unsupported
    holding periods. Do not zero-fill. Use market-specific UTC bounds and account
    for the later mark-price start and partial final day.
-3. Implement explicit lake loading or immutable CSV export. Record selected market,
-   resolution, raw partition hashes, overlap/dedup policy, units, feature schema,
-   availability-time joins and per-split coverage. Prove parity on a fixed overlap.
+3. Use the P1 `grader.data` loader with explicit market/resolution/window and
+   source hashes/provenance. Its 26,496-row ETH CSV parity check passes;
+   availability-time and source schema checks fail closed. HYPE October 2025
+   1m/5m malformed OHLC is rejected, not repaired or omitted. See
+   [P1 contract](context/grader_lake_contract.md). Complete P2 physical sealing
+   and P3 frozen grading before starting the new harness.
 4. Freeze one new mechanism/horizon and a small comparison budget. The tested
    one-hour continuation recipe is rejected; its weak result does not justify
    larger grids. Count models, rules, markets, thresholds and diagnostic fits.
@@ -52,8 +55,9 @@ of profitability or automatic approval for a new study.
 
 ## Which remaining issues block which experiments
 
-After the #51 merge closes #16/#17/#20, 18 issues remain: 6 implementation/data
-and 12 experiments.
+P0 is merged (#60); P1 adds the verified loader. P2–P5 (#56–#59) remain
+outstanding. The secure grader, freeze tag, driver and TimesFM seeds are not
+ready. No open-ended loop or holdout evaluation should be started during construction.
 #30–#35 have merged parent controls, but still require individual frozen protocols.
 #36 needs #22 benchmark trading parity; #37 and #38 now have their #17/#16 controls;
 #39 needs #19 sizing and credible calibration; #40 has #20 but still needs coverage;
