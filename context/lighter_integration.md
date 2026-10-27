@@ -1,6 +1,7 @@
 # Lighter Integration Guide for ETHPredict
 
-The active repository scope is public Lighter market data only. Legacy Binance,
+The active research scope is public Lighter market data; signed testnet helpers
+remain a separate setup path. Updated 2026-10-17. Legacy Binance,
 DeFiLlama, Santiment, DEX simulation, and bribe-optimization planning notes are
 archived under `archive/legacy_data_sources`.
 
@@ -21,9 +22,17 @@ python scripts/lighter_collect_data.py --config configs/config.yml
 python -m src.data.features_all full_features --data-dir data --sequence-length 24
 ```
 
-`DataPreprocessor` ignores non-Lighter raw CSV names. Lighter side-data files in
-`data/lighter/` are preserved for later feature work, but the active model path
-uses candles only.
+`DataPreprocessor` ignores non-Lighter raw CSV names. Historical side-data groups
+are opt-in through `data.side_data.groups`, availability-time aligned and coverage
+gated; none is enabled by default. Latest snapshots cannot substitute for history.
+
+The five-market mainnet Parquet lake is now collected (2025-06-04 through a partial
+2026-10-16), with later mark-price coverage. All 25 directories load and 425 hashes
+match, but 31 shared funding hours require recovery (#54). Six missing ETH hours
+exist in an older archive; exchange-wide absence is unproven. Training still reads
+CSVs, so a provenance-preserving lake reader/export is the next integration step.
+See [the lake runbook](lighter_data_lake.md) for exact coverage and commands.
+Historical backfill does not complete current snapshots #43 or inference #44.
 
 ## Signed Testnet Trading Setup
 

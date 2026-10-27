@@ -1,5 +1,11 @@
 # AFML Review of the Current ETHPredict Pipeline
 
+> Status note (2026-10-17): this document preserves its original review, protocol
+> or historical results; it does not describe the newly collected lake as an
+> experiment input. Use [current project status](../PROJECT_STATUS.md) and
+> [the lake runbook](lighter_data_lake.md) for current code/PR boundaries,
+> coverage, unresolved funding gaps (#54) and next steps.
+
 This review maps the active ETHPredict v2 pipeline against Marcos Lopez de Prado's
 *Advances in Financial Machine Learning* (AFML). It is intentionally critical. The
 goal is not to say whether the current pipeline is "good" in the abstract, but to

@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-10-17 — local data, documentation and EDA update
+
+- Record completed five-market mainnet monthly Parquet collection through a
+  partial October 16: 25 readable datasets, 425 matching partition hashes and
+  303.10 MB (289.06 MiB). Keep the lake ignored in Git.
+- Preserve the existing backfill collector, shared-schema repair and notebook/EDA
+  work, with one file per commit for traceability.
+- Correct the funding interpretation: 31 shared missing hours are unresolved
+  collection gaps; six exist in the older ETH archive. Recovery tracked in #54.
+- Refresh active status, task/readiness/strategy plans, data/dependency/dashboard
+  guides and visual roadmap. Mark older reviews/results with their historical scope.
+- Distinguish unmerged PR #51 (#16/#17/#20) and stacked draft PR #53 from main.
+  Record their negative bounded studies without changing scientific artifacts or
+  consuming another final test. No existing open issue qualifies for closure from
+  backfill alone; GitHub now has 21 open issues including new #54.
+- Training remains CSV-based; general lake ingestion, sizing #19, benchmark parity
+  #22 and current-state #43–#45 remain work. Verification for this local series is
+  recorded in `context/project_docs_verification_20261017.md`.
+
+
+## v0.6 - AFML validity, accounting, and evidence
+
+- Added label-span uniqueness sample weights and effective-sample diagnostics (#14, PRs #42/#46).
+- Made Trackio accounting mandatory for non-smoke research runs, with local readback, delivery receipts, and persisted trial accounting (#23, PR #47).
+- Scored the final test only after validation selection, counted forecast-benchmark test evaluations, and graded evidence from the final-test ledger (#24, PR #47).
+- Added Sharpe, PSR, DSR, PBO, underwater span, HHI, and evidence grades to backtest statistics; CSCV winners are ranked against the out-of-sample median (#21, PR #47).
+- Prevented future-data leakage in v2 transforms and made preprocessing fold-local (#9, PR #48).
+- Made triple-barrier success definitions, geometry, and dual-touch ambiguity policy configurable and auditable (#13, PR #49).
+- Purged and embargoed by exact label spans, added purged k-fold and grouped scenarios, and nested base predictions for held-out meta evaluation (#15, PR #49).
+- Added config-selected historical side-data joins with publication-time alignment, source hashes, and per-split coverage gates; no group is enabled by default (#8, PR #49).
+- Archived Trackio runs predate PR #48 and #49 and are not evidence for this version's code.
+
 ## v0.5 - uv CUDA 12.8 Lighter experiments
 
 - Imported the current dependency set into `pyproject.toml` and `uv.lock` with uv.

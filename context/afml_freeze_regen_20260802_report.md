@@ -1,5 +1,11 @@
 # AFML Freeze Regeneration Report - 2026-08-02
 
+> Status note (2026-10-17): this document preserves its original review, protocol
+> or historical results; it does not describe the newly collected lake as an
+> experiment input. Use [current project status](../PROJECT_STATUS.md) and
+> [the lake runbook](lighter_data_lake.md) for current code/PR boundaries,
+> coverage, unresolved funding gaps (#54) and next steps.
+
 Generated from current local GPU runs for GitHub issues #25-#29.
 
 Artifact root:

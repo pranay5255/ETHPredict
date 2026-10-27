@@ -1,67 +1,64 @@
-# Experiment readiness — 2026-10-16
+# Experiment readiness — 2026-10-27 merge review
 
-The first useful fixed-notional historical batch has run on the RTX 4090.
-PR #50 is merged (`main` base `7e43335`). Search controls #16, purged importance
-#17, and costs/execution #20 are implemented on
-`codex/afml-search-importance-execution`, pending review and merge.
-The primary checkout's concurrent EDA/notebook changes were preserved.
+Bounded offline research has already run on the PR #51/#53 branches. It produced
+negative or insufficient economic evidence, not a promoted strategy. The #51
+merge includes #53, which was merged into the #51 branch. See
+[project status](PROJECT_STATUS.md) for code and result boundaries.
 
-GitHub currently has **20 open issues: 8 implementation and 12 experiment
-issues**. Merging this batch closes three, leaving **17: 5 implementation and
-12 experiments**. There are no additional implementation issues to finish before
-starting bounded fixed-notional historical experiments with this branch. A useful
-result can reject a strategy; it does not need to show profitable trading.
+## What is ready
 
-## First measured result
+Causal features, label geometry, exact-span validation, training discipline,
+forecast diagnostics, meta calibration, statistics, mandatory Trackio accounting
+and test-use manifests are merged. PR #51 adds search, purged importance and
+execution-cost controls (#16/#17/#20). Its included PR #53 adds
+train-only return transforms, exact checkpoint reload verification and economics
+before test access. Its 238-test result applies to that branch. Current combined
+verification is recorded in [the merge audit](context/pr51_merge_review_20261027.md).
 
-Four predeclared configurations completed on frozen local data. All four lost
-money after the declared costs on validation. The validation-composite winner,
-`lstm_8`, received the only final-test evaluation: **103 trades, -136.174 net PnL,
-136.785 maximum drawdown**, on 1,000 requested notional per trade. Its validation
-net PnL was -300.895 across 268 trades. No model is promoted.
+The five-market lake is collected and readable: 25 directories, 425 matching
+partition hashes, June 2025–October 2026 coverage. General training ingestion
+remains CSV-based. Funding has 31 shared gaps per market, including six ETH hours
+present in an older archive. See [#54](https://github.com/pranay5255/ETHPredict/issues/54)
+and [the lake runbook](context/lighter_data_lake.md).
 
-See [first-experiment-results.md](first-experiment-results.md) for interpretation,
-[experimental-runs.md](experimental-runs.md) for commands, and
-[the verification record](context/afml_16_17_20_verification.md) for tests and the
-reporting-only recovery. Complete raw/model artifacts stay local; the compact
-[metrics snapshot](context/first_bounded_backtest_20261016.json) is reviewable.
-The frozen ledger records one test use; subsequent dashboard work reused saved
-artifacts without new fits, predictions, or test evaluations.
+## What must precede the next lake-backed study
 
-## Remaining implementation issues
+1. Use the merged research code and record the actual clean training commit.
+   Follow [the merge audit](context/pr51_merge_review_20261027.md) for code scope.
+2. Recover funding gaps or document direct source unavailability; reject unsupported
+   holding periods. Do not zero-fill. Use market-specific UTC bounds and account
+   for the later mark-price start and partial final day.
+3. Implement explicit lake loading or immutable CSV export. Record selected market,
+   resolution, raw partition hashes, overlap/dedup policy, units, feature schema,
+   availability-time joins and per-split coverage. Prove parity on a fixed overlap.
+4. Freeze one new mechanism/horizon and a small comparison budget. The tested
+   one-hour continuation recipe is rejected; its weak result does not justify
+   larger grids. Count models, rules, markets, thresholds and diagnostic fits.
+5. Use purged development blocks, train-only transforms/calibration, fixed notional,
+   realistic costs and explicit no-trade outcomes. Keep comparisons on the same
+   rows, opportunity set, labels, costs and downstream policy.
+6. Demand sufficient trades and blocks, positive aggregate after-cost expectancy,
+   stability across blocks, 2x cost survival and credible feature/noise evidence.
+   Freeze numeric gates before running. Missing evidence must fail closed.
+7. Only a validation-selected qualifying policy may enter a fresh predeclared
+   final holdout. The prior final test was consumed once. Do not rerun it or treat
+   an expanded lake as resetting the old test-use ledger.
 
-- [#19 — probability and concurrency sizing](https://github.com/pranay5255/ETHPredict/issues/19).
-  Needed for variable sizing, overlapping active-bet exposure and capital
-  efficiency comparisons. Fixed-notional studies can proceed first.
-- [#22 — benchmark parity](https://github.com/pranay5255/ETHPredict/issues/22).
-  Needed for complete identical-policy cross-forecaster trading comparisons,
-  including TimesFM. The first batch compares local linear/LSTM configurations.
-- [#43 — refreshed snapshots](https://github.com/pranay5255/ETHPredict/issues/43),
-  [#44 — reviewed checkpoint packaging/current inference](https://github.com/pranay5255/ETHPredict/issues/44),
-  and [#45 — current-state dashboard](https://github.com/pranay5255/ETHPredict/issues/45)
-  form a separate product chain. They do not block offline historical runs.
-  The experiment dashboard in this batch does not close these product issues.
+The PR #53 frozen gate required 60 trades overall, ten per block, two positive
+blocks out of three, positive aggregate net and 2x-cost net, plus feature evidence.
+Every configuration failed. These are that study's gates, not a universal proof
+of profitability or automatic approval for a new study.
 
-## Twelve studies still open
+## Which remaining issues block which experiments
 
-- [#30 weighting](https://github.com/pranay5255/ETHPredict/issues/30),
-  [#31 validation schemes](https://github.com/pranay5255/ETHPredict/issues/31),
-  [#32 label geometry](https://github.com/pranay5255/ETHPredict/issues/32),
-  [#33 forecast/mapping](https://github.com/pranay5255/ETHPredict/issues/33),
-  [#34 training discipline](https://github.com/pranay5255/ETHPredict/issues/34), and
-  [#35 meta calibration](https://github.com/pranay5255/ETHPredict/issues/35): parent
-  implementations are merged; review each issue's freeze requirements.
-- [#36 benchmark trading](https://github.com/pranay5255/ETHPredict/issues/36)
-  waits for #22; [#39 sizing](https://github.com/pranay5255/ETHPredict/issues/39)
-  waits for #19 and verified calibration.
-- [#37 feature/noise ablations](https://github.com/pranay5255/ETHPredict/issues/37),
-  [#38 search-mode/selector comparisons](https://github.com/pranay5255/ETHPredict/issues/38),
-  [#40 cost/execution comparisons](https://github.com/pranay5255/ETHPredict/issues/40), and
-  [#41 claim statistics](https://github.com/pranay5255/ETHPredict/issues/41): this
-  batch supplies implementation prerequisites and initial diagnostics. A small
-  four-trial study does not complete those full comparisons or establish alpha.
+After the #51 merge closes #16/#17/#20, 18 issues remain: 6 implementation/data
+and 12 experiments.
+#30–#35 have merged parent controls, but still require individual frozen protocols.
+#36 needs #22 benchmark trading parity; #37 and #38 now have their #17/#16 controls;
+#39 needs #19 sizing and credible calibration; #40 has #20 but still needs coverage;
+#41 needs complete budget/selection accounting and a frozen strategy.
 
-Start with a declared validation-only follow-up to the weak forecast/feature
-signal and noisy importance findings. Freeze a new hypothesis and budget before
-training. Keep this study's consumed final-test partition out of further model
-selection. Do not increase leverage or sizing to compensate for negative edge.
+#19 is unnecessary for a fixed-notional opportunity test. #43–#45 are unnecessary
+for offline historical research, but required for the current-state product.
+Do not wait for every issue to close before a narrow valid study; do not confuse
+a functioning experiment pipeline with a positive trading edge.

@@ -388,6 +388,7 @@
   .file-card,
   .callout,
   .artifact-card {
+    min-width: 0;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -629,20 +630,29 @@
 
   <main class="main">
     <section class="hero animate" style="--i:0">
-      <div class="eyebrow">ETHPredict v2 - active research path</div>
+      <div class="eyebrow">ETHPredict v2 · CSV pipeline reference · status updated 2026-10-17</div>
       <h1>Local Lighter candles become forecast benchmarks, meta-label trials, alpha backtests, and Trackio runs.</h1>
       <p class="hero-copy">
         The current pipeline is a single v2 path. <code>staged_trial</code> reads <code>configs/config.yml</code>,
         dispatches to the meta-label MVP, builds a shared multi-horizon dataset, runs the forecast benchmark branch,
-        then evaluates grid-trial trading policies with validation-first selection and untouched test reporting.
+        then evaluates grid-trial trading policies with validation-first selection and ledger-controlled final-test reporting.
       </p>
+      <p class="hero-copy"><strong>Current boundary:</strong> the five-market mainnet lake is collected and readable,
+        but the general training path below still reads CSVs. Funding has 31 shared missing hours (#54),
+        including six ETH hours present in an older archive. See <a href="context/lighter_data_lake.md">the lake audit</a>.</p>
+      <p class="hero-copy">The diagram and counts below retain the earlier CSV configuration snapshot.
+        Merged main at review is <code>d09efad</code>; search/importance/execution work is in open PR #51,
+        and forecast repair/economic gates are in stacked draft PR #53. Both bounded studies found no promotable
+        strategy. The first final test was consumed once; the development study added none.
+        Use <a href="ethpredict-implementation-roadmap.html">the updated roadmap</a> and
+        <a href="PROJECT_STATUS.md">project status</a> for current decisions.</p>
     </section>
 
     <section class="kpis animate" style="--i:1" aria-label="Current pipeline facts">
       <div class="kpi">
         <div class="label">Data</div>
         <div class="value">105,074</div>
-        <div class="note">unique 5m Lighter rows across the current raw CSV set</div>
+        <div class="note">unique 5m rows in the earlier CSV inventory snapshot</div>
       </div>
       <div class="kpi">
         <div class="label">Coverage</div>
@@ -663,7 +673,7 @@
 
     <div id="overview" class="sec-head animate" style="--i:2">
       <div class="sec-kicker">1 - Overview</div>
-      <h2>The full active pipeline</h2>
+      <h2>CSV research pipeline reference</h2>
       <p class="section-subtitle">This shows the runtime order. The benchmark branch and the meta-label trial branch share the same stage-0 dataset and split logic, so their results are comparable.</p>
     </div>
 

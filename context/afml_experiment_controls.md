@@ -1,5 +1,11 @@
 # AFML Experiment Controls
 
+> Status note (2026-10-17): this document preserves its original review, protocol
+> or historical results; it does not describe the newly collected lake as an
+> experiment input. Use [current project status](../PROJECT_STATUS.md) and
+> [the lake runbook](lighter_data_lake.md) for current code/PR boundaries,
+> coverage, unresolved funding gaps (#54) and next steps.
+
 Use `configs/config.yml` as the baseline v2 research spec. Freeze model, labels,
 validation, costs, search budget, and alpha policy before varying one AFML control.
 
