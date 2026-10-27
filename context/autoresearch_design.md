@@ -1,7 +1,7 @@
 # Frozen research harness design
 
-Status: P0 design, 2026-10-27. P1–P5 are implementation gates, not completed
-capabilities. This project builds a research environment, grader and bounded
+Status: P0 merged in #60; P1 implementation in progress, 2026-10-27.
+P2–P5 are later gates, not completed capabilities. This project builds a research environment, grader and bounded
 driver. It does not search for an edge during construction, submit orders, sign
 transactions, read credentials or promote a strategy. Existing bounded studies
 lost money after costs. No strategy edge is claimed.
@@ -178,7 +178,7 @@ checkpoints or Trackio records. Candidate runtime may observe only the
 grader-supplied causal history needed to produce a decision; the hidden-tier
 worker and every output stay inside the private service. This is a necessary
 interpretation of prediction on hidden data, not permission to expose it to the
-loop agent. No hidden artifacts are copied into the visible trial bundle.
+loop agent. The human approved this private worker boundary on 2026-10-27. No hidden artifacts are copied into the visible trial bundle.
 
 ## Strategy and accounting interface
 
@@ -278,12 +278,12 @@ same runner/clock/costs. Commit per-block metrics, resources and runtimes to
 freeze, never candidate strategy outcomes. Freeze and push `grader-v1` only
 after the full suite and red-team gates pass. No anchors are chosen in P0.
 
-There is a specification conflict to resolve before freeze: a baseline cannot
+The human resolved a specification conflict on 2026-10-27: a baseline cannot
 strictly beat the best baseline, and flat/buy-and-hold fail the trade gate.
 Thus all gated baseline scores may be 0 regardless of anchors, incompatible
-with making the best final score 0.1–0.3. Preserve strict gates; show pre-gate
-component scores separately and obtain the human's calibration interpretation
-before claiming the baseline range acceptance. Do not weaken gates to hit it.
+with making the best final score 0.1–0.3. The approved interpretation is to calibrate and show pre-gate component scores
+in the requested range, while preserving every gate and final rejected scores
+of 0. Do not weaken gates to hit the range.
 
 ## Keep/discard driver and audit trail
 
@@ -353,7 +353,7 @@ grade/resource reports in `context/autoresearch_seed_strategies.md`.
 
 1. Before P2 acceptance, the human must execute sealing and resolve any readable
    duplicate sources. No secure-shadow claim before real OS denial evidence.
-2. Before P3 freeze, resolve baseline gated-score calibration as described above,
+2. Before P3 freeze, implement the approved pre-gate calibration distinction,
    and choose/freeze execution-cost configuration and bootstrap expected block
    length using declared methodology, without strategy tuning.
 3. Test the Linux isolation mechanism on this machine before choosing it. A
@@ -361,8 +361,9 @@ grade/resource reports in `context/autoresearch_seed_strategies.md`.
    privileges. Dependency additions or upgrades require human approval.
 4. The literal prohibition on a strategy seeing hidden data is interpreted as
    no direct private-lake access and no outputs to the agent: causal input slices
-   are necessarily consumed by the sandboxed worker. Confirm this service
-   boundary before hidden grading is enabled.
+   are necessarily consumed by the sandboxed worker. This service boundary was
+   explicitly approved by the human on 2026-10-27; prove its isolation before
+   enabling hidden grading.
 5. LoRA vs frozen/full fine-tuning is a future loop agenda comparison. Do not add
    PEFT, upgrade TimesFM or install RL libraries without human approval.
 6. After P0–P5 are each merged, update PROJECT_STATUS.md, TASKS.md and

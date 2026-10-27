@@ -1,0 +1,74 @@
+{
+  "rows": 26496,
+  "different_cells": 0,
+  "window": {
+    "start_ms": 1774656000000,
+    "end_ms": 1782604800000
+  },
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "quote_asset_volume"
+  ],
+  "csv_sha256": "28a8c35b50f3575c71700320b25c32e8bcb12654d95558744a2a89d0b0b3ec61",
+  "model_csv_sha256": "acc6e5f88673b0e0ee3dea1648e8a2a4ae0b3104f3f96d80451e6da2f164caa2",
+  "units": "OHLC quote/base; volume base asset; quote_asset_volume quote asset; no scaling",
+  "timestamp_conversion": "model open_time = timestamp_ms; inclusive close_time = timestamp_ms + 300000 - 1",
+  "csv_parser": "float_precision=round_trip (no price/volume transformations)",
+  "provenance": {
+    "market": "ETH",
+    "market_id": 0,
+    "dataset": "candles_5m",
+    "resolution": "5m",
+    "window": {
+      "start_ms": 1774656000000,
+      "end_ms": 1782604800000
+    },
+    "manifest_sha256": "f3297a99f16b2e67296ad27f0bfe0e74cef71a019eb77c82c42279e97a7d088d",
+    "partitions": [
+      {
+        "file": "ETH/candles_5m/2026-03.parquet",
+        "sha256": "595d1bab628a1c561721c2acc39418185e1cdd53a6e81adcd16e049937974887",
+        "rows": 8928,
+        "selected_rows": 1152,
+        "first_ms": 1772323200000,
+        "last_ms": 1775001300000
+      },
+      {
+        "file": "ETH/candles_5m/2026-04.parquet",
+        "sha256": "3277c3523cd276ac7f6c82d9422a1393e9f46eab692707352f3ad4b4765995cb",
+        "rows": 8640,
+        "selected_rows": 8640,
+        "first_ms": 1775001600000,
+        "last_ms": 1777593300000
+      },
+      {
+        "file": "ETH/candles_5m/2026-05.parquet",
+        "sha256": "647ff70032214a0e6813446793f56517496c939e20d78c4a094d10c1260e4ecc",
+        "rows": 8928,
+        "selected_rows": 8928,
+        "first_ms": 1777593600000,
+        "last_ms": 1780271700000
+      },
+      {
+        "file": "ETH/candles_5m/2026-06.parquet",
+        "sha256": "81d52e4b730dd1e11a6598c040368eab4b20516e7002982f5b603425393a23c4",
+        "rows": 8640,
+        "selected_rows": 7776,
+        "first_ms": 1780272000000,
+        "last_ms": 1782863700000
+      }
+    ],
+    "rows": 26496,
+    "first_ms": 1774656000000,
+    "last_ms": 1782604500000,
+    "first": "2026-03-28T00:00:00+00:00",
+    "last": "2026-06-27T23:55:00+00:00",
+    "gaps": [],
+    "complete": true,
+    "unavailable": false
+  }
+}

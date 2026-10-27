@@ -1,7 +1,7 @@
-# ETHPredict project status — 2026-10-27 merge review
+# ETHPredict project status — autoresearch P1, 2026-10-27
 
 The five-market mainnet history lake is collected and readable. It is not yet the
-training source, all 31 funding gaps per market have been recovered locally, and no
+training source, all 31 funding gaps per market are recovered on main, and no
 strategy has qualified for promotion.
 
 ## Code and evidence boundaries
@@ -35,13 +35,16 @@ Funding's 31 missing hours per market were collection boundary errors. The #54
 fix recovered all 155 source payments, preserving original bytes and historical
 experiment identities. All 25 directories read successfully and manifests match;
 zero internal funding gaps remain. See [verification](context/funding_gap_fix_20261027.md).
-The code is committed separately for merge; #54 remains open until then.
+The fix is merged at c365a81 and #54 is closed with a fresh 317-test P0 audit.
 Full coverage, commands, limitations and machine-readable evidence:
 [data lake runbook](context/lighter_data_lake.md).
 
 Training remains ETH CSV-based. Historical side-data groups are opt-in and gated;
-none is enabled in the default config. A lake reader or immutable export bridge,
-with market identity and partition provenance, remains to be implemented.
+none is enabled in the default config. P1 adds the standalone `grader.data` lake
+reader with hashes, provenance, half-open windows and availability joins; the
+existing training loader is unchanged. Exact ETH CSV parity covers 26,496 rows.
+A dev-only audit also rejects malformed HYPE October 2025 1m/5m OHLC partitions.
+See [contract/evidence](context/grader_lake_contract.md).
 
 ## Actual research results
 
@@ -65,12 +68,16 @@ The completed lake supplies more research coverage, not a demonstrated edge.
 
 ## Remaining work and order
 
-After #51 closes #16/#17/#20: **18 open issues: 6 implementation/data issues and
-12 experiment issues**. Historical backfill alone completes no other open issue.
+The active construction task is the frozen autoresearch harness. P0 merged in
+[#60](https://github.com/pranay5255/ETHPredict/pull/60); P1 supplies data contracts.
+P2–P5 (#56–#59) remain unimplemented: physical sealing, frozen grader/inner
+environment, trial driver and untuned TimesFM seeds. No grader-v1 tag or runnable
+secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.
+Historical backfill alone completes no experiment acceptance criterion.
 
 1. Use the combined #51/#53 code and preserve its economic rejection gate.
-2. Merge the verified funding fix (#54); implement and verify the explicit lake
-   ingestion/export contract before claiming lake-backed experiments.
+2. Preserve the merged funding fix (#54) and verified P1 lake contract. Complete
+   human sealing and later harness gates before claiming secure lake-backed grading.
 3. Specify one new causal hypothesis, fixed budget, held-out development blocks,
    units, coverage and costs. Retire the tested one-hour continuation recipe.
 4. #19 probability/concurrency sizing and #22 benchmark trading parity remain

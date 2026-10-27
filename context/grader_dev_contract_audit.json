@@ -1,0 +1,215 @@
+{
+  "scope": "Dev source-schema audit only; no policy evaluation",
+  "valid": 23,
+  "rejected": 2,
+  "checks": [
+    {
+      "market": "ETH",
+      "dataset": "candles_1m",
+      "status": "valid",
+      "rows": 476640,
+      "gaps": []
+    },
+    {
+      "market": "ETH",
+      "dataset": "candles_5m",
+      "status": "valid",
+      "rows": 95328,
+      "gaps": []
+    },
+    {
+      "market": "ETH",
+      "dataset": "candles_1h",
+      "status": "valid",
+      "rows": 7944,
+      "gaps": []
+    },
+    {
+      "market": "ETH",
+      "dataset": "fundings_1h",
+      "status": "valid",
+      "rows": 7943,
+      "gaps": []
+    },
+    {
+      "market": "ETH",
+      "dataset": "mark_price_5m",
+      "status": "valid",
+      "rows": 71527,
+      "gaps": [
+        {
+          "start_ms": 1748995200000,
+          "end_ms": 1756135500000,
+          "count": 23801,
+          "kind": "before_source_start"
+        }
+      ]
+    },
+    {
+      "market": "BTC",
+      "dataset": "candles_1m",
+      "status": "valid",
+      "rows": 476640,
+      "gaps": []
+    },
+    {
+      "market": "BTC",
+      "dataset": "candles_5m",
+      "status": "valid",
+      "rows": 95328,
+      "gaps": []
+    },
+    {
+      "market": "BTC",
+      "dataset": "candles_1h",
+      "status": "valid",
+      "rows": 7944,
+      "gaps": []
+    },
+    {
+      "market": "BTC",
+      "dataset": "fundings_1h",
+      "status": "valid",
+      "rows": 7943,
+      "gaps": []
+    },
+    {
+      "market": "BTC",
+      "dataset": "mark_price_5m",
+      "status": "valid",
+      "rows": 71527,
+      "gaps": [
+        {
+          "start_ms": 1748995200000,
+          "end_ms": 1756135500000,
+          "count": 23801,
+          "kind": "before_source_start"
+        }
+      ]
+    },
+    {
+      "market": "SOL",
+      "dataset": "candles_1m",
+      "status": "valid",
+      "rows": 476640,
+      "gaps": []
+    },
+    {
+      "market": "SOL",
+      "dataset": "candles_5m",
+      "status": "valid",
+      "rows": 95328,
+      "gaps": []
+    },
+    {
+      "market": "SOL",
+      "dataset": "candles_1h",
+      "status": "valid",
+      "rows": 7944,
+      "gaps": []
+    },
+    {
+      "market": "SOL",
+      "dataset": "fundings_1h",
+      "status": "valid",
+      "rows": 7943,
+      "gaps": []
+    },
+    {
+      "market": "SOL",
+      "dataset": "mark_price_5m",
+      "status": "valid",
+      "rows": 71527,
+      "gaps": [
+        {
+          "start_ms": 1748995200000,
+          "end_ms": 1756135500000,
+          "count": 23801,
+          "kind": "before_source_start"
+        }
+      ]
+    },
+    {
+      "market": "HYPE",
+      "dataset": "candles_1m",
+      "status": "rejected",
+      "reason": "Invalid OHLC geometry"
+    },
+    {
+      "market": "HYPE",
+      "dataset": "candles_5m",
+      "status": "rejected",
+      "reason": "Invalid OHLC geometry"
+    },
+    {
+      "market": "HYPE",
+      "dataset": "candles_1h",
+      "status": "valid",
+      "rows": 7944,
+      "gaps": []
+    },
+    {
+      "market": "HYPE",
+      "dataset": "fundings_1h",
+      "status": "valid",
+      "rows": 7943,
+      "gaps": []
+    },
+    {
+      "market": "HYPE",
+      "dataset": "mark_price_5m",
+      "status": "valid",
+      "rows": 71527,
+      "gaps": [
+        {
+          "start_ms": 1748995200000,
+          "end_ms": 1756135500000,
+          "count": 23801,
+          "kind": "before_source_start"
+        }
+      ]
+    },
+    {
+      "market": "NEAR",
+      "dataset": "candles_1m",
+      "status": "valid",
+      "rows": 476640,
+      "gaps": []
+    },
+    {
+      "market": "NEAR",
+      "dataset": "candles_5m",
+      "status": "valid",
+      "rows": 95328,
+      "gaps": []
+    },
+    {
+      "market": "NEAR",
+      "dataset": "candles_1h",
+      "status": "valid",
+      "rows": 7944,
+      "gaps": []
+    },
+    {
+      "market": "NEAR",
+      "dataset": "fundings_1h",
+      "status": "valid",
+      "rows": 7943,
+      "gaps": []
+    },
+    {
+      "market": "NEAR",
+      "dataset": "mark_price_5m",
+      "status": "valid",
+      "rows": 71527,
+      "gaps": [
+        {
+          "start_ms": 1748995200000,
+          "end_ms": 1756135500000,
+          "count": 23801,
+          "kind": "before_source_start"
+        }
+      ]
+    }
+  ]
+}
