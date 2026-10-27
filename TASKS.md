@@ -8,7 +8,7 @@ and [the merge audit](context/pr51_merge_review_20261027.md).
 
 ## Open implementation and data issues
 
-- [ ] [#54](https://github.com/pranay5255/ETHPredict/issues/54) Recover the 31 shared funding collection gaps and verify boundaries.
+- [ ] [#54](https://github.com/pranay5255/ETHPredict/issues/54) Fix implemented and verified locally: all 155 funding gaps recovered; pending merge. See [evidence](context/funding_gap_fix_20261027.md).
 - [ ] [#19](https://github.com/pranay5255/ETHPredict/issues/19) Probability/edge/concurrency sizing with exposure limits.
 - [ ] [#22](https://github.com/pranay5255/ETHPredict/issues/22) Forecast benchmark trading parity, including TimesFM identity/failures.
 - [ ] [#43](https://github.com/pranay5255/ETHPredict/issues/43) Recurring completed-bar snapshots with provenance and freshness.
@@ -56,5 +56,6 @@ and [the merge audit](context/pr51_merge_review_20261027.md).
 - [x] PR #51 incorporates the already merged #53 branch and reconciles current main.
 
 The lake is not connected to the general training loader. Funding recovery is
-[#54](https://github.com/pranay5255/ETHPredict/issues/54), not schema repair.
+verified in [#54](https://github.com/pranay5255/ETHPredict/issues/54)'s local fix;
+schema repair is a separate operation.
 More markets, lower thresholds and variable sizing are not evidence of profitability.

@@ -197,9 +197,15 @@ def normalize_fundings(payload: Mapping[str, Any]) -> pd.DataFrame:
     df["timestamp_ms"] = df["timestamp"].map(to_epoch_ms).astype("int64")
     df["timestamp"] = pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True).dt.tz_convert(None)
     for col in ["value", "rate"]:
-        df[col] = _to_numeric(df[col]).fillna(0.0)
+        df[col] = _to_numeric(df[col])
+        if not df[col].map(lambda value: pd.notna(value) and math.isfinite(value)).all():
+            raise LighterApiError(f"Invalid or missing funding {col}; refusing to substitute zero")
     if "direction" not in df.columns:
         df["direction"] = ""
+    if not df["direction"].isin(["long", "short"]).all():
+        raise LighterApiError("Funding direction must be long or short")
+    if df.groupby("timestamp_ms")[["value", "rate", "direction"]].nunique().gt(1).any().any():
+        raise LighterApiError("Conflicting funding records at one timestamp")
     return df[columns].drop_duplicates(subset=["timestamp_ms"]).sort_values("timestamp_ms").reset_index(drop=True)
 
 
@@ -501,14 +507,20 @@ class LighterDataClient:
         end_timestamp: int,
         count_back: int = MAX_CANDLES_PER_CALL,
     ) -> pd.DataFrame:
+        if resolution not in FUNDING_RESOLUTIONS:
+            raise ValueError("Lighter fundings only support 1h and 1d resolutions")
+        interval = RESOLUTION_TO_MS[resolution]
         frames: List[pd.DataFrame] = []
         for window in build_candle_windows(start_timestamp, end_timestamp, resolution, count_back):
+            # Funding count_back reserves an endpoint slot: N hours with N slots
+            # returned N-1 rows in the live API. Overlap one prior interval and
+            # reserve that endpoint too (at most 502, below the funding cap 750).
             frame = self.fundings(
                 market_id=market_id,
                 resolution=resolution,
-                start_timestamp=window.start_timestamp,
+                start_timestamp=window.start_timestamp - interval,
                 end_timestamp=window.end_timestamp,
-                count_back=window.count_back,
+                count_back=window.count_back + 2,
             )
             if not frame.empty:
                 frame = frame[

@@ -1,10 +1,15 @@
-# Lighter mainnet history lake — 2026-10-17
+# Lighter mainnet history lake — funding recovery 2026-10-27
 
 Historical collection is complete for ETH, BTC, SOL, HYPE and NEAR through
 2026-10-16. Collection completeness is distinct from funding continuity and
-training integration. The lake remains local and gitignored.
+training integration. The lake remains local and gitignored. On 2026-10-27,
+all **155 missing funding payments** (31 per market) were recovered from the
+public source. All 25 directories remain readable, with zero duplicate timestamps
+and zero internal funding gaps. See
+[the recovery audit](funding_gap_recovery_20261027.json) and
+[fix verification](funding_gap_fix_20261027.md).
 
-## Verified coverage
+## Original verified coverage — before recovery
 
 An independent read-only audit loaded all **25 dataset directories**, checked
 **425 monthly partition SHA-256 hashes** against five manifests, and verified
@@ -28,20 +33,43 @@ the interval between each dataset's first and last observations. June and July
 mark-price partitions are intentionally empty; earlier mark history is unavailable
 in this snapshot. Every dataset has zero duplicate timestamps.
 
-## Funding requires recovery, not an exchange-wide assumption
+## Funding boundary fix and targeted recovery
 
-All five markets have the same 31 missing hours. **Six of those hours exist in
+All five markets originally had the same 31 missing hours. **Six of those hours exist in
 the older ETH archive** `data/lighter/fundings_ETH_perp_1h_20260328_20260628.csv`:
 April 1 00:00, April 21 20:00, May 1 00:00, May 21 20:00, June 1 00:00 and
 June 21 20:00, all in 2026 UTC. Thus identical gaps do not establish unavailable
 exchange data. The month-start and 500-hour boundary pattern suggests collection
-window behavior; its exact cause remains unproven.
+window behavior. Live requests now reproduce the cause: a 500-hour request with
+`count_back=500` returns 499 rows and loses its first hour; reserving one extra
+slot returns all 500. The fixed client overlaps one interval and reserves both
+that overlap and the endpoint slot, then trims to the requested half-open range.
 
-Track recovery in [#54](https://github.com/pranay5255/ETHPredict/issues/54).
-Do not fill missing funding with zero or classify it as verified source absence.
-Schema `--repair` does not recover rows. Normal reruns skip closed partitions,
-so they do not recover these historical gaps either. Dynamic funding studies
-must pass their declared coverage and holding-period alignment gates.
+The [#54](https://github.com/pranay5255/ETHPredict/issues/54) fix adds explicit
+recovery for closed partitions:
+
+```bash
+uv run python scripts/lighter_backfill_lake.py --recover-funding-gaps --symbols ETH BTC SOL HYPE NEAR
+```
+
+Recovery requests only missing hours inside each dataset's original observed
+bounds. Existing payments and bounds are retained. Original partition/manifest
+bytes, source-response receipts and before/after hashes are saved under
+`data/lake/lighter/_funding_recovery/<UTC-run-id>/`. Missing responses remain
+unresolved, and the command exits unsuccessfully if any gaps remain. Repeating a
+completed recovery makes no source requests or partition changes.
+
+The actual recovery added 155 source rows across 85 funding partitions, leaving
+all 340 nonfunding partitions unchanged. All six ETH archive counterexamples
+agree with the fetched rates and directions. All 432 enrolled historical input
+and experiment files, including the final-test ledger, remain byte-identical.
+The dated 2026-10-17 audit above remains the original pre-recovery evidence.
+
+Schema `--repair` does not recover rows, and normal refresh skips closed months.
+Unknown funding is never zero-filled. Dynamic cost grading now refuses an
+internal missing scheduled payment even with a relaxed `max_gap`, as well as
+missing payments at the price-path boundaries. Freeze funding-cost rewards only
+after this coverage check passes; source/config hashes identify the actual inputs.
 
 ## Collect, refresh and read
 
@@ -88,7 +116,7 @@ configuration, split, result or test-use ledger. The PR #53 bounded development
 study used three exact lake funding records as explicit repairs to its own frozen
 CSV input; that is not a general lake loader.
 
-Before a new lake-backed experiment: recover funding gaps (#54), implement an
+Before a new lake-backed experiment: verify the repaired funding coverage, implement an
 explicit market/date/resolution loader or immutable CSV export with partition
 hashes, establish common coverage and unit/availability-time contracts, and freeze
 one new development protocol. Start with ETH and a narrow hypothesis; additional

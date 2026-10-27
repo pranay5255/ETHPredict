@@ -13,9 +13,9 @@ The issue-by-issue checklist is maintained in [TASKS.md](../TASKS.md).
    opportunity study and economic rejection before test access. All actual
    strategy configurations failed that gate. See
    [the merge audit](pr51_merge_review_20261027.md).
-2. Fix [#54](https://github.com/pranay5255/ETHPredict/issues/54): investigate
-   month/500-hour funding boundaries and recover historical gaps. Six missing
-   ETH hours exist in the older archive; exchange-wide absence is unproven.
+2. Merge [#54](https://github.com/pranay5255/ETHPredict/issues/54)'s verified fix:
+   month/500-hour boundary behavior is reproduced; all 155 source payments have
+   been recovered locally. See [evidence](funding_gap_fix_20261027.md).
 3. Add an explicit, frozen lake ingestion/export contract before new lake-backed
    research. This work does not yet have its own dedicated GitHub issue.
 4. #19 sizing and #22 full benchmark parity remain implementation work. Keep

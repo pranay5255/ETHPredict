@@ -1,7 +1,7 @@
 # ETHPredict project status — 2026-10-27 merge review
 
 The five-market mainnet history lake is collected and readable. It is not yet the
-training source, funding has 31 unresolved collection gaps per market, and no
+training source, all 31 funding gaps per market have been recovered locally, and no
 strategy has qualified for promotion.
 
 ## Code and evidence boundaries
@@ -28,12 +28,14 @@ strategy has qualified for promotion.
 ETH/BTC/SOL/HYPE/NEAR now have monthly mainnet Parquet under ignored
 `data/lake/lighter/`, starting 2025-06-04 and ending during 2026-10-16.
 All 25 directories load as tables; all 425 hashes match their manifests;
-Parquet totals 303.10 MB (289.06 MiB). Candles have zero internal gaps and
+Before funding recovery, Parquet totaled 303.10 MB (289.06 MiB). Candles have zero internal gaps and
 mark prices have zero internal gaps after 2025-08-25 15:25 UTC.
 
-Funding has 31 identical missing hours in every market. Six are present in an
-older ETH CSV, so the earlier exchange-wide explanation is unsupported. Track
-boundary investigation and recovery in [#54](https://github.com/pranay5255/ETHPredict/issues/54).
+Funding's 31 missing hours per market were collection boundary errors. The #54
+fix recovered all 155 source payments, preserving original bytes and historical
+experiment identities. All 25 directories read successfully and manifests match;
+zero internal funding gaps remain. See [verification](context/funding_gap_fix_20261027.md).
+The code is committed separately for merge; #54 remains open until then.
 Full coverage, commands, limitations and machine-readable evidence:
 [data lake runbook](context/lighter_data_lake.md).
 
@@ -67,7 +69,7 @@ After #51 closes #16/#17/#20: **18 open issues: 6 implementation/data issues and
 12 experiment issues**. Historical backfill alone completes no other open issue.
 
 1. Use the combined #51/#53 code and preserve its economic rejection gate.
-2. Recover historical funding gaps (#54); implement and verify the explicit lake
+2. Merge the verified funding fix (#54); implement and verify the explicit lake
    ingestion/export contract before claiming lake-backed experiments.
 3. Specify one new causal hypothesis, fixed budget, held-out development blocks,
    units, coverage and costs. Retire the tested one-hour continuation recipe.

@@ -22,9 +22,11 @@ a partial October 16, 2026. All 25 directories load; 425 hashes match; schemas a
 timestamp identities pass. [The runbook](context/lighter_data_lake.md) records the
 later mark start and exact bounds. Raw partitions stay ignored in Git.
 
-First fix funding collection boundaries and recover the 31 shared hours (#54).
-Six missing ETH hours exist in an older CSV, so do not accept the exchange-wide
-gap explanation. Normal refresh and schema repair do not repair closed-month gaps.
+The local #54 fix reproduces the funding boundary error and recovers all 155
+missing source payments. Zero internal gaps remain, with originals and source
+receipts preserved. Merge [the verified fix](context/funding_gap_fix_20261027.md)
+before freezing the funding-cost grader. Normal refresh and schema repair do not
+repair closed-month gaps.
 
 Then add a market/date/resolution lake reader or frozen CSV export, with manifest
 hashes, duplicate/overlap policy and availability-time/coverage checks. Wire it

@@ -4,6 +4,7 @@ Usage:
     python scripts/lighter_backfill_lake.py --symbols ETH BTC SOL HYPE NEAR
     python scripts/lighter_backfill_lake.py --env-file .env.testnet --symbols ETH BTC SOL
     python scripts/lighter_backfill_lake.py --repair --symbols ETH BTC   # rewrite schema, no network
+    python scripts/lighter_backfill_lake.py --recover-funding-gaps --symbols ETH BTC SOL HYPE NEAR
 
 ``--env-file`` reads only ``LIGHTER_BASE_URL`` and ``LIGHTER_NETWORK``; API keys in
 the file are ignored. Data from any network other than mainnet goes to
@@ -23,6 +24,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import time
 from datetime import datetime, timezone
@@ -222,6 +224,111 @@ def repair_market(root: Path, symbol: str) -> None:
     print(f"[{symbol}] partitions conformed and manifest refreshed", flush=True)
 
 
+def write_json_atomic(value: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def recover_funding_gaps(client: LighterDataClient, root: Path, symbol: str, audit_root: Path,
+                         network: str = "mainnet") -> dict:
+    """Fill only observed internal funding gaps; retain originals and source receipts.
+
+    Bounds stay frozen at the first/last existing payment. This does not refresh
+    the lake, rewrite experiment CSVs, or invent rates for empty API responses.
+    """
+    market_dir = root / symbol
+    manifest_path = market_dir / "_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_network = manifest.get("network", "mainnet" if manifest["source"].rstrip("/") == DEFAULT_BASE_URL else None)
+    if (manifest["symbol"] != symbol or manifest_network != network
+            or manifest["source"].rstrip("/") != client.base_url):
+        raise ValueError("Funding recovery source/network/symbol differs from the lake manifest")
+    directory = market_dir / "fundings_1h"
+    before = summarize(directory, "1h")
+    if before.get("rows", 0) < 2 or before["duplicates"]:
+        raise ValueError("Funding recovery requires at least two payments and no duplicates")
+    if before["partitions"] != manifest["datasets"]["fundings_1h"]["partitions"]:
+        raise ValueError("Funding partitions changed since the manifest; refusing recovery")
+    original = pd.read_parquet(directory).sort_values("timestamp_ms").reset_index(drop=True)
+    hour = RESOLUTION_TO_MS["1h"]
+    if original.timestamp_ms.mod(hour).any():
+        raise ValueError("Funding payments must use the declared UTC hourly clock")
+    missing = sorted(set(range(int(original.timestamp_ms.min()), int(original.timestamp_ms.max()) + hour, hour))
+                     - set(original.timestamp_ms))
+    receipt = {"symbol": symbol, "market_id": int(manifest["market_id"]), "network": network,
+               "source": client.base_url, "collected_at_utc": datetime.now(timezone.utc).isoformat(),
+               "scope": "internal gaps only; original bounds and existing payments preserved",
+               "before": before, "missing_timestamp_ms": missing, "requests": [],
+               "recovered_timestamp_ms": [], "unresolved_timestamp_ms": [], "status": "prepared"}
+    if not missing:
+        return {**receipt, "after": before, "status": "already_complete"}
+    audit_dir = audit_root / symbol
+    receipt_path = audit_dir / "receipt.json"
+    if receipt_path.exists():
+        raise ValueError("Use a new audit directory; prior funding-recovery evidence must be preserved")
+    receipt["before_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    write_json_atomic(receipt, receipt_path)
+    recovered = []
+    for stamp in missing:
+        # Two-hour request, plus one overlapping start and the endpoint slot.
+        params = {"market_id": receipt["market_id"], "resolution": "1h",
+                  "start_timestamp": stamp - hour, "end_timestamp": stamp + hour, "count_back": 4}
+        request = {"endpoint": "/api/v1/fundings", "params": params}
+        try:
+            frame = client.fundings(**params)
+            normalized = json.loads(frame.to_json(orient="records", date_format="iso"))
+            request["normalized_response"] = normalized
+            request["normalized_response_sha256"] = hashlib.sha256(
+                json.dumps(normalized, sort_keys=True).encode()).hexdigest()
+            target = frame[frame.timestamp_ms == stamp]
+            if len(target) > 1:
+                raise ValueError("Conflicting or duplicate target funding payments")
+            if len(target):
+                recovered.append(target)
+                receipt["recovered_timestamp_ms"].append(stamp)
+            else:
+                receipt["unresolved_timestamp_ms"].append(stamp)
+        except Exception as exc:
+            request["error"] = str(exc)
+            receipt["requests"].append(request)
+            receipt["status"] = "fetch_failed_no_partitions_changed"
+            write_json_atomic(receipt, receipt_path)
+            raise
+        receipt["requests"].append(request)
+        write_json_atomic(receipt, receipt_path)
+        if client.request_pause_seconds:
+            time.sleep(client.request_pause_seconds)
+    additions = conform(pd.concat(recovered, ignore_index=True), "fundings", receipt["market_id"], symbol) if recovered else original.iloc[:0]
+    merged = pd.concat([original, additions], ignore_index=True).sort_values("timestamp_ms").reset_index(drop=True)
+    pd.testing.assert_frame_equal(merged[merged.timestamp_ms.isin(original.timestamp_ms)].reset_index(drop=True), original)
+    changed_months = sorted(pd.to_datetime(additions.timestamp_ms, unit="ms").dt.strftime("%Y-%m").unique())
+    # Save original bytes before replacing any partition or manifest. A receipt
+    # left at prepared/applying after interruption must be inspected, not hidden.
+    backup = audit_dir / "before"
+    backup.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(manifest_path, backup / "_manifest.json")
+    for month in changed_months:
+        path = directory / f"{month}.parquet"
+        if path.exists():
+            shutil.copy2(path, backup / path.name)
+    receipt["status"] = "applying"
+    write_json_atomic(receipt, receipt_path)
+    for month in changed_months:
+        selected = pd.to_datetime(merged.timestamp_ms, unit="ms").dt.strftime("%Y-%m") == month
+        write_atomic(merged[selected], directory / f"{month}.parquet")
+    after = summarize(directory, "1h")
+    receipt.update(after=after, status="complete" if not after["missing_intervals"] else "incomplete")
+    manifest["datasets"]["fundings_1h"] = after
+    manifest["funding_recovery"] = {"status": receipt["status"], "receipt": str(receipt_path),
+                                    "recovered_rows": len(additions), "unresolved_timestamp_ms": receipt["unresolved_timestamp_ms"]}
+    write_json_atomic(manifest, manifest_path)
+    write_json_atomic(receipt, receipt_path)
+    print(f"[{symbol}] funding gaps {len(missing)} -> {after['missing_intervals']}; receipt: {receipt_path}", flush=True)
+    return receipt
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--symbols", nargs="+", default=["ETH"])
@@ -233,8 +340,11 @@ def main() -> None:
                         help="Defaults to data/lake/lighter on mainnet, data/lake/lighter-<network> otherwise")
     parser.add_argument("--start", default=None, help="Optional UTC start; defaults to each market's listing day")
     parser.add_argument("--request-pause-seconds", type=float, default=0.5)
-    parser.add_argument("--repair", action="store_true",
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--repair", action="store_true",
                         help="Only rewrite existing partitions into the shared schema and refresh manifests (no network)")
+    actions.add_argument("--recover-funding-gaps", action="store_true",
+                         help="Recover internal hourly funding gaps, including closed months; preserve originals and source receipts")
     args = parser.parse_args()
 
     settings = dotenv_values(args.env_file) if args.env_file else {}
@@ -255,6 +365,12 @@ def main() -> None:
 
     client = PoliteLighterClient(base_url=base_url, request_pause_seconds=args.request_pause_seconds,
                                  session=retrying_session())
+    if args.recover_funding_gaps:
+        audit_root = root / "_funding_recovery" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        reports = [recover_funding_gaps(client, root, symbol.upper(), audit_root, network) for symbol in args.symbols]
+        if any(report["status"] == "incomplete" for report in reports):
+            raise SystemExit("Funding gaps remain; inspect source receipts. Funding-cost grading is not ready.")
+        return
     for symbol in args.symbols:
         backfill_market(client, symbol.upper(), root, args.datasets, args.start, network)
 

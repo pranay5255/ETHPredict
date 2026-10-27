@@ -8,10 +8,11 @@ The current experiment path uses `uv` for dependency management and a CUDA 12.8 
 
 - **History available:** ETH/BTC/SOL/HYPE/NEAR, June 4, 2025 through a partial
   October 16, 2026; 25 readable Parquet datasets, 425 verified partition hashes,
-  303.10 MB (289.06 MiB). Mark history begins August 25, 2025.
-- **Data caveat:** funding has 31 shared missing hours per market. Six missing ETH
-  hours exist in an older CSV; exchange-wide absence is unproven. Recovery is
-  [#54](https://github.com/pranay5255/ETHPredict/issues/54).
+  303.10 MB (289.06 MiB) before funding recovery. Mark history begins August 25, 2025.
+- **Funding repaired locally:** all 155 missing payments (31 per market) were
+  recovered from source; zero internal gaps remain. The #54 fix preserves
+  originals and refuses incomplete funding-cost grading. See
+  [recovery verification](context/funding_gap_fix_20261027.md); code awaits merge.
 - **Integration:** training still reads CSVs; the lake does not change old runs.
   See [the data lake runbook and audit](context/lighter_data_lake.md).
 - **Code:** [PR #51](https://github.com/pranay5255/ETHPredict/pull/51) adds
@@ -126,7 +127,7 @@ Each market gets `candles_1m`, `candles_5m`, `candles_1h`, `mark_price_5m`, and 
 
 `--env-file .env.testnet` reads only `LIGHTER_BASE_URL` and `LIGHTER_NETWORK` (API keys are ignored) and writes to `data/lake/lighter-testnet/`. Testnet has 4 perps with a few days of test activity, so use it for checking the testnet setup, not for training. The script paces requests (0.5 s by default); bursts of parallel requests trigger Lighter's human-verification page, so run one backfill at a time.
 
-Collector/API inventory recorded 2026-10-16: candles down to 1m, starting 2025-06-04 for ETH, BTC, SOL, HYPE, and NEAR; mark-price candles; 1h funding; and a paginated public trade tape (`/api/v1/trades`, 100 trades per page, newest first). Order-book history is not available; it has to be recorded from the websocket. The general training loader does not read the lake yet, so existing runs and their dataset identity are unchanged. See [the exact coverage audit](context/lighter_data_lake.md), including the 31 funding gaps and later mark-price start.
+Collector/API inventory recorded 2026-10-16: candles down to 1m, starting 2025-06-04 for ETH, BTC, SOL, HYPE, and NEAR; mark-price candles; 1h funding; and a paginated public trade tape (`/api/v1/trades`, 100 trades per page, newest first). Order-book history is not available; it has to be recorded from the websocket. The general training loader does not read the lake yet, so existing runs and their dataset identity are unchanged. See [the exact coverage audit](context/lighter_data_lake.md), including the completed funding recovery and later mark-price start.
 
 ## Lighter Testnet Trading
 
@@ -449,7 +450,7 @@ triple-barrier labels, held-out meta probabilities and directional alpha backtes
 GLFT remains a separate exploratory/passive-execution path. The earlier proposal
 to build these layers is superseded by the merged label/split/training controls.
 
-With PR #51 and its included #53 changes merged, recover funding gaps (#54), then add an explicit
+With PR #51 and its included #53 changes merged, finish merging the verified #54 fix, then add an explicit
 lake reader or immutable export with partition provenance and coverage gates.
 Specify one new mechanism/horizon before fitting: the tested continuation recipe
 failed its economic gate. Keep fixed notional and a small recorded budget; require

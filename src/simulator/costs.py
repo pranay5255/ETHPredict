@@ -91,12 +91,18 @@ class CostModel:
         self.funding = funding
         self.funding_times = funding.timestamp.astype('datetime64[ns, UTC]').astype('int64').to_numpy()
         self.funding_cumulative = np.r_[0., funding.rate_bps.to_numpy(dtype=float).cumsum()]
-        gap = pd.Timedelta(source.get('max_gap', '2h'))
+        period = pd.Timedelta(hours=float(source.get('payment_period_hours', 1.)))
+        if pd.isna(period) or period <= pd.Timedelta(0):
+            raise ValueError('Funding payment_period_hours must be positive and finite')
+        # A tolerance cannot authorize skipping a scheduled funding payment.
+        gap = min(pd.Timedelta(source.get('max_gap', period)), period)
+        if pd.isna(gap) or gap <= pd.Timedelta(0):
+            raise ValueError('Funding max_gap must be positive and finite')
         if (funding.timestamp.diff().dropna() > gap).any():
             raise DataCoverageError('Historical funding has an excessive gap', {'max_gap': str(gap)})
         if self.path is not None:
             start, end = self.timestamp(0), self.timestamp(len(self.path)-1)
-            if start is None or end is None or funding.timestamp.iloc[0] > start + gap or funding.timestamp.iloc[-1] < end - gap:
+            if start is None or end is None or funding.timestamp.iloc[0] > start or funding.timestamp.iloc[-1] < end.floor(period):
                 raise DataCoverageError('Historical funding does not cover the price path', {'start': str(start), 'end': str(end)})
         self.funding_source = source
 

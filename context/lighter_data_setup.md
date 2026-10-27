@@ -35,12 +35,13 @@ uv run python scripts/lighter_backfill_lake.py --symbols ETH BTC SOL HYPE NEAR
 The completed snapshot spans June 4, 2025 through a partial October 16, 2026:
 1m/5m/1h candles, 5m mark candles (from August 25, 2025) and hourly funding.
 All 25 dataset directories load with `pd.read_parquet(directory)` and all 425
-partition hashes match manifests. Size: 303.10 MB (289.06 MiB).
+partition hashes match manifests. Pre-recovery size: 303.10 MB (289.06 MiB).
 
-Funding has 31 shared missing hours, tracked in
-[#54](https://github.com/pranay5255/ETHPredict/issues/54); six exist in an older
-ETH archive. These are unresolved collection gaps, not verified exchange-wide
-absence. Do not zero-fill. Schema repair does not recover missing rows.
+The [#54](https://github.com/pranay5255/ETHPredict/issues/54) fix recovered all
+31 missing funding hours per market from source (155 total), with original-byte
+backups and source receipts. Zero internal gaps remain; code awaits merge. See
+[verification](funding_gap_fix_20261027.md). Unknown rates are never zero-filled;
+schema repair does not recover missing rows.
 
 See [the lake runbook](lighter_data_lake.md) for exact observed bounds, audit,
 repair and rerun semantics. Normal reruns skip existing closed-month files and

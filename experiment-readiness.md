@@ -17,15 +17,16 @@ verification is recorded in [the merge audit](context/pr51_merge_review_20261027
 
 The five-market lake is collected and readable: 25 directories, 425 matching
 partition hashes, June 2025–October 2026 coverage. General training ingestion
-remains CSV-based. Funding has 31 shared gaps per market, including six ETH hours
-present in an older archive. See [#54](https://github.com/pranay5255/ETHPredict/issues/54)
-and [the lake runbook](context/lighter_data_lake.md).
+remains CSV-based. The #54 fix recovered all 31 funding gaps per market from
+source; zero internal gaps remain. The code awaits merge. See
+[verification](context/funding_gap_fix_20261027.md) and
+[the lake runbook](context/lighter_data_lake.md).
 
 ## What must precede the next lake-backed study
 
 1. Use the merged research code and record the actual clean training commit.
    Follow [the merge audit](context/pr51_merge_review_20261027.md) for code scope.
-2. Recover funding gaps or document direct source unavailability; reject unsupported
+2. Use the repaired funding history and verify its frozen source hashes; reject unsupported
    holding periods. Do not zero-fill. Use market-specific UTC bounds and account
    for the later mark-price start and partial final day.
 3. Implement explicit lake loading or immutable CSV export. Record selected market,

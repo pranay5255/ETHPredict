@@ -14,7 +14,7 @@ splits and costs matched. Repeated deterministic seeds are not independent bets.
 `eda_frontend/` and `scripts/experiment_eda.py` summarize recorded evidence in
 `ethpredict_eda`; they do not complete the fresh snapshot/inference dashboard #45.
 The five-market lake is not automatically a dashboard input or training source.
-Show source bounds, manifest identity, 31 unresolved funding gaps (#54), the later
+Show source bounds, manifest identity, funding-recovery provenance (#54), the later
 mark start and stale/unavailable states before exposing lake-derived views.
 See [project status](../PROJECT_STATUS.md) and [the lake audit](lighter_data_lake.md).
 
