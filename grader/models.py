@@ -8,7 +8,7 @@ import shutil
 
 import pandas as pd
 
-from .data import DataContractError, _json_unique
+from .data import DataContractError, RESOLUTIONS, _json_unique
 
 
 def registry():
@@ -87,4 +87,29 @@ def contamination(identifiers, *, start_ms, end_ms, holdout_start_ms):
                 if release_ms is not None and possible else {'start_ms': start_ms, 'end_ms': end_ms} if possible else None,
             'holdout_release_eligible': release_ms is not None and holdout_start_ms >= release_ms,
             'note': 'Release timing does not establish the complete pretraining corpus or statistical independence.'})
+    return result
+
+
+def block_contamination(identifiers, blocks, clock, *, resolution, max_horizon_bars, holdout_start_ms):
+    """Separate visible fit history from each block's execution evidence.
+
+    Raw fitting includes the declared label horizon. Evaluation begins at the
+    first next-open execution and includes the reserved final liquidation bar.
+    All windows are half-open, matching the lake/tier convention.
+    """
+    if not identifiers:
+        return []
+    interval = RESOLUTIONS[resolution]
+    result = []
+    for block in blocks:
+        train_end = int(block.train[-1])+max_horizon_bars
+        last_execution = int(block.evaluation[-1])+1
+        if max(train_end,last_execution) >= len(clock):
+            raise DataContractError('Model provenance window escapes source data')
+        training = {'start_ms':int(clock[0]),'end_ms':int(clock[train_end])+interval}
+        evaluation = {'start_ms':int(clock[int(block.evaluation[0])])+interval,
+                      'end_ms':int(clock[last_execution])+interval}
+        result.append({'block':block.block+1,'training_window':training,'evaluation_window':evaluation,
+            'training':contamination(identifiers,**training,holdout_start_ms=holdout_start_ms),
+            'evaluation':contamination(identifiers,**evaluation,holdout_start_ms=holdout_start_ms)})
     return result

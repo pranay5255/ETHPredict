@@ -17,13 +17,14 @@ from .contracts import regular_bytes
 from .data import DataContractError, RESOLUTIONS
 from .evaluation_data import EvaluationData
 from .history import read_trials
-from .models import contamination, stage_models
+from .models import block_contamination, contamination, stage_models
 from .report import save_evidence, write_report
 from .runner import StrategyRunner, WorkerFailure
 from .score import block_evidence, component_score, economic_report, load_rubric
 from .tiers import load_tiers
 from .uncertainty import score_standard_error
 from .policy_importance import policy_fold_importance, summarize_policy_importance
+from .artifacts import capture_artifacts
 
 
 def now():
@@ -108,7 +109,7 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
         'score':0.,'pre_gate_score':0.,'started_at_utc':now(),'finished_at_utc':'',
         'grader':{'tag':rubric['frozen_tag'],'calibration':rubric['calibration']},'strategy':{},'data':{},
         'seeds':rubric['seeds'],'integrity':[],'economics':[],'metrics':[],'feature_importance':[],'resources':{},'uncertainty':None,
-        'failures':[],'artifacts':{'seed_blocks':[]},'qualitative':{'status':'not_run','tie_breaker_only':True}}
+        'failures':[],'artifacts':{'seed_blocks':[],'manifest':None},'qualitative':{'status':'not_run','tie_breaker_only':True}}
     result = EvaluationResult(report,[])
     frozen_check = frozen_check or verify_frozen_grader(Path(__file__).resolve().parent.parent)
     report['integrity'].append(asdict(frozen_check))
@@ -141,6 +142,9 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
                     'external_checkpoint':False,'license':'project source; no external model-weight license asserted'}]
             blocks = data.blocks(declaration)
             clock = next(iter(data.candles.datasets.values())).frame.timestamp_ms.to_numpy()
+            report['strategy']['models_by_block'] = block_contamination(declaration.pretrained_models,blocks,clock,
+                resolution=declaration.resolution,max_horizon_bars=declaration.max_horizon_bars,
+                holdout_start_ms=load_tiers()['holdout'].start_ms)
             for seed in rubric['seeds']:
                 runner.seed = seed
                 evidence,paths,importance_folds = [],[],[]
@@ -218,6 +222,16 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
                           'peak_rss_bytes':call.peak_rss_bytes,'peak_vram_bytes':call.peak_vram_bytes,
                           'audit':asdict(call.audit)} for call in runner.calls],
                 'scope':'one combined wall budget across both seeds, all blocks, declaration and integrity reruns'}
+        try:
+            manifest = capture_artifacts(directory)
+            report['artifacts']['manifest'] = manifest
+            report['integrity'].append(asdict(CheckResult('artifact_integrity',True,manifest)))
+        except Exception as exc:
+            report['score'] = 0.
+            if report['status'] == 'accepted':
+                report['status'] = 'rejected'
+            report['failures'].append({'check':'artifact_integrity','message':f'{type(exc).__name__}: {exc}'})
+            report['integrity'].append(asdict(CheckResult('artifact_integrity',False,{'error':str(exc)})))
         report['finished_at_utc'] = now()
         write_report(report,directory/'grade_report.json')
     return result

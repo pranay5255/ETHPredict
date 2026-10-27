@@ -30,3 +30,21 @@ def test_registered_checkpoint_has_license_and_conservative_release_labels():
     after=models.contamination(['timesfm-2.5'],start_ms=utc_ms('2025-09-16'),
         end_ms=utc_ms('2026-05-01'),holdout_start_ms=utc_ms('2025-09-15'))[0]
     assert after['possibly_pretraining_window'] is None and not after['holdout_release_eligible']
+
+
+def test_model_labels_separate_pre_release_training_from_each_execution_block():
+    from types import SimpleNamespace
+    import numpy as np
+    import pandas as pd
+    clock=pd.date_range('2025-09-14',periods=96,freq='h',tz='UTC').as_unit('ms').asi8
+    blocks=[SimpleNamespace(block=0,train=np.arange(10),evaluation=np.arange(12,30)),
+            SimpleNamespace(block=1,train=np.arange(24),evaluation=np.arange(50,70))]
+    report=models.block_contamination(['timesfm-2.5'],blocks,clock,resolution='1h',max_horizon_bars=1,
+                                      holdout_start_ms=utc_ms('2026-08-01'))
+    assert report[0]['evaluation'][0]['period_label']=='possibly in pretraining'
+    assert report[1]['training'][0]['period_label']=='possibly in pretraining'
+    assert report[1]['evaluation'][0]['period_label']=='after documented public release'
+    assert report[1]['evaluation_window']=={'start_ms':int(clock[50])+3600000,'end_ms':int(clock[70])+3600000}
+    assert report[1]['training_window']['end_ms']==int(clock[24])+3600000
+    assert models.block_contamination([],blocks,clock,resolution='1h',max_horizon_bars=1,
+                                      holdout_start_ms=utc_ms('2026-08-01'))==[]

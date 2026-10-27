@@ -81,6 +81,27 @@ gate. No policy threshold, gate, model hyperparameter or component map changed.
 Timestamp storage units are normalized without rounding before packet grid
 comparison; a regression fixture covers the pandas/Arrow mixed-unit issue.
 
+Artifact/report checkpoint after that integration:
+
+```text
+pytest tests/test_grader_artifacts.py tests/test_grader_models.py \
+  tests/test_grader_grade.py tests/test_grader_redteam.py -xq
+29 passed in 300.54s (0:05:00)
+pytest tests/test_grader_vendoring.py -xq
+2 passed in 1.02s
+```
+
+Every report references a manifest of the trial's inputs, positions, traces,
+opaque fitted checkpoints and other files. Hash verification rejects changed,
+missing or unmanifested files; capture rejects symlinks, hard links, special
+files and unreadable directories. The manifest/report exclusion avoids a hash
+cycle and permits later statistical rescoring. Candidate checkpoints are never
+interpreted in the scorer. Artifact/qualitative report fields reject unknown
+keys, and JSON nonfinite values (including numeric overflow) fail at any depth.
+Registered model provenance now separates each block's visible fitting window
+from its actual next-open execution window, with release labels for each.
+The full report schema and baseline-cache integration still need final review.
+
 ## Still required before freeze
 
 1. Finish production baseline-bank integration for changed markets/clocks,

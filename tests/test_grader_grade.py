@@ -1,9 +1,11 @@
 from pathlib import Path
+import json
 
 import jsonschema
 import numpy as np
 
 from grader.baselines import materialize
+from grader.artifacts import verify_artifacts
 from grader.checks import CheckResult
 from grader.grade import _evaluate
 from grader.report import load_evidence, read_report
@@ -17,6 +19,11 @@ def test_full_flat_grade_checks_two_seeds_all_blocks_and_records_zero_score(tmp_
         baseline_count=6,baseline_sharpes=[-.2,.1],baseline_net_by_seed={'17':0.,'29':0.},
         compute_uncertainty=False,device='cpu')
     report=read_report(tmp_path/'grade/grade_report.json')
+    manifest=verify_artifacts(tmp_path/'grade',report['artifacts']['manifest'])
+    paths={row['path'] for row in manifest['files']}
+    assert 'seed-17/block-1/positions.parquet' in paths
+    assert 'worker/private-worker.trace' in paths
+    assert any(name.endswith('/state.pkl') for name in paths)
     assert report['status']=='rejected' and report['score']==0.
     assert report['pre_gate_score']==.1
     assert len(report['metrics'])==2 and all(len(row['blocks'])==5 for row in report['metrics'])
@@ -49,6 +56,25 @@ def test_unknown_report_envelope_fields_are_rejected(tmp_path):
     import pytest
     with pytest.raises(jsonschema.ValidationError):
         write_report({**result.report,'unrecognized':True},tmp_path/'invalid.json')
+    from copy import deepcopy
+    value=deepcopy(result.report)
+    value['artifacts']['manifest']['unrecognized']=True
+    with pytest.raises(jsonschema.ValidationError):
+        write_report(value,tmp_path/'invalid-artifact.json')
+
+
+def test_report_reader_rejects_nonfinite_numbers_at_any_depth(tmp_path):
+    import pytest
+    from grader.data import DataContractError
+    result=_evaluate(tmp_path/'absent',tmp_path/'grade',None,mode='production',tier='dev',
+        frozen_check=CheckResult('grader_hash',False,{}),device='cpu')
+    result.report['resources']['nested']={'value':'numeric-sentinel'}
+    content=json.dumps(result.report)
+    for token in ['NaN','Infinity','1e1000']:
+        path=tmp_path/f'{token}.json'
+        path.write_text(content.replace('"numeric-sentinel"',token))
+        with pytest.raises(DataContractError,match='Nonfinite'):
+            read_report(path)
 
 
 def test_full_engineered_grade_uses_actual_policy_importance_for_both_seeds(tmp_path):

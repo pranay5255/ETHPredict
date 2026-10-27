@@ -33,7 +33,14 @@ SCHEMA = {'type':'object','additionalProperties':False,'required':sorted(FIELDS)
     'resources':{'type':'object'},'uncertainty':{'type':['object','null']},
     'failures':{'type':'array','items':{'type':'object','additionalProperties':False,'required':['check','message'],
         'properties':{'check':{'type':'string'},'message':{'type':'string'}}}},
-    'artifacts':{'type':'object'},'qualitative':{'type':'object'}}}
+    'artifacts':{'type':'object','additionalProperties':False,'required':['seed_blocks','manifest'],'properties':{
+        'seed_blocks':{'type':'array','maxItems':2,'items':{'type':'array','maxItems':5,'items':{'type':'string'}}},
+        'manifest':{'oneOf':[{'type':'null'},{'type':'object','additionalProperties':False,
+            'required':['path','sha256','files','bytes'],'properties':{'path':{'const':'artifact_manifest.json'},
+            'sha256':{'type':'string','pattern':'^[a-f0-9]{64}$'},'files':{'type':'integer','minimum':0},
+            'bytes':{'type':'integer','minimum':0}}}]}}},
+    'qualitative':{'type':'object','additionalProperties':False,'required':['status','tie_breaker_only'],
+        'properties':{'status':{'const':'not_run'},'tie_breaker_only':{'const':True}}}}}
 
 
 def write_report(value, path):
@@ -44,7 +51,14 @@ def write_report(value, path):
 
 
 def read_report(path):
-    value = json.loads(regular_bytes(Path(path), maximum=32*1024**2), object_pairs_hook=_json_unique)
+    def finite_number(token):
+        value = float(token)
+        if not np.isfinite(value):
+            raise DataContractError('Nonfinite report JSON')
+        return value
+    value = json.loads(regular_bytes(Path(path), maximum=32*1024**2), object_pairs_hook=_json_unique,
+        parse_float=finite_number,
+        parse_constant=lambda token: (_ for _ in ()).throw(DataContractError('Nonfinite report JSON')))
     jsonschema.validate(value, SCHEMA)
     if not np.isfinite([value['score'],value['pre_gate_score']]).all():
         raise DataContractError('Nonfinite report score')
