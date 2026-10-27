@@ -1,14 +1,32 @@
-# ETHPredict tasks — 2026-10-27 merge review
+# ETHPredict tasks — autoresearch P0, 2026-10-27
 
-After PR #51 closes #16/#17/#20, GitHub has **18 open issues: 6 implementation/data
-and 12 experiments**. The
+PR #51 and #53 are merged; #16/#17/#20 are closed. Funding repair #54 is
+verified on main and closed. P1–P5 now have explicit implementation issues. The
 historical backfill completes a data deliverable; it does not close snapshot,
 inference or dashboard acceptance criteria. See [project status](PROJECT_STATUS.md)
 and [the merge audit](context/pr51_merge_review_20261027.md).
 
+## Frozen autoresearch harness — sequential phases
+
+Build the environment, grader and loop; do not tune a strategy to pass. Each phase
+gets its own `autoresearch/p<N>-<slug>` branch and PR, with acceptance evidence
+before the next phase. See [design and open decisions](context/autoresearch_design.md).
+
+- [ ] P0 housekeeping/design PR: fresh 317-test baseline and 25-directory/425-hash audit complete; #54 closed; P1–P5 issues created. Complete when design is merged.
+- [ ] [#55 P1](https://github.com/pranay5255/ETHPredict/issues/55) Lake loader, provenance, availability-time contract and CSV parity.
+- [ ] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Tier/block tests and human-executed physical sealing with PermissionError evidence.
+- [ ] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) Frozen grader, inner environment, five baselines, all ten red-team fixtures and pushed grader-v1 tag.
+- [ ] [#58 P4](https://github.com/pranay5255/ETHPredict/issues/58) Driver/program, three-attempt dry run, complete ledger and private shadow results.
+- [ ] [#59 P5](https://github.com/pranay5255/ETHPredict/issues/59) Untuned frozen-head/full-finetune TimesFM seeds with Tier 0 and measured resource reports; GRPO optional.
+
+#30–#35 and #37–#39 are labeled `autoresearch-agenda`. #22/#36/#40 remain
+open; grader v1 will take over their parity/cost-stress portions. #19 sizing,
+#41 promotion and #43–#45 are outside this construction task. P2 cannot pass
+without human sealing; no secure hidden grading is claimed yet.
+
 ## Open implementation and data issues
 
-- [ ] [#54](https://github.com/pranay5255/ETHPredict/issues/54) Fix implemented and verified locally: all 155 funding gaps recovered; pending merge. See [evidence](context/funding_gap_fix_20261027.md).
+- [x] [#54](https://github.com/pranay5255/ETHPredict/issues/54) Funding fix merged at c365a81, independently reverified and closed. All 155 payments recovered; zero internal funding gaps. See [P0 audit](context/autoresearch_p0_verification.md).
 - [ ] [#19](https://github.com/pranay5255/ETHPredict/issues/19) Probability/edge/concurrency sizing with exposure limits.
 - [ ] [#22](https://github.com/pranay5255/ETHPredict/issues/22) Forecast benchmark trading parity, including TimesFM identity/failures.
 - [ ] [#43](https://github.com/pranay5255/ETHPredict/issues/43) Recurring completed-bar snapshots with provenance and freshness.
@@ -56,6 +74,6 @@ and [the merge audit](context/pr51_merge_review_20261027.md).
 - [x] PR #51 incorporates the already merged #53 branch and reconciles current main.
 
 The lake is not connected to the general training loader. Funding recovery is
-verified in [#54](https://github.com/pranay5255/ETHPredict/issues/54)'s local fix;
+merged, verified and closed in [#54](https://github.com/pranay5255/ETHPredict/issues/54);
 schema repair is a separate operation.
 More markets, lower thresholds and variable sizing are not evidence of profitability.
