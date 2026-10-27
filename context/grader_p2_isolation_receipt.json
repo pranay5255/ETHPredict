@@ -1,0 +1,54 @@
+{
+  "verified_at_utc": "2026-10-27T18:57:59.938130+00:00",
+  "human_confirmation": {
+    "local_date": "2026-10-28",
+    "timezone": "Asia/Kolkata",
+    "lake_sealed": true,
+    "private_files_moved": 247,
+    "source": "Human confirmed both fields were printed by the sealing command after built-in private verification"
+  },
+  "private_root": {
+    "path": "/srv/ethpredict-grader",
+    "uid": 997,
+    "gid": 994,
+    "mode": "0o700"
+  },
+  "ethgrader": {
+    "uid": 997,
+    "gid": 994,
+    "shell": "/usr/sbin/nologin"
+  },
+  "agent_permission_probe": {
+    "private_path_denial": "passed",
+    "permission_errors": 259,
+    "agent_uid": 1000,
+    "public_lake_private_copies": 0,
+    "overall_agent_isolation": "not proven: legacy CSV/Git/artifact copies and worker sandbox require separate checks"
+  },
+  "isolated_worker_probe": {
+    "capabilities": 0,
+    "dev_lake": "readable; pre-May partition verified",
+    "editable_paths": [
+      "src",
+      "strategy"
+    ],
+    "historical_objects_absent": 2,
+    "host_paths_denied": 10,
+    "network": "loopback only",
+    "no_new_privileges": true,
+    "pandas": "3.0.4",
+    "protected_code": "read_only",
+    "seccomp": true,
+    "torch": "2.11.0+cu128",
+    "uid": 1000
+  },
+  "sandbox_image": "sha256:9c2ff16f962f9fb5b4625958ca0edb1e8e1e99291e178df4311c661af0e06b57",
+  "sandbox_source_commit": "10acd60b66770870285c76ef05c9a659864b3a6f",
+  "sandbox_controller_sha256": "16c3dd9607a6286356dd2e98ffd2ccf4ba8eab599e370162e7c1fe76e3ee5929",
+  "scope": "Physical lake sealing and designated isolated loop-agent tool worker. Host coordinator remains trusted; P3 strategy-process sandboxing and P4 broker/loop are later work.",
+  "evaluations_performed": {
+    "strategies": 0,
+    "holdout": 0,
+    "prior_consumed_test": 0
+  }
+}

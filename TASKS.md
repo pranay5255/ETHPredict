@@ -13,16 +13,16 @@ gets its own `autoresearch/p<N>-<slug>` branch and PR, with acceptance evidence
 before the next phase. See [design and open decisions](context/autoresearch_design.md).
 
 - [x] P0 housekeeping/design merged in [#60](https://github.com/pranay5255/ETHPredict/pull/60): fresh 317-test baseline, 25-directory/425-hash audit, #54 closed and P1–P5 issues created.
-- [ ] [#55 P1](https://github.com/pranay5255/ETHPredict/issues/55) Lake loader, provenance, availability-time contract and CSV parity.
-- [ ] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Tier/block tests and human-executed physical sealing with PermissionError evidence.
+- [x] [#55 P1](https://github.com/pranay5255/ETHPredict/issues/55) Merged in [#61](https://github.com/pranay5255/ETHPredict/pull/61): standalone lake loader, provenance and availability contract; 26,496-row exact CSV parity and 355-test full suite.
+- [ ] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Tiers/splits and sealing verified: human moved 247 files, 259 real OS denials, code-only agent sandbox with real isolation probes; PR #62 ready to merge. See [runbook](context/grader_tier_sealing.md).
 - [ ] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) Frozen grader, inner environment, five baselines, all ten red-team fixtures and pushed grader-v1 tag.
 - [ ] [#58 P4](https://github.com/pranay5255/ETHPredict/issues/58) Driver/program, three-attempt dry run, complete ledger and private shadow results.
 - [ ] [#59 P5](https://github.com/pranay5255/ETHPredict/issues/59) Untuned frozen-head/full-finetune TimesFM seeds with Tier 0 and measured resource reports; GRPO optional.
 
 #30–#35 and #37–#39 are labeled `autoresearch-agenda`. #22/#36/#40 remain
 open; grader v1 will take over their parity/cost-stress portions. #19 sizing,
-#41 promotion and #43–#45 are outside this construction task. P2 cannot pass
-without human sealing; no secure hidden grading is claimed yet.
+#41 promotion and #43–#45 are outside this construction task. P2 sealing is verified; P3 hidden strategy execution and P4 private grading
+service remain unimplemented. No secure hidden grading or strategy edge is claimed.
 
 ## Open implementation and data issues
 

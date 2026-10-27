@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/grader/**)",
+      "Read(//srv/ethpredict-grader/**)",
+      "Read(/autoresearch/shadow*)"
+    ]
+  }
+}
