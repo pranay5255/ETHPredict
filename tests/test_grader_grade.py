@@ -12,17 +12,31 @@ from grader.report import load_evidence, read_report
 from test_grader_evaluation_data import fixture_data
 
 
-def test_full_flat_grade_checks_two_seeds_all_blocks_and_records_zero_score(tmp_path):
+def test_full_flat_grade_checks_two_seeds_all_blocks_and_records_zero_score(tmp_path,monkeypatch):
+    import grader.grade as grading
+    from grader.runner import StrategyRunner
+    from grader.grade import data_identity
+    runners=[]
+    class TrackingRunner(StrategyRunner):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs);runners.append(self)
+    monkeypatch.setattr(grading,'StrategyRunner',TrackingRunner)
+    def baseline_provider(declaration,data):
+        assert runners[0].process.poll() is not None and runners[0].guard is None
+        return {'trial_count':6,'trial_sharpes':[-.2,.1],'best_net_by_seed':{'17':0.,'29':0.},
+            'grading_fingerprint':'synthetic-fixture','data_sha256':data_identity(data)['sha256'],
+            'markets':['ETH'],'resolution':'1h','tier':'dev','winner':'flat'}
     source=materialize('flat',tmp_path/'source',markets=['ETH'],resolution='1h')
     result=_evaluate(source,tmp_path/'grade',lambda declaration:fixture_data(),mode='fixture',tier='dev',
         frozen_check=CheckResult('grader_hash',True,{'synthetic_fixture':True}),
-        baseline_count=6,baseline_sharpes=[-.2,.1],baseline_net_by_seed={'17':0.,'29':0.},
+        baseline_provider=baseline_provider,
         compute_uncertainty=False,device='cpu')
     report=read_report(tmp_path/'grade/grade_report.json')
     manifest=verify_artifacts(tmp_path/'grade',report['artifacts']['manifest'])
     paths={row['path'] for row in manifest['files']}
     assert 'seed-17/block-1/positions.parquet' in paths
     assert 'worker/private-worker.trace' in paths
+    assert 'baseline_bank.json' in paths
     assert any(name.endswith('/state.pkl') for name in paths)
     assert report['status']=='rejected' and report['score']==0.
     assert report['pre_gate_score']==.1

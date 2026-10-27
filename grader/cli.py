@@ -10,6 +10,7 @@ import sys
 import uuid
 
 from .baseline_bank import build_bank, read_bank
+from .baseline_cache import comparable_bank, get_bank
 from .baselines import NAMES, materialize
 from .data import DataContractError
 from .evaluation_data import EvaluationData
@@ -37,6 +38,10 @@ def _private(args):
         root = Path('/srv/ethpredict-grader')
         if os.geteuid()!=uid or not Path(args.output).resolve().is_relative_to(root):
             raise DataContractError('Shadow inputs and every artifact must remain inside the ethgrader service')
+        for field in ['baseline_bank','baseline_cache','private_lake']:
+            value = getattr(args,field,None)
+            if value is not None and not Path(value).resolve().is_relative_to(root):
+                raise DataContractError(f'Shadow {field} must remain inside the ethgrader service')
 
 
 def main(argv=None):
@@ -52,7 +57,8 @@ def main(argv=None):
         command.add_argument('--device',choices=['cpu','cuda'],default='cuda')
         if name=='grade':
             command.add_argument('--strategy',required=True)
-            command.add_argument('--baseline-bank',default='artifacts/grader-baselines/baseline_bank.json')
+            command.add_argument('--baseline-bank')
+            command.add_argument('--baseline-cache')
             command.add_argument('--ledger',default='autoresearch/ledger.jsonl')
             command.add_argument('--trial-id')
         else:
@@ -64,6 +70,8 @@ def main(argv=None):
     if args.output is None:
         root = '/srv/ethpredict-grader/runs' if args.tier=='shadow' else 'artifacts/grader'
         args.output = str(Path(root)/str(uuid.uuid4()))
+    if args.command=='grade' and args.baseline_cache is None:
+        args.baseline_cache = '/srv/ethpredict-grader/baselines' if args.tier=='shadow' else 'artifacts/grader-baselines/cache'
     _private(args)
     models = {**cached_model_paths(),**_models(args.model_path)}
     output = Path(args.output).resolve()
@@ -79,29 +87,26 @@ def main(argv=None):
             tier=args.tier,private_root=args.private_lake),mode='baseline_calibration',tier=args.tier,
             model_paths=models,device=args.device)
     else:
-        # Missing/bad bank or ledger is an integrity failure inside the report
-        # path, not permission to compare against an invented zero baseline.
-        bank_holder = {}
+        # Invalid ledgers/caches fail inside the report path. A missing cache
+        # initializes the same six trusted baselines for the declared population.
         preflight_error = None
         def factory(declaration):
             if preflight_error is not None:
                 raise DataContractError(preflight_error)
-            bank = read_bank(args.baseline_bank);bank_holder['bank'] = bank
-            data = EvaluationData.load(args.lake,declaration,tier=args.tier,private_root=args.private_lake)
-            from .grade import data_identity
-            if bank['data_sha256']!=data_identity(data)['sha256'] or bank['resolution']!=declaration.resolution or set(bank['markets'])!=set(declaration.markets):
-                raise DataContractError('Baseline bank does not match every declared market, clock and source block')
-            return data
+            return EvaluationData.load(args.lake,declaration,tier=args.tier,private_root=args.private_lake)
+        def provider(declaration,data):
+            if args.baseline_bank is not None:
+                return comparable_bank(read_bank(args.baseline_bank),declaration,data)
+            return get_bank(args.lake,args.baseline_cache,declaration,data,model_paths=models,
+                private_root=args.private_lake,device=args.device,progress=lambda line:print(line,flush=True))
         try:
-            bank = read_bank(args.baseline_bank)
             history = read_trials(args.ledger)
         except Exception as exc:
-            preflight_error = f'Baseline/ledger preflight failed: {type(exc).__name__}: {exc}'
-            bank,history = {},None
+            preflight_error = f'Ledger preflight failed: {type(exc).__name__}: {exc}'
+            history = None
         result = _evaluate(args.strategy,output,factory,mode='production',tier=args.tier,
             model_paths=models,trial_id=args.trial_id,history=history,device=args.device,
-            baseline_count=bank.get('trial_count',0),baseline_sharpes=bank.get('trial_sharpes',()),
-            baseline_net_by_seed=bank.get('best_net_by_seed',{}))
+            baseline_provider=provider)
     print(f'score: {result.report["score"]:.12f}')
     print(f'status: {result.report["status"]}')
     return 0

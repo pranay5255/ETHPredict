@@ -102,10 +102,32 @@ Registered model provenance now separates each block's visible fitting window
 from its actual next-open execution window, with release labels for each.
 The full report schema and baseline-cache integration still need final review.
 
+Baseline initialization is now wired to the production CLI. Its cache key
+covers the grading fingerprint, execution-data identity, declared market set,
+clock and tier. A key-specific OS lock serializes construction; each attempt
+retains stable artifact paths and only a validated complete bank gets an atomic
+index. Existing corrupt indexes/banks fail closed. The reader rederives the
+winning baseline, per-seed thresholds and Sharpe history from all six reports,
+and verifies their artifact manifests. Initialization runs after the candidate
+worker releases its GPU reservation. Shadow bank/cache paths must stay under
+the private service. No full real-data bank has been run yet.
+
+```text
+pytest tests/test_grader_baseline_bank.py tests/test_grader_baseline_cache.py \
+  tests/test_grader_grade.py -xq
+21 passed in 80.35s (0:01:20)
+```
+
+Cache/bank unit fixtures use synthetic trusted-report stubs; they do not stand
+in for the full real-data baseline acceptance table. The grade tests use real
+audited workers and verify that the provider runs after worker shutdown and its
+bank snapshot is included in the trial's artifact manifest.
+
 ## Still required before freeze
 
-1. Finish production baseline-bank integration for changed markets/clocks,
-   cache validation, nested report validation and artifact persistence.
+1. Finish nested report validation and final integration review. Baseline-bank
+   initialization and artifact persistence are wired and have targeted tests;
+   the actual complete baseline run remains below.
 2. Run all baselines on the full common dev blocks; commit per-block numbers and
    measured runtimes in `grader_v1_baselines.md`. No full real-data bank has run.
 3. Calibrate only pre-gate component maps under the approved interpretation,

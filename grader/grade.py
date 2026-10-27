@@ -97,7 +97,7 @@ def rescore(result, *, trial_sharpes, trial_count, baseline_net_by_seed, compute
 
 def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=None, frozen_check=None,
               trial_id=None, history=None, baseline_count=0, baseline_sharpes=(), baseline_net_by_seed=None,
-              compute_uncertainty=True, device='cuda'):
+              baseline_provider=None, compute_uncertainty=True, device='cuda'):
     """Shared production/calibration/fixture path; the CLI controls the mode.
 
     Only production is eligible for the loop. Calibration materializes known
@@ -193,6 +193,17 @@ def _evaluate(candidate, directory, data_factory, *, mode, tier, model_paths=Non
                 if declaration.engineered_features:
                     report['feature_importance'].append({'seed':seed,'report':summarize_policy_importance(importance_folds)})
             report['integrity'] += [asdict(CheckResult(name,True,{'calls':len(runner.calls)})) for name in ['schema','tier_isolation','budget']]
+        if baseline_provider is not None:
+            # Release the candidate's CUDA reservation before trusted baseline
+            # initialization. These independent comparisons are not candidate
+            # fit/predict calls and cannot consume or reduce its VRAM budget.
+            stage = 'baseline'
+            bank = baseline_provider(declaration,data)
+            baseline_count,baseline_sharpes = bank['trial_count'],bank['trial_sharpes']
+            baseline_net_by_seed = bank['best_net_by_seed']
+            (directory/'baseline_bank.json').write_text(json.dumps(bank,sort_keys=True,allow_nan=False)+'\n')
+            report['grader']['baseline'] = {key:bank[key] for key in ['grading_fingerprint','data_sha256',
+                'markets','resolution','tier','trial_count','winner','best_net_by_seed']}
         history = history or {'count':0,'sharpes':[],'trials':{}}
         existing = history['trials'].get(report['trial_id'],{})
         count = baseline_count+history['count']+(0 if existing else 1)
