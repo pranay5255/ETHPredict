@@ -1,4 +1,4 @@
-# ETHPredict project status — autoresearch P2 verified, 2026-10-28
+# ETHPredict project status — autoresearch P3 in progress, 2026-10-28
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, all 31 funding gaps per market are recovered on main, and no
@@ -78,8 +78,11 @@ ethgrader owns the private root (0700), and the real agent received 259
 PermissionErrors. A tested dev-only Docker tool worker excludes old CSV/Git/
 artifact copies, with fresh code-only history and no external network.
 See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
-grader/environment, driver and untuned seeds, remain incomplete. P3 replay accounting
-and worker restrictions have targeted tests; P4–P5 have not started. No grader-v1 tag or runnable
+grader/environment, driver and untuned seeds, remain incomplete. P3 has grade/report
+orchestration, baseline adapters, all ten integrated synthetic red teams, and a
+519-test full suite; feature/noise integration, full baseline runs and freezing
+remain. See [P3 evidence](context/grader_p3_integration_verification.md).
+P4–P5 have not started. No grader-v1 tag or runnable
 secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.
 Historical backfill alone completes no experiment acceptance criterion.
 

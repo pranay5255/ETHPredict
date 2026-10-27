@@ -4,9 +4,11 @@ P2 is merged in #62 (`86a9df0`). The human confirmed `lake_sealed: true` and
 `private_files_moved: 247`; the P2 receipt records 259 real OS denials. Nothing
 in P3 changes private ownership, invokes sudo, or evaluates holdout.
 
-The worker boundary is implemented and has actual subprocess tests. The full
-grader, baseline bank, calibration, all ten integrated red-team grades and
-`grader-v1` freeze are still pending. This document is not P3 acceptance.
+The worker boundary has actual subprocess tests. Grade/report orchestration,
+baseline adapters and all ten integrated synthetic red teams are now verified;
+see [the integration checkpoint](grader_p3_integration_verification.md).
+Engineered-feature/noise evaluation, the full real-data baseline bank,
+calibration and `grader-v1` freeze remain pending. This is not P3 acceptance.
 
 ## Controller and worker memory
 
@@ -32,6 +34,10 @@ historical CSV, artifacts, credentials, and the candidate's grader directory.
 The parent validates position bytes from a bounded regular file with no symlink
 or hard links, then checks exact schema, UTC clock, every market, and finite caps.
 
+Worker provenance describes only the exact slice and its SHA-256. Complete
+monthly provenance remains in the trusted report. Baseline source templates
+are not importable grader modules; only the isolated worker loads them.
+
 ## Linux enforcement and audit
 
 This host supports Landlock ABI 4; ABI 3 or later is required for truncate
@@ -46,6 +52,12 @@ Trusted child bootstrap initializes CUDA and a tiny gradient before sealing,
 without loading market data or candidate code. Candidate code receives no broad
 `/proc`, `/tmp`, home, shared-memory directory, or Docker socket access. The
 CPU runner receives no NVIDIA device access.
+
+After inherited descriptor closure, the worker may enumerate its own
+`/proc/self/fd`. A real O_PATH/proc alias test proves it cannot reopen an outside
+file through that view. Parent/server FD and memory paths remain denied. The
+surrounding checkout is removed from the child's import search path; the
+already loaded grader package retains its fixed path.
 
 Strace follows the server and descendants. It must observe successful Landlock
 installation and the worker's exit. File opens after confinement are resolved
@@ -67,7 +79,8 @@ All candidate calls, including declaration and integrity reruns, consume the
 same runner wall-clock budget; grader file preparation/scoring is separate.
 Timeout kills the worker and clean server. Every started call, including a
 timeout, has a controller-side record. Child `wait4` peak RSS supplements
-10 ms aggregate descendant RSS sampling; inability to read resource telemetry
+10 ms aggregate descendant RSS sampling. Recorded peaks are checked again after
+exit, including peaks missed between polls; inability to read resource telemetry
 fails closed. CUDA initialization is charged to candidate-call time.
 
 For CUDA, an independent data-free process reserves total device memory minus

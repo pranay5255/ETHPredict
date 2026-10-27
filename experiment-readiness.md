@@ -1,4 +1,4 @@
-# Experiment readiness — autoresearch P2 verified, 2026-10-28
+# Experiment readiness — autoresearch P3 in progress, 2026-10-28
 
 Bounded offline research has already run on the PR #51/#53 branches. It produced
 negative or insufficient economic evidence, not a promoted strategy. The #51

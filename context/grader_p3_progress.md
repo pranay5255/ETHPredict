@@ -1,5 +1,9 @@
 # Grader P3 progress — 2026-10-28
 
+This is the earlier worker/accounting checkpoint. Current integration progress,
+the 519-test suite, all ten red teams and remaining acceptance work are recorded
+in [the integration verification](grader_p3_integration_verification.md).
+
 P2 merged at `86a9df0` in PR #62; issue #56 is closed. The human confirmed the
 sealing summary, and the committed P2 receipt already contains that confirmation.
 No sealing rerun or private-data access is required from the agent.
@@ -61,7 +65,7 @@ revision `1d952420fba87f3c6dee4f240de0f1a0fbc790e3`, `model.safetensors`
 `cd3315b760d5cc7e278d7afdf41b897031ced888fc6c115bd9b3ac0ea2c47408`.
 This is artifact verification, not a baseline grade or contamination clearance.
 
-## Still required before P3 acceptance
+## Work remaining at the earlier checkpoint
 
 1. Complete grade/report orchestration and CLI, including model registration,
    source identity, trial accounting, bootstrap uncertainty, contamination labels
