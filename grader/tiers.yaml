@@ -1,0 +1,16 @@
+version: 1
+tiers:
+  dev:
+    start: '2025-06-04T00:00:00Z'
+    end: '2026-05-01T00:00:00Z'
+  shadow:
+    start: '2026-05-01T00:00:00Z'
+    end: '2026-08-01T00:00:00Z'
+  holdout:
+    start: '2026-08-01T00:00:00Z'
+    end: '2026-10-16T00:00:00Z'
+block_layout:
+  evaluation_blocks: 5
+  initial_training_groups: 1
+  purge: lookback_plus_max_horizon
+  embargo: sequence_plus_horizon
