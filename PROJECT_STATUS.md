@@ -1,4 +1,4 @@
-# ETHPredict project status — autoresearch P2 pending human sealing, 2026-10-27
+# ETHPredict project status — autoresearch P2 verified, 2026-10-28
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, all 31 funding gaps per market are recovered on main, and no
@@ -27,7 +27,10 @@ strategy has qualified for promotion.
 
 ETH/BTC/SOL/HYPE/NEAR now have monthly mainnet Parquet under ignored
 `data/lake/lighter/`, starting 2025-06-04 and ending during 2026-10-16.
-All 25 directories load as tables; all 425 hashes match their manifests;
+The pre-sealing audit loaded all 25 directories and verified all 425 hashes.
+After human sealing on 2026-10-28, 275 dev partitions remain public and 150
+private partitions are owned by ethgrader; 97 recovery files are quarantined.
+The agent verified 259 OS permission denials and a dev-only tool sandbox.
 Before funding recovery, Parquet totaled 303.10 MB (289.06 MiB). Candles have zero internal gaps and
 mark prices have zero internal gaps after 2025-08-25 15:25 UTC.
 
@@ -70,9 +73,10 @@ The completed lake supplies more research coverage, not a demonstrated edge.
 
 The active construction task is the frozen autoresearch harness. P0 merged in
 [#60](https://github.com/pranay5255/ETHPredict/pull/60); P1 supplies data contracts.
-P2 (#56) has tested tiers/splits/sealing tooling, with a read-only plan for 150
-partitions and 97 recovery files. Human execution and actual denial remain
-pending; historical CSV/Git/artifact copies also need a restricted agent view.
+P2 (#56) is verified: the human sealed 150 partitions and 97 recovery files;
+ethgrader owns the private root (0700), and the real agent received 259
+PermissionErrors. A tested dev-only Docker tool worker excludes old CSV/Git/
+artifact copies, with fresh code-only history and no external network.
 See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
 grader/environment, driver and untuned seeds, have not started. No grader-v1 tag or runnable
 secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.

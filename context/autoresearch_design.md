@@ -1,7 +1,7 @@
 # Frozen research harness design
 
-Status: P0 merged in #60; P1 merged in #61, 2026-10-27. P2 tooling is
-implemented but awaits human sealing/isolation acceptance. P3–P5 have not started. This project builds a research environment, grader and bounded
+Status: P0 merged in #60; P1 merged in #61, 2026-10-27. P2 sealing/isolation is verified (human seal, 259 OS denials and a tested
+dev-only agent tool worker); PR #62 is ready to merge. P3–P5 have not started. This project builds a research environment, grader and bounded
 driver. It does not search for an edge during construction, submit orders, sign
 transactions, read credentials or promote a strategy. Existing bounded studies
 lost money after costs. No strategy edge is claimed.
@@ -351,8 +351,11 @@ grade/resource reports in `context/autoresearch_seed_strategies.md`.
 
 ## Open decisions and operational gates
 
-1. Before P2 acceptance, the human must execute sealing and resolve any readable
-   duplicate sources. No secure-shadow claim before real OS denial evidence.
+1. P2 isolation is verified on 2026-10-28: the human completed sealing, the
+   actual agent received 259 PermissionErrors, and the designated dev-only tool
+   worker excludes duplicate CSV/Git/artifact sources. The host coordinator
+   remains trusted. P3 must still prove private strategy-process isolation and
+   P4 must implement the narrow grading broker; hidden grading is not ready.
 2. Before P3 freeze, implement the approved pre-gate calibration distinction,
    and choose/freeze execution-cost configuration and bootstrap expected block
    length using declared methodology, without strategy tuning.
