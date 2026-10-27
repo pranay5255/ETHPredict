@@ -1,0 +1,180 @@
+"""Worker-only wrapper of the existing LSTM/nested-OOF meta-label recipe.
+
+Time-valued 5m recipe parameters retain their duration on the declared clock.
+The lake frame replaces only the legacy CSV reader. Training, normalization,
+early stopping, OOF meta labels, calibration and forecast mapping are reused.
+No future inference label is synthesized; diagnostic truth columns remain NaN
+and are never model inputs. Grader accounting executes the resulting targets.
+"""
+from copy import deepcopy
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+import yaml
+
+from grader.data import LakeLoader, RESOLUTIONS
+from src.data.features_all import DataPreprocessor, bar_coverage_report
+from src.experiments import meta_labeling_mvp as recipe
+
+
+class SlicePreprocessor(DataPreprocessor):
+    def __init__(self, frame, **kwargs):
+        super().__init__(**kwargs)
+        self.source = frame
+
+    def load_price_data(self):
+        resolution = self.granularities[0]
+        interval = RESOLUTIONS[resolution]
+        frame = self.source.copy().reset_index(drop=True)
+        if not np.isfinite(frame[['open', 'high', 'low', 'close', 'volume', 'quote_asset_volume']]).all().all() or (
+                frame.timestamp_ms.diff().dropna() != interval).any():
+            raise ValueError('Recipe input requires complete finite source candles')
+        frame['open_time'] = frame.timestamp_ms
+        frame['close_time'] = frame.timestamp_ms + interval - 1
+        frame['timestamp'] = pd.to_datetime(frame.timestamp_ms, unit='ms', utc=True).dt.tz_localize(None)
+        self._price_frames = {resolution: frame}
+        self._source_timestamps = {resolution: pd.DatetimeIndex(frame.timestamp)}
+        self._last_bar_reports[resolution] = bar_coverage_report(frame, granularity=resolution,
+                                                               bar_type='time', source_rows=len(frame))
+        return self._price_frames
+
+
+class Strategy:
+    name = 'existing-lstm-meta-recipe'
+    markets = ['ETH']
+    resolution = '1h'
+    budget_tier = 'long'
+    engineered_features = ['ohlcv', 'returns', 'realized_volatility', 'volume']
+
+    def __init__(self):
+        interval = RESOLUTIONS[self.resolution]
+        self.sequence = 4 * 3_600_000 // interval
+        self.warmup = 7 * 24 * 3_600_000 // interval
+        self.max_horizon_bars = 3_600_000 // interval
+        self.lookback_bars = self.warmup + self.sequence + 1
+
+    def _configuration(self, seed, directory, funding):
+        config = yaml.safe_load(Path(__file__).with_name('recipe.yaml').read_text())
+        interval = RESOLUTIONS[self.resolution]
+        hour = 3_600_000 // interval
+        config['experiment']['seed'] = seed
+        config['training'].update(sequence_length=self.sequence, ensemble_seeds=[seed])
+        config['data'].update(dir=str(directory), granularity=self.resolution)
+        config['bars'].update(time_interval=self.resolution, max_missing_fraction=0.)
+        config['targets']['horizons']['next_hour']['bars'] = hour
+        config['labels']['meta_triple_barrier'].update(vertical_barriers={'next_hour': hour}, volatility_window=24*hour)
+        config['validation'].update(purge_bars=hour, embargo_bars=hour)
+        config['alpha_backtest']['cooldown_bars'] = hour
+        config['costs']['dynamic_funding']['paths'] = [str(funding)]
+        config['costs']['execution']['seed'] = seed
+        config['feature_importance']['seed'] = seed
+        return config
+
+    def _funding(self, market, frame, directory):
+        first = pd.Timestamp(int(frame.timestamp_ms.iloc[0]), unit='ms', tz='UTC').floor('h')
+        end = pd.Timestamp(int(frame.available_at_ms.iloc[-1])+1, unit='ms', tz='UTC')
+        source = LakeLoader(self.lake).load(market, 'fundings_1h', '1h', first, end, require_complete=False)
+        if any(gap['kind'] != 'before_source_start' for gap in source.provenance['gaps']):
+            raise ValueError('Missing recipe funding history')
+        path = directory / f'{market}-recipe-funding.csv'
+        source.frame[['timestamp_ms', 'rate', 'direction']].assign(
+            timestamp=pd.to_datetime(source.frame.timestamp_ms, unit='ms', utc=True)
+        )[['timestamp', 'rate', 'direction']].to_csv(path, index=False)
+        return path, source.frame
+
+    def fit(self, train, ctx):
+        if ctx.dev_lake is None:
+            raise ValueError('Recipe requires a causal lake view')
+        self.lake, self.seed, self.device = ctx.dev_lake, ctx.seed, ctx.device
+        self.models = {}
+        for market in self.markets:
+            frame = train.datasets[market].frame
+            directory = ctx.scratch_dir / market
+            directory.mkdir()
+            funding_path, funding = self._funding(market, frame, directory)
+            # The raw opening candle has no observed preceding funding payment.
+            # Exclude it from this cost-dependent recipe rather than fabricate one.
+            frame = frame[frame.available_at_ms-1 >= funding.timestamp_ms.iloc[0]].reset_index(drop=True)
+            config = self._configuration(ctx.seed, directory, funding_path)
+            original = recipe.DataPreprocessor
+            try:
+                recipe.DataPreprocessor = lambda **kwargs: SlicePreprocessor(frame, **kwargs)
+                dataset = recipe.build_multi_horizon_lighter_dataset(config)
+            finally:
+                recipe.DataPreprocessor = original
+            samples = dataset['samples']
+            indices = np.flatnonzero(samples.sample_index.to_numpy() >= self.warmup+self.sequence)
+            if ctx.train_anchor_end_ms is not None:
+                clock = pd.to_datetime(samples.timestamp, utc=True).dt.as_unit('ms').astype('int64')
+                indices = indices[clock.iloc[indices].to_numpy() <= ctx.train_anchor_end_ms]
+            if len(indices) < 8:
+                raise ValueError('Insufficient fully observed recipe training contexts')
+            model, history = recipe.train_base_model(dataset, indices, config, torch.device(ctx.device))
+            meta, audit = recipe.fit_outer_meta_model(dataset, indices, config, torch.device(ctx.device))
+            self.models[market] = {'model': model, 'meta': meta, 'columns': dataset['feature_columns'],
+                                   'config': config, 'training_history': history, 'meta_audit': audit}
+            torch.save(model.state_dict(), directory / 'base.pt')
+
+    def predict(self, history, decision_times):
+        output = []
+        for market in self.markets:
+            fitted = self.models[market]
+            source = history.datasets[market].frame
+            directory = Path.cwd() / market
+            directory.mkdir()
+            funding, _ = self._funding(market, source, directory)
+            config = deepcopy(fitted['config'])
+            config['costs']['dynamic_funding']['paths'] = [str(funding)]
+            preprocessor = SlicePreprocessor(source, data_dir=str(directory), granularities=[self.resolution],
+                feature_config=config['features'], bar_config=config['bars'], side_data_config={})
+            features, _ = preprocessor.get_base_dataset(self.resolution)
+            settings = config['feature_importance']
+            count = int(settings['noise_features']) if settings['enabled'] else 0
+            noise = np.random.default_rng(settings['seed']).normal(size=(len(features),count))
+            for column in range(count):
+                features[f'diagnostic_noise_{column}'] = noise[:,column]
+            if list(features) != fitted['columns']:
+                raise ValueError('Recipe feature contract changed')
+            clock = pd.DatetimeIndex(pd.to_datetime(source.available_at_ms, unit='ms', utc=True))
+            locations = clock.get_indexer(decision_times)
+            if (locations < self.warmup+self.sequence).any():
+                raise ValueError('Recipe needs a full causal feature/sequence warmup')
+            values = features.to_numpy(dtype=np.float32)
+            X = torch.tensor(np.stack([values[i-self.sequence:i] for i in locations]))
+            if not torch.isfinite(X).all():
+                raise ValueError('Nonfinite recipe inference features')
+            raw = preprocessor.price_frame(self.resolution)
+            volatility = np.log(raw.close).diff().rolling(24*self.max_horizon_bars, min_periods=2).std()
+            samples = raw.iloc[locations][['timestamp', 'open', 'high', 'low', 'close', 'volume']].reset_index(drop=True)
+            samples['sample_index'] = locations
+            samples['realized_vol'] = volatility.iloc[locations].to_numpy()
+            samples['vol_regime'] = 0.  # original selected feature set excludes regime
+            if not np.isfinite(samples.realized_vol).all():
+                raise ValueError('Unavailable recipe volatility')
+            # The existing inference helper carries truth fields for diagnostics.
+            # Mark unobserved labels explicitly; they are never filled or consumed.
+            dataset = {'X': X, 'samples': samples, 'y_ret': torch.full((len(X),1), float('nan')),
+                'y_dir': torch.full((len(X),1), float('nan')), 'input_size': len(features.columns),
+                'horizon_names': ['next_hour'], 'horizon_bars': {'next_hour': self.max_horizon_bars},
+                'granularity': self.resolution, 'price_path': raw, 'feature_columns': fitted['columns'],
+                'feature_frame': features}
+            predictions = recipe.predict_base_model(fitted['model'], dataset, np.arange(len(X)), torch.device(self.device), batch_size=128)
+            candidates = recipe.candidate_signals(predictions, dataset, config)
+            meta = fitted['meta']
+            if meta.feature_columns and not np.isfinite(candidates[meta.feature_columns].to_numpy(dtype=float)).all():
+                raise ValueError('Unknown meta-model input')
+            candidates = recipe.add_meta_probabilities(candidates, meta)
+            threshold = getattr(meta, 'decision_threshold', None)
+            threshold = config['alpha_backtest']['meta_threshold'] if threshold is None else threshold
+            eligible = candidates.is_candidate & candidates.meta_prob.ge(threshold) & candidates.expected_edge_bps.gt(config['alpha_backtest']['edge_threshold_bps'])
+            targets = np.zeros(len(candidates), dtype=float)
+            next_entry = 0
+            for index, row in candidates.iterrows():
+                if index >= next_entry and bool(eligible.iloc[index]):
+                    end = min(len(targets), index+self.max_horizon_bars)
+                    targets[index:end] = row.side
+                    next_entry = index+self.max_horizon_bars
+            output.append(pd.DataFrame({'timestamp': decision_times, 'market': market, 'target_position': targets}))
+        return pd.concat(output, ignore_index=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -29,13 +30,16 @@ class Declaration:
     budget_tier: str
     engineered_features: tuple[str, ...] = ()
     pretrained_models: tuple[str, ...] = ()
+    uses_dev_lake: bool = True
 
     @classmethod
     def parse(cls, value):
         fields = {'name', 'markets', 'resolution', 'max_horizon_bars', 'lookback_bars',
                   'budget_tier', 'engineered_features', 'pretrained_models'}
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or set(value) - {'uses_dev_lake'} != fields:
             raise DataContractError('Unknown or missing strategy declaration fields')
+        if type(value.get('uses_dev_lake', True)) is not bool:
+            raise DataContractError('uses_dev_lake must be boolean')
         if not isinstance(value['name'], str) or not re.fullmatch(r'[A-Za-z0-9_ .-]{1,128}', value['name']):
             raise DataContractError('Invalid strategy name')
         markets = value['markets']
@@ -82,6 +86,7 @@ class FitContext:
     replay_env: ReplayFactory | None
     dev_lake: Path | None           # grader-produced, availability-filtered view
     train_anchor_end_ms: int | None
+    models: dict[str, Path]
 
 
 def write_market_data(data: MarketData, directory: Path):
@@ -90,8 +95,19 @@ def write_market_data(data: MarketData, directory: Path):
     for market, item in data.datasets.items():
         if not re.fullmatch(r'[A-Z][A-Z0-9]{0,15}', market):
             raise DataContractError('Invalid market in input')
-        item.frame.to_parquet(directory / f'{market}.parquet', index=False)
-        specification[market] = {'file': f'{market}.parquet', 'provenance': item.provenance}
+        path = directory / f'{market}.parquet'
+        item.frame.to_parquet(path, index=False)
+        # Original monthly manifests can describe future partitions. Preserve
+        # their complete provenance in the trusted report, never in a worker's
+        # causal input. The worker sees the exact slice's identity and hash.
+        frame = item.frame
+        provenance = {'market':market,'scope':'grader_supplied_causal_slice',
+            'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'rows':len(frame),
+            'first_ms':int(frame.timestamp_ms.min()) if len(frame) else None,
+            'last_ms':int(frame.timestamp_ms.max()) if len(frame) else None,
+            'last_available_at_ms':int(frame.available_at_ms.max()) if len(frame) and 'available_at_ms' in frame else None,
+            'market_id':int(frame.market_id.iloc[0]) if len(frame) and 'market_id' in frame else None}
+        specification[market] = {'file': f'{market}.parquet', 'provenance': provenance}
     (directory / 'market_data.json').write_text(json.dumps(specification, allow_nan=False))
 
 

@@ -43,9 +43,13 @@ def snapshot_candidate(source: Path, target: Path):
     """Copy code only: no .git, CSV, artifacts, credentials or mutable grader."""
     source = source.resolve(strict=True)
     target.mkdir(parents=True)
+    strategy_root = source/'strategy'
+    repository = source
+    if (source/'strategy.py').is_file():
+        strategy_root = source
+        repository = next((p for p in source.parents if (p/'src').is_dir()), source.parent)
     total = 0
-    for name in ['src', 'strategy']:
-        root = source / name
+    for name, root in [('src', repository/'src'), ('strategy', strategy_root)]:
         if not root.exists():
             continue
         if root.is_symlink():
@@ -61,7 +65,7 @@ def snapshot_candidate(source: Path, target: Path):
             total += len(content)
             if total > 32 * 1024**2:
                 raise WorkerFailure('Candidate code exceeds 32 MiB')
-            destination = target / path.relative_to(source)
+            destination = target / name / path.relative_to(root)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
     if not (target / 'strategy' / 'strategy.py').is_file():
@@ -74,6 +78,7 @@ def runtime_paths(*, gpu=False):
             '/sys', '/proc/driver/nvidia', '/proc/cpuinfo', '/proc/meminfo',
             '/proc/sys/vm/mmap_min_addr',
             '/proc/self/maps', '/proc/self/status', '/proc/self/stat', '/proc/self/statm',
+            '/proc/self/fd',  # own descriptors only, after inherited descriptor closure
             '/etc/ld.so.cache', '/etc/localtime', '/etc/nsswitch.conf', '/etc/passwd', '/etc/group',
             '/dev/random', '/dev/urandom']
     write = ['/dev/null']
@@ -89,16 +94,17 @@ class StrategyRunner:
     output is reused read-only; predict state is always discarded between calls.
     All fit/predict calls, including causality and determinism reruns, count.
     """
-    def __init__(self, candidate, directory, *, seed, device='cpu', registered_model_paths=()):
+    def __init__(self, candidate, directory, *, seed, device='cpu', registered_model_paths=None, lake_view=None):
         protect_parent_memory()
         self.directory = Path(directory).resolve()
         self.directory.mkdir(parents=True)
         self.candidate = self.directory / 'candidate'
         snapshot_candidate(Path(candidate), self.candidate)
         self.seed, self.device = seed, device
-        self.model_paths = [str(Path(p).resolve(strict=True)) for p in registered_model_paths]
+        self.model_paths = {key: str(Path(p).resolve(strict=True)) for key, p in (registered_model_paths or {}).items()}
         self.calls = []
         self.declaration = None
+        self.lake_view = lake_view
         self.elapsed = 0.
         self.limit = 600.
         self.deadline = time.monotonic() + self.limit
@@ -109,11 +115,13 @@ class StrategyRunner:
         self._selector = selectors.DefaultSelector()
         self._response_buffer = b''
         self.guard = None
+        self.gpu_reservation = None
         self.gpu_monitor = None
         if device not in {'cpu', 'cuda'}:
             raise ValueError('The frozen runner supports cpu or the single cuda device')
         if device == 'cuda':
             self.guard = GpuGuard(self.directory)
+            self.gpu_reservation = dict(self.guard.receipt)
             try:
                 self.gpu_monitor = GpuMonitor()
             except BaseException:
@@ -228,8 +236,12 @@ class StrategyRunner:
             write_market_data(data, inputs / 'market')
         if replay is not None:
             write_replay(replay, inputs / 'replay.npz')
+        if self.declaration is not None and self.declaration.uses_dev_lake and self.lake_view is not None:
+            cutoff = max(int(item.frame.available_at_ms.max()) for item in data.datasets.values())
+            dev_lake = self.lake_view(cutoff)
         read, write = runtime_paths(gpu=self.device == 'cuda')
-        read += [str(self.candidate), str(Path(__file__).resolve().parent), str(inputs)] + self.model_paths
+        models = {} if operation == 'declare' else {key: self.model_paths[key] for key in self.declaration.pretrained_models}
+        read += [str(self.candidate), str(Path(__file__).resolve().parent), str(inputs)] + list(models.values())
         if state is not None:
             read.append(str(Path(state).parent))
         if dev_lake is not None:
@@ -251,6 +263,7 @@ class StrategyRunner:
             'data': str(inputs / 'market') if data is not None else None,
             'replay': str(inputs / 'replay.npz') if replay is not None else None,
             'state': str(state) if state is not None else None, 'seed': self.seed, 'device': self.device,
+            'models': models,
             'deadline': self.deadline, 'decision_times_ms': [] if decision_times is None else list(
                 pd.DatetimeIndex(decision_times).as_unit('ms').asi8.astype(int).tolist()),
             'dev_lake': str(dev_lake) if dev_lake is not None else None,
@@ -276,14 +289,21 @@ class StrategyRunner:
                 trace = source.read()
             audit = audit_trace(trace, server_pid=self.server_pid, worker_pid=self.worker_pid,
                                 cwd=output, read_only=read, writable=write)
+            peak_rss = max(resources['peak_rss_bytes'], finished['peak_rss_bytes'])
+            resource_ok = peak_rss <= RSS_CAP_BYTES and resources['peak_vram_bytes'] <= GPU_CAP_BYTES
             result = CallResult(operation, output, time.monotonic()-start,
-                                max(resources['peak_rss_bytes'], finished['peak_rss_bytes']),
+                                peak_rss,
                                 resources['peak_vram_bytes'], audit,
-                                'completed' if audit.passed and finished['returncode'] == 0 else 'rejected')
+                                'completed' if audit.passed and finished['returncode'] == 0 and resource_ok else 'rejected')
             self.calls.append(result)
             recorded = True
             if not audit.passed:
-                raise WorkerFailure('Strategy file audit failed', reasons=['tier_isolation', *audit.violations])
+                reasons = ['tier_isolation', *audit.violations]
+                reasons += [] if resource_ok else ['budget']
+                reasons += [] if not finished['returncode'] else ['crash']
+                raise WorkerFailure('Strategy file audit failed', reasons=reasons)
+            if not resource_ok:
+                raise WorkerFailure('Recorded peak RSS/VRAM exceeded the frozen budget', reasons=['budget'])
             if finished['returncode']:
                 raise WorkerFailure(f'Strategy {operation} exited with code {finished["returncode"]}', reasons=['crash'])
             return result
@@ -302,6 +322,8 @@ class StrategyRunner:
         result = self._call('declare')
         declaration = Declaration.parse(json.loads(regular_bytes(result.output / 'declaration.json', maximum=32_768)))
         self.limit = 600. if declaration.budget_tier == 'fast' else 3600.
+        from .models import verified_model_paths
+        verified_model_paths(declaration.pretrained_models, self.model_paths)
         self.declaration = declaration
         return declaration
 

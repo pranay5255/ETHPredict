@@ -22,6 +22,12 @@ import pandas as pd
 import pyarrow.parquet  # preload library imports, not data or a CUDA context
 import torch
 import torch._dynamo  # eager library import avoids libc nscd probes after sealing
+import sklearn.metrics
+import sklearn.linear_model
+import sklearn.ensemble
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot  # libraries only; font discovery stays out of candidate calls
 
 from .contracts import FitContext, ReplayFactory, read_market_data, read_replay
 from .sandbox import allow_worker_trace, close_inherited_descriptors, kill_with_parent, protect_parent_memory, restrict_filesystem, restrict_syscalls
@@ -40,7 +46,8 @@ def _declaration(strategy):
     result = {name: getattr(strategy, name) for name in [
         'name', 'markets', 'resolution', 'max_horizon_bars', 'lookback_bars', 'budget_tier']}
     result.update(engineered_features=getattr(strategy, 'engineered_features', []),
-                  pretrained_models=getattr(strategy, 'pretrained_models', []))
+                  pretrained_models=getattr(strategy, 'pretrained_models', []),
+                  uses_dev_lake=getattr(strategy, 'uses_dev_lake', True))
     return result
 
 
@@ -66,17 +73,21 @@ def execute(request_path, expected_parent):
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
     resource.setrlimit(resource.RLIMIT_FSIZE, (specification['max_output_bytes'],) * 2)
+    warmup = torch.ones(1, device=specification['device'], requires_grad=True)
+    warmup.square().sum().backward()
+    del warmup
     if specification['device'] == 'cuda':
         # The driver names its helper threads through /proc/self/task/*/comm.
         # Initialize trusted libraries before sealing, without permitting that
         # whole proc tree to untrusted code. No candidate/data is loaded yet.
-        warmup = torch.ones(1, device='cuda', requires_grad=True)
-        warmup.square().sum().backward()
         torch.cuda.synchronize()
-        del warmup
     restrict_syscalls()
     restrict_filesystem(read_only=specification['read_only'], writable=specification['writable'])
     sys.dont_write_bytecode = True
+    # The package's __path__ already points at the frozen grader directory.
+    # Never search/list the surrounding checkout, which may contain old data.
+    frozen_root = str(Path(__file__).resolve().parent.parent)
+    sys.path[:] = [entry for entry in sys.path if entry != frozen_root]
     sys.path.insert(0, specification['candidate'])
     seed = specification['seed']
     random.seed(seed)
@@ -97,7 +108,8 @@ def execute(request_path, expected_parent):
         context = FitContext(seed, specification['device'], specification['deadline'], output,
                              ReplayFactory(replay, seed) if replay else None,
                              Path(specification['dev_lake']) if specification['dev_lake'] else None,
-                             specification['train_anchor_end_ms'])
+                             specification['train_anchor_end_ms'],
+                             {key: Path(path) for key, path in specification['models'].items()})
         strategy.fit(read_market_data(Path(specification['data'])), context)
         with open(output / 'state.pkl', 'wb') as target:
             cloudpickle.dump(strategy, target, protocol=5)

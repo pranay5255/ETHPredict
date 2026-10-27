@@ -1,0 +1,9 @@
+import numpy as np
+from grader.baselines.common import Baseline
+
+
+class Strategy(Baseline):
+    name = 'buy-and-hold'
+
+    def predict(self, history, decision_times):
+        return self.positions(history, decision_times, lambda data: np.ones(len(data)))

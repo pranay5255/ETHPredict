@@ -157,3 +157,36 @@ def test_killing_the_clean_server_cannot_leave_an_unaudited_worker_running(tmp_p
             runner.predict(state,data,pd.DatetimeIndex(pd.to_datetime(data.frame.available_at_ms,unit='ms',utc=True)),declaration)
         assert runner.process.poll() is not None
         assert runner.calls[-1].status=='rejected'
+
+
+def test_worker_provenance_contains_only_the_exact_slice_not_future_manifest_metadata(tmp_path):
+    import json
+    from grader.contracts import read_market_data, write_market_data
+    data=market_data(8)
+    item=data.datasets['ETH']
+    original=MarketData({'ETH':LoadedDataset(item.frame,{'future_partition':'holdout-secret-hash',
+                                                        'future_last_timestamp':9999999999999})})
+    write_market_data(original,tmp_path/'input')
+    content=(tmp_path/'input/market_data.json').read_text()
+    assert 'holdout-secret-hash' not in content and 'future_' not in content
+    reconstructed=read_market_data(tmp_path/'input')
+    pd.testing.assert_frame_equal(reconstructed.frame,original.frame)
+    provenance=reconstructed.provenance['ETH']
+    assert provenance['rows']==8 and provenance['scope']=='grader_supplied_causal_slice'
+    assert provenance['last_available_at_ms']==int(item.frame.available_at_ms.iloc[-1])
+
+
+def test_recorded_peak_rss_is_checked_even_if_a_poll_misses_the_peak(tmp_path,monkeypatch):
+    from grader.resources import RSS_CAP_BYTES
+    original=StrategyRunner._response
+    def kernel_peak(self,*args,**kwargs):
+        value=original(self,*args,**kwargs)
+        if 'finished' in value:
+            value['peak_rss_bytes']=RSS_CAP_BYTES+1
+        return value
+    monkeypatch.setattr(StrategyRunner,'_response',kernel_peak)
+    with StrategyRunner(candidate(tmp_path),tmp_path/'run',seed=17) as runner:
+        with pytest.raises(WorkerFailure,match='Recorded peak') as error:
+            runner.declare()
+        assert error.value.reasons==('budget',)
+        assert runner.calls[-1].status=='rejected'

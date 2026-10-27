@@ -24,9 +24,11 @@ close_inherited_descriptors()
 restrict_syscalls()
 restrict_filesystem(read_only=spec['read_only'],writable=[spec['scratch']])
 assert Path(spec['allowed']).read_text()=='permitted'
+outside_fd=os.open(spec['secret'],os.O_PATH)
 denied=[]
 for name,operation in [
  ('private_read',lambda:Path(spec['secret']).read_bytes()),
+ ('private_fd_alias',lambda:Path('/proc/self/fd/'+str(outside_fd)).read_bytes()),
  ('outside_write',lambda:Path(spec['secret']).write_text('bad')),
  ('readonly_write',lambda:Path(spec['allowed']).write_text('bad')),
  ('chmod',lambda:os.chmod(spec['secret'],0o777)),
@@ -44,11 +46,11 @@ assert libc.syscall(463)==-1 and ctypes.get_errno()==errno.EACCES
 print(json.dumps({'denied':denied,'new_privileges':Path('/proc/self/status').read_text().split('NoNewPrivs:')[1].split()[0]}))
 '''
     runtime=Path(sys.executable).resolve().parent.parent
-    spec={'read_only':['/usr',str(runtime),str(Path(sys.prefix)),str(allowed),'/proc/self/status'],
+    spec={'read_only':['/usr',str(runtime),str(Path(sys.prefix)),str(allowed),'/proc/self/status','/proc/self/fd'],
           'scratch':str(scratch),'allowed':str(allowed/'read.txt'),'secret':str(secret)}
     completed=subprocess.run([sys.executable,'-c',script,json.dumps(spec)],text=True,capture_output=True,check=True)
     report=json.loads(completed.stdout)
-    assert set(report['denied'])=={'private_read','outside_write','readonly_write','chmod','acl','socket'}
+    assert set(report['denied'])=={'private_read','private_fd_alias','outside_write','readonly_write','chmod','acl','socket'}
     assert report['new_privileges']=='1'
     assert secret.read_text()=='synthetic private canary'
     assert (scratch/'output.txt').read_text()=='permitted output'
