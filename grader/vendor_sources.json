@@ -4,5 +4,90 @@
     "source_commit": "c365a81",
     "sha256": "bbb999eeff85e36cd8ad1f63db815546d23d4443df164eb66e2af34f77da9c06",
     "adaptations": []
+  },
+  "grader/costs.py": {
+    "source": "src/simulator/costs.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "60011b31f7b6c2947f91c8b7f5b30e341b539e3fffbd8f55f2ce168e7212cc21",
+    "vendored_sha256": "30246f22c39fc99e9cbd23d6d47dd49349875ed4e9ad3624066f6222066f6789",
+    "adaptations": [
+      "Replace only two editable-library imports with vendored equivalents."
+    ]
+  },
+  "grader/stats.py": {
+    "source": "src/evaluation/backtest_stats.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "efd4c9145e4746c7c640c45662cda4d0659838b656f10f24b8a3f0efde4a24ed",
+    "vendored_sha256": "8d6b1553ccb7e4bb4fdd32198e1905f12a2a6aa281aad70173751afd00361ce6",
+    "adaptations": [
+      "Replace sample-weight import with byte-identical vendored module."
+    ]
+  },
+  "grader/sample_weights.py": {
+    "source": "src/features/sample_weights.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "edf7f5b12264de6eb99757f58941c7292278d764b0b0d2f4d809d4d9b8de7a8b",
+    "vendored_sha256": "edf7f5b12264de6eb99757f58941c7292278d764b0b0d2f4d809d4d9b8de7a8b",
+    "adaptations": []
+  },
+  "grader/economic_gate.py": {
+    "source": "src/evaluation/economic_gate.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "2e8af8127251b2e0168af432cf345e9bfac4c295d883d775280e3951e9f9d6bc",
+    "vendored_sha256": "2e8af8127251b2e0168af432cf345e9bfac4c295d883d775280e3951e9f9d6bc",
+    "adaptations": []
+  },
+  "grader/selection.py": {
+    "source": "src/evaluation/selection.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "53f066b7823999d51878f8eda500ed1aec665f1b87e6e5346ab82db2c0ef3cd3",
+    "vendored_sha256": "53f066b7823999d51878f8eda500ed1aec665f1b87e6e5346ab82db2c0ef3cd3",
+    "adaptations": []
+  },
+  "grader/coverage.py": {
+    "source": "src/data/side_data.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "2960baa783cbc909c9b784055050290007ff7d388715bed02c70ddc1bc620274",
+    "vendored_sha256": "0c378b697a5947e1025d7488c6093c3bd1110ed382f831492d0dfb6fb502b245",
+    "adaptations": [],
+    "selected_symbols": [
+      "DataCoverageError"
+    ]
+  },
+  "grader/feature_contract.py": {
+    "source": "src/data/features_all.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "aa8a71d6cc50ebd25306d5083dfa90c945f69bc76a016c196fb31e2c5f5e9f2f",
+    "vendored_sha256": "0defeecfffab12e516b9e062ec02043a66d3e565c8a84a88a38273c60bbae377",
+    "adaptations": [
+      "Also vendor the exact RESOLUTION_TO_MS constant from src/data/lighter_client.py."
+    ],
+    "selected_symbols": [
+      "FEATURE_FAMILY_COLUMNS",
+      "bars_for_duration"
+    ],
+    "additional_sources": {
+      "src/data/lighter_client.py": "28bd9d414389badc057b3c5347d90c764e437e1c972bfec98dc874a236810f73"
+    }
+  },
+  "grader/feature_importance.py": {
+    "source": "src/evaluation/feature_importance.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "1770cc493753ded00156ce5adc1503595014a55b6b5a03e6a271e26038252cdb",
+    "vendored_sha256": "824d55502f07881c2b57a15afc06f118fa543d4eae2ba934c223f2e9999915aa",
+    "adaptations": [
+      "Use vendored feature-family contract.",
+      "Require trusted subprocess callback arguments instead of importing editable training code."
+    ]
+  },
+  "grader/cost_stress.py": {
+    "source": "src/evaluation/cost_stress.py",
+    "source_commit": "86a9df026910f59c18e498cf07e9139757f8730d",
+    "sha256": "51f72cf6e57dcebc719c9f8200a28c2d6bc58de221ffab190db356546d58f492",
+    "vendored_sha256": "f0dbe776912f920b7555abeac81c8b824cb0717c6caddf385fbc93272e8f4b19",
+    "adaptations": [
+      "Require trusted scoring callback instead of importing editable backtest.",
+      "Factor existing arithmetic into stress_cashflows for continuous-position accounting; preserve positive funding stress and unchanged rebates."
+    ]
   }
 }
