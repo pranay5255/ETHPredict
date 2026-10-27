@@ -1,0 +1,244 @@
+{
+  "audited_at_utc": "2026-10-27T17:40:19.865323+00:00",
+  "scope": "Pre-sealing structural checks only; no strategy, test or holdout evaluation",
+  "dataset_directories_loaded": 25,
+  "partition_hashes_verified": 425,
+  "parquet_bytes": 303106677,
+  "protected_historical_files_verified": 432,
+  "recovered_payments": 155,
+  "remaining_internal_funding_gaps": 0,
+  "versions": {
+    "torch": "2.11.0+cu128",
+    "timesfm": "2.0.1",
+    "pandas": "3.0.4"
+  },
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_total_bytes": 25252724736,
+  "datasets": [
+    {
+      "market": "ETH",
+      "market_id": 0,
+      "dataset": "candles_1m",
+      "rows": 719697,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "ETH",
+      "market_id": 0,
+      "dataset": "candles_5m",
+      "rows": 143939,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "ETH",
+      "market_id": 0,
+      "dataset": "candles_1h",
+      "rows": 11994,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "ETH",
+      "market_id": 0,
+      "dataset": "fundings_1h",
+      "rows": 11993,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "ETH",
+      "market_id": 0,
+      "dataset": "mark_price_5m",
+      "rows": 120138,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "BTC",
+      "market_id": 1,
+      "dataset": "candles_1m",
+      "rows": 719697,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "BTC",
+      "market_id": 1,
+      "dataset": "candles_5m",
+      "rows": 143939,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "BTC",
+      "market_id": 1,
+      "dataset": "candles_1h",
+      "rows": 11994,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "BTC",
+      "market_id": 1,
+      "dataset": "fundings_1h",
+      "rows": 11993,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "BTC",
+      "market_id": 1,
+      "dataset": "mark_price_5m",
+      "rows": 120138,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "SOL",
+      "market_id": 2,
+      "dataset": "candles_1m",
+      "rows": 719723,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "SOL",
+      "market_id": 2,
+      "dataset": "candles_5m",
+      "rows": 143944,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "SOL",
+      "market_id": 2,
+      "dataset": "candles_1h",
+      "rows": 11995,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "SOL",
+      "market_id": 2,
+      "dataset": "fundings_1h",
+      "rows": 11994,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "SOL",
+      "market_id": 2,
+      "dataset": "mark_price_5m",
+      "rows": 120143,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "HYPE",
+      "market_id": 24,
+      "dataset": "candles_1m",
+      "rows": 719749,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "HYPE",
+      "market_id": 24,
+      "dataset": "candles_5m",
+      "rows": 143949,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "HYPE",
+      "market_id": 24,
+      "dataset": "candles_1h",
+      "rows": 11995,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "HYPE",
+      "market_id": 24,
+      "dataset": "fundings_1h",
+      "rows": 11994,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "HYPE",
+      "market_id": 24,
+      "dataset": "mark_price_5m",
+      "rows": 120148,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "NEAR",
+      "market_id": 10,
+      "dataset": "candles_1m",
+      "rows": 719775,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "NEAR",
+      "market_id": 10,
+      "dataset": "candles_5m",
+      "rows": 143955,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "NEAR",
+      "market_id": 10,
+      "dataset": "candles_1h",
+      "rows": 11996,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "NEAR",
+      "market_id": 10,
+      "dataset": "fundings_1h",
+      "rows": 11995,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    },
+    {
+      "market": "NEAR",
+      "market_id": 10,
+      "dataset": "mark_price_5m",
+      "rows": 120154,
+      "partitions_verified": 17,
+      "duplicates": 0,
+      "internal_missing_intervals": 0
+    }
+  ]
+}
