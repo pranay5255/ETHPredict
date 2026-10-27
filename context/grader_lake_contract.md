@@ -75,6 +75,19 @@ windows, source availability, funding payment timing, stale-data expiration,
 mark-price leading absence and symlink traversal. The local-lake integration
 test requires `ETHPREDICT_SOURCE_REPO`; synthetic contract tests run without it.
 
+With the existing environment and the pinned SDK submodule initialized, the
+full suite also passes (the local integration check was enabled):
+
+```text
+UV_PROJECT_ENVIRONMENT=<existing .venv> ETHPREDICT_SOURCE_REPO=<original checkout> \
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --no-sync pytest -q
+355 passed, 23 warnings in 115.43s (0:01:55)
+git diff --check: passed
+```
+
+No dependencies were added or upgraded. The 23 warnings are existing SDK
+websocket deprecations and constant-series statistics.
+
 ## New source integrity finding
 
 A broader dev-only scan of all five datasets in all five markets validates
