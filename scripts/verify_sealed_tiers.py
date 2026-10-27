@@ -8,8 +8,14 @@ import json
 import os
 from pathlib import Path
 
+if __package__:
+    from .seal_grader_tiers import read_plan, validate_plan
+else:
+    from seal_grader_tiers import read_plan, validate_plan
+
 
 def verify_denial(plan: dict) -> dict:
+    validate_plan(plan)
     if os.geteuid() == 0:
         raise ValueError('Run as the agent user, not root')
     source, private = Path(plan['source_root']), Path(plan['private_root'])
@@ -43,7 +49,7 @@ def main():
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
-    result = verify_denial(json.loads(args.plan.read_text()))
+    result = verify_denial(read_plan(args.plan))
     if args.output:
         args.output.write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result, indent=2))

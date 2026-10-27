@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from scripts.seal_grader_tiers import (DATASETS, MARKETS, apply_plan, encoded,
-                                      make_plan, verify_private)
+                                      make_plan, read_plan, validate_plan, verify_private)
 from scripts.verify_sealed_tiers import verify_denial
 
 
@@ -184,3 +184,81 @@ def test_cli_requires_reviewed_plan_on_first_apply(seal_fixture,monkeypatch):
     with pytest.raises(SystemExit) as error: seal.main()
     assert error.value.code==2
     assert len(list(source.glob('*/candles_1m/*.parquet')))==15
+
+
+@pytest.mark.parametrize('mutation', [
+    'unknown_field', 'bool_version', 'different_cutoff', 'root_traversal', 'root_slash',
+    'absolute_source', 'source_traversal', 'destination_traversal', 'wrong_destination',
+    'dev_partition', 'duplicate_move', 'missing_move', 'unknown_move_field', 'bad_hash',
+    'missing_market', 'duplicate_market', 'market_traversal', 'bad_original_hash',
+    'manifest_owner_type', 'unknown_summary_field', 'wrong_partition_view',
+    'missing_dataset', 'bad_resolution', 'negative_rows', 'bounds_outside_view',
+])
+def test_malformed_resume_plans_fail_before_any_mutation(seal_fixture, mutation):
+    source,private=seal_fixture
+    plan=make_plan(source,private)
+    first=plan['moves'][0]
+    item=plan['manifests'][0]
+    contract=item['public']['datasets']['candles_1m']
+    if mutation=='unknown_field': plan['unrecognized']=True
+    if mutation=='bool_version': plan['version']=True
+    if mutation=='different_cutoff': plan['cutoff_month']='2026-08'
+    if mutation=='root_traversal': plan['private_root']=str(private/'..'/'escape')
+    if mutation=='root_slash': plan['private_root']='/'
+    if mutation=='absolute_source': first['source']='/etc/passwd'
+    if mutation=='source_traversal': first['source']='ETH/candles_1m/../../escape'
+    if mutation=='destination_traversal': first['destination']='../../escape'
+    if mutation=='wrong_destination': first['destination']='recovery/incorrect'
+    if mutation=='dev_partition':
+        first['source']='ETH/candles_1m/2026-04.parquet'
+        first['destination']='lake/lighter/'+first['source']
+    if mutation=='duplicate_move': plan['moves'].append(dict(first))
+    if mutation=='missing_move': plan['moves'].pop(0)
+    if mutation=='unknown_move_field': first['execute']='unknown'
+    if mutation=='bad_hash': first['sha256']='invalid'
+    if mutation=='missing_market': plan['manifests'].pop()
+    if mutation=='duplicate_market': plan['manifests'].append(dict(item))
+    if mutation=='market_traversal': item['market']='../escape'
+    if mutation=='bad_original_hash': item['original_sha256']='0'*64
+    if mutation=='manifest_owner_type': item['uid']=True
+    if mutation=='unknown_summary_field': contract['unknown']=1
+    if mutation=='wrong_partition_view': contract['partitions']={}
+    if mutation=='missing_dataset': del item['private']['datasets']['candles_1m']
+    if mutation=='bad_resolution': contract['expected_interval_ms']=1
+    if mutation=='negative_rows': contract['rows']=-1
+    if mutation=='bounds_outside_view': contract['last']='2026-08-01'
+    before={str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    with pytest.raises(ValueError): apply_plan(plan,os.getuid(),os.getgid())
+    assert not private.exists()
+    assert before=={str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+
+
+def test_duplicate_json_keys_are_not_accepted_from_a_stored_plan(seal_fixture,tmp_path):
+    source,private=seal_fixture
+    plan=make_plan(source,private)
+    path=tmp_path/'plan.json'
+    path.write_text(encoded(plan).decode().replace('"version": 1','"version": 1, "version": 1'))
+    with pytest.raises(ValueError,match='Duplicate'): read_plan(path)
+    assert not private.exists()
+
+
+def test_manifest_owner_change_is_rejected_before_private_writes(seal_fixture):
+    source,private=seal_fixture;plan=make_plan(source,private)
+    plan['manifests'][0]['uid']+=1
+    with pytest.raises(ValueError,match='ownership changed'): apply_plan(plan,os.getuid(),os.getgid())
+    assert not private.exists()
+
+
+def test_denial_probe_does_not_accept_an_empty_forged_plan(seal_fixture):
+    source,private=seal_fixture;plan=make_plan(source,private)
+    plan['moves']=[];plan['manifests']=[]
+    with pytest.raises(ValueError,match='every market'): verify_denial(plan)
+
+
+def test_current_production_plan_schema_when_explicitly_requested():
+    path=os.environ.get('ETHPREDICT_REVIEWED_PLAN')
+    if not path:
+        pytest.skip('Set ETHPREDICT_REVIEWED_PLAN for read-only validation of the generated production plan')
+    plan=read_plan(Path(path))
+    validate_plan(plan)
+    assert len(plan['manifests'])==5

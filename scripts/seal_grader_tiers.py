@@ -25,6 +25,7 @@ import pandas as pd
 CUTOFF = '2026-05'
 MARKETS = ['ETH', 'BTC', 'SOL', 'HYPE', 'NEAR']
 DATASETS = ['candles_1m', 'candles_5m', 'candles_1h', 'fundings_1h', 'mark_price_5m']
+LEGACY_WARNING = 'Tracked CSVs, historical Git objects and derived experiment copies are not sealed by lake moves. Provision a restricted agent workspace before claiming full tier isolation.'
 
 
 def digest(path):
@@ -40,6 +41,151 @@ def require_regular(path):
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise ValueError(f'Refusing symlink, special file or hard-linked source: {path}')
+
+
+def _keys(value, expected):
+    if type(value) is not dict or set(value) != set(expected):
+        raise ValueError('Unknown or missing seal-plan fields')
+
+
+def _unique_mapping(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'Duplicate seal-plan field: {key}')
+        result[key] = value
+    return result
+
+
+def read_plan(path):
+    require_regular(path)
+    plan = json.loads(path.read_text(), object_pairs_hook=_unique_mapping)
+    validate_plan(plan)
+    return plan
+
+
+def validate_plan(plan):
+    try:
+        _validate_plan(plan)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError('Malformed seal plan') from exc
+
+
+def _validate_plan(plan):
+    """Validate persisted plans before any filesystem operation uses their paths.
+
+    A resumed plan has the same path/partition constraints as a freshly built
+    plan; possession of a private JSON file is not permission for arbitrary moves.
+    """
+    _keys(plan, ['version', 'source_root', 'private_root', 'private_owner',
+                 'cutoff_month', 'moves', 'manifests', 'legacy_warning'])
+    if type(plan['version']) is not int or plan['version'] != 1 or (
+            plan['private_owner'] != 'ethgrader' or plan['cutoff_month'] != CUTOFF or
+            plan['legacy_warning'] != LEGACY_WARNING):
+        raise ValueError('Unknown seal-plan version, owner or boundary')
+    roots = []
+    for key in ['source_root', 'private_root']:
+        value = plan[key]
+        if not isinstance(value, str) or not Path(value).is_absolute() or (
+                str(Path(value)) != value or '..' in Path(value).parts or value == '/'):
+            raise ValueError('Seal-plan roots must be canonical absolute directories')
+        roots.append(Path(value))
+    if roots[0].is_relative_to(roots[1]) or roots[1].is_relative_to(roots[0]):
+        raise ValueError('Public and private roots must be separate')
+
+    def valid_hash(value):
+        return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value)
+
+    def relative_parts(value):
+        if not isinstance(value, str) or not value or '\\' in value or (
+                value.startswith('/') or any(part in {'', '.', '..'} for part in value.split('/'))):
+            raise ValueError('Invalid relative seal-plan path')
+        return value.split('/')
+
+    if type(plan['moves']) is not list or type(plan['manifests']) is not list:
+        raise ValueError('Seal-plan moves and manifests must be lists')
+    seen_sources, seen_destinations, actual_partitions = set(), set(), {}
+    for move in plan['moves']:
+        _keys(move, ['source', 'destination', 'sha256'])
+        parts = relative_parts(move['source'])
+        relative_parts(move['destination'])
+        if not valid_hash(move['sha256']):
+            raise ValueError('Invalid seal-plan hash')
+        if len(parts) == 3 and parts[0] in MARKETS and parts[1] in DATASETS:
+            if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])\.parquet', parts[2]) or parts[2][:7] < CUTOFF:
+                raise ValueError('Only private monthly partitions may be moved')
+            destination = 'lake/lighter/' + move['source']
+            actual_partitions[move['source']] = move['sha256']
+        elif len(parts) >= 2 and parts[0] == '_funding_recovery':
+            destination = 'recovery/' + '/'.join(parts[1:])
+        else:
+            raise ValueError('Source is outside the enrolled lake datasets/recovery tree')
+        if move['destination'] != destination:
+            raise ValueError('Seal-plan destination does not match source')
+        if move['source'] in seen_sources or move['destination'] in seen_destinations:
+            raise ValueError('Duplicate seal-plan source or destination')
+        seen_sources.add(move['source'])
+        seen_destinations.add(move['destination'])
+
+    seen_markets, expected_partitions = set(), {}
+    summary_fields = {'rows', 'empty_partitions', 'duplicates', 'first', 'last',
+                      'expected_interval_ms', 'missing_intervals', 'largest_gap_intervals', 'partitions'}
+    for item in plan['manifests']:
+        _keys(item, ['market', 'original_text', 'original_sha256', 'public', 'private', 'uid', 'gid'])
+        market = item['market']
+        if market not in MARKETS or market in seen_markets:
+            raise ValueError('Unknown or duplicate seal-plan market')
+        seen_markets.add(market)
+        if any(type(item[key]) is not int or item[key] < 0 for key in ['uid', 'gid']):
+            raise ValueError('Invalid original manifest ownership')
+        if not isinstance(item['original_text'], str) or not valid_hash(item['original_sha256']) or (
+                hashlib.sha256(item['original_text'].encode()).hexdigest() != item['original_sha256']):
+            raise ValueError('Original manifest bytes do not match their hash')
+        original = json.loads(item['original_text'], object_pairs_hook=_unique_mapping)
+        if original['symbol'] != market or set(original['datasets']) != set(DATASETS):
+            raise ValueError('Original manifest market/datasets differ')
+        identity = {key: original[key] for key in ['symbol', 'market_id', 'market_type', 'source', 'network', 'listed'] if key in original}
+        for view, tier in [('public', 'dev'), ('private', 'shadow_and_holdout')]:
+            target = item[view]
+            _keys(target, [*identity, 'tier_view', 'datasets'])
+            if target['tier_view'] != tier or any(target[key] != value for key, value in identity.items()):
+                raise ValueError('Seal-plan manifest identity/view differs')
+            if set(target['datasets']) != set(DATASETS):
+                raise ValueError('Seal-plan view datasets differ')
+            for dataset in DATASETS:
+                contract = target['datasets'][dataset]
+                _keys(contract, summary_fields)
+                source_contract = original['datasets'][dataset]
+                hashes = source_contract['partitions']
+                if not isinstance(hashes, dict) or any(not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])\.parquet', name)
+                        or not valid_hash(value) for name, value in hashes.items()):
+                    raise ValueError('Invalid original partition name/hash')
+                expected = {name: value for name, value in hashes.items() if (name[:7] < CUTOFF) == (view == 'public')}
+                if not expected or contract['partitions'] != expected:
+                    raise ValueError('Manifest view does not match the predeclared partition boundary')
+                interval = {'1m': 60_000, '5m': 300_000, '1h': 3_600_000}[dataset.rsplit('_', 1)[1]]
+                if type(contract['expected_interval_ms']) is not int or contract['expected_interval_ms'] != interval or source_contract['expected_interval_ms'] != interval:
+                    raise ValueError('Seal-plan resolution differs')
+                for key in ['rows', 'duplicates', 'missing_intervals', 'largest_gap_intervals']:
+                    if type(contract[key]) is not int or contract[key] < 0:
+                        raise ValueError('Invalid seal-plan row/gap count')
+                if contract['duplicates'] > contract['rows']:
+                    raise ValueError('Duplicate count exceeds source rows')
+                if contract['rows']:
+                    if not all(isinstance(contract[key], str) for key in ['first', 'last']):
+                        raise ValueError('Nonempty source requires timestamp bounds')
+                    bounds = [pd.Timestamp(contract[key]) for key in ['first', 'last']]
+                    if any(pd.isna(bound) for bound in bounds) or bounds[1] < bounds[0] or any(
+                            bound.strftime('%Y-%m.parquet') not in expected for bound in bounds):
+                        raise ValueError('Invalid source bounds in manifest view')
+                elif contract['first'] is not None or contract['last'] is not None:
+                    raise ValueError('Empty source cannot claim timestamp bounds')
+                if type(contract['empty_partitions']) is not list or len(set(contract['empty_partitions'])) != len(contract['empty_partitions']) or set(contract['empty_partitions']) - set(expected):
+                    raise ValueError('Invalid empty partition list')
+                if view == 'private':
+                    expected_partitions.update({f'{market}/{dataset}/{name}': value for name, value in expected.items()})
+    if seen_markets != set(MARKETS) or actual_partitions != expected_partitions:
+        raise ValueError('Seal plan must enroll every market and private partition exactly once')
 
 
 def summary(frames, hashes, interval):
@@ -69,7 +215,7 @@ def make_plan(source: Path, private: Path) -> dict:
         manifest_path = source / market / '_manifest.json'
         require_regular(manifest_path)
         raw = manifest_path.read_bytes()
-        original = json.loads(raw)
+        original = json.loads(raw, object_pairs_hook=_unique_mapping)
         if original['symbol'] != market or set(original['datasets']) != set(DATASETS):
             raise ValueError(f'Unexpected market/dataset manifest: {market}')
         known.add(manifest_path)
@@ -116,10 +262,12 @@ def make_plan(source: Path, private: Path) -> dict:
     actual = {path for path in source.rglob('*') if path.is_file()}
     if actual != known:
         raise ValueError(f'Unenrolled source files require review: {sorted(str(p) for p in actual-known)}')
-    return {'version': 1, 'source_root': str(source), 'private_root': str(private),
+    plan = {'version': 1, 'source_root': str(source), 'private_root': str(private),
             'private_owner': 'ethgrader', 'cutoff_month': CUTOFF, 'moves': moves,
             'manifests': manifests,
-            'legacy_warning': 'Tracked CSVs, historical Git objects and derived experiment copies are not sealed by lake moves. Provision a restricted agent workspace before claiming full tier isolation.'}
+            'legacy_warning': LEGACY_WARNING}
+    validate_plan(plan)
+    return plan
 
 
 def secure_directory(path: Path, root: Path, uid: int, gid: int):
@@ -156,7 +304,13 @@ def atomic_write(path: Path, content: bytes, uid: int, gid: int, mode=0o600):
 
 def apply_plan(plan: dict, uid: int, gid: int) -> dict:
     """Apply/resume an already verified plan. CLI performs the root/account gate."""
+    validate_plan(plan)
     source, private = Path(plan['source_root']), Path(plan['private_root'])
+    for item in plan['manifests']:
+        manifest = source / item['market'] / '_manifest.json'
+        require_regular(manifest)
+        if (manifest.stat().st_uid, manifest.stat().st_gid) != (item['uid'], item['gid']):
+            raise ValueError('Source manifest ownership changed since review')
     secure_directory(private, private, uid, gid)
     plan_path = private / 'seal-plan.json'
     if plan_path.exists():
@@ -247,6 +401,7 @@ def apply_plan(plan: dict, uid: int, gid: int) -> dict:
 
 
 def verify_private(plan: dict, uid: int) -> dict:
+    validate_plan(plan)
     source, private = Path(plan['source_root']), Path(plan['private_root'])
     for path in [private, *private.rglob('*')]:
         info = path.lstat()
@@ -304,8 +459,8 @@ def main():
         if stored.exists():
             require_regular(stored)
         if stored.exists():
-            plan = json.loads(stored.read_text())
-            if args.approved_plan and json.loads(args.approved_plan.read_text()) != plan:
+            plan = read_plan(stored)
+            if args.approved_plan and read_plan(args.approved_plan) != plan:
                 parser.error('Approved plan differs from stored resume plan')
         else:
             if args.verify_private:
@@ -314,7 +469,7 @@ def main():
                 parser.error('First --apply requires --approved-plan from the reviewed read-only plan')
             require_regular(args.approved_plan)
             plan = make_plan(args.source, args.private)
-            if json.loads(args.approved_plan.read_text()) != plan:
+            if read_plan(args.approved_plan) != plan:
                 parser.error('Source inventory changed since review: regenerate and review the plan')
         if plan['source_root'] != str(args.source.resolve()) or plan['private_root'] != str(args.private.resolve()):
             parser.error('Stored plan root mismatch')

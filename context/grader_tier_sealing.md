@@ -34,6 +34,9 @@ effective path restriction. These rules remain defense in depth, not OS isolatio
   private manifests without changing partition bytes or filling data.
 - Requires a human root invocation and an existing distinct `ethgrader` user;
   first execution also requires the reviewed plan to match the current inventory.
+  Every resumed plan is revalidated for exact schema, safe source/destination
+  paths, fixed tier boundaries, all five markets, and complete partition enrollment
+  before any private directory or source file is changed.
 - Stores its plan/journal privately before copying. It copies, fsyncs, verifies,
   renames and only then removes each source, allowing safe same-plan resume.
   It never recursively deletes an unknown directory.
@@ -60,8 +63,8 @@ recovery_files_to_quarantine: 97
 Focused tests (including the real P1 CSV/lake parity fixture):
 
 ```text
-ETHPREDICT_SOURCE_REPO=<original checkout> OMP_NUM_THREADS=1 \
-OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 <existing .venv>/bin/python -m pytest \
+ETHPREDICT_SOURCE_REPO=<original checkout> ETHPREDICT_REVIEWED_PLAN=/tmp/ethpredict-p2-seal-plan.json \
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 <existing .venv>/bin/python -m pytest \
 tests/test_grader_sealing.py tests/test_grader_tiers.py tests/test_grader_data.py -q
 72 passed, 1 skipped (final focused run; real OS gate remains pending)
 bash -n scripts/seal_grader_tiers.sh: passed
@@ -75,16 +78,20 @@ idempotence, pre-move hash rejection, backup quarantine, unsafe paths, ownership
 modes and failure of a denial probe against readable files. The **skipped** test
 is the actual agent-user PermissionError gate. It is not mocked or claimed passed.
 
-Full suite with the initialized pinned SDK submodule and P1 integration enabled:
+Current full suite with the initialized pinned SDK submodule, P1 integration and reviewed production-plan schema validation enabled:
 
 ```text
 UV_PROJECT_ENVIRONMENT=<existing .venv> ETHPREDICT_SOURCE_REPO=<original checkout> \
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --no-sync pytest -q
-387 passed, 1 skipped, 23 warnings in 118.88s (0:01:58)
+ETHPREDICT_REVIEWED_PLAN=/tmp/ethpredict-p2-seal-plan.json OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run --no-sync pytest -q
+418 passed, 1 skipped, 23 warnings in 122.58s (0:02:02)
 ```
 
-Two additional CLI guard tests were added afterward and pass in the final focused
-run; they verify that unprivileged or unreviewed application stops before moves.
+The full suite and focused regression run verify unknown fields, invalid hashes, changed tier
+boundaries, absolute/traversing source paths, mismatched destinations, dev-data
+moves, missing/duplicate partitions or markets, changed manifest ownership and
+forged empty denial plans are rejected before mutation. It also verifies the
+reviewed production plan still validates; a fresh read-only plan is identical
+to the one already supplied for human review. Both CLI guard tests pass.
 No dependencies were added/upgraded. The full-suite skip is the human-only
 permission acceptance test, so the green local suite does not establish sealing.
 
