@@ -6,6 +6,7 @@ import math
 import json
 import shutil
 import subprocess
+import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -104,7 +105,11 @@ def _verify_local_run(project: str, name: str, status: str) -> None:
     """Check that Trackio's local reader can see the finished run."""
     executable = shutil.which("trackio")
     if executable is None:
-        raise TrackioLoggingError("Trackio CLI is unavailable for local readback")
+        sibling = Path(sys.executable).parent / ("trackio.exe" if sys.platform == "win32" else "trackio")
+        if sibling.is_file():
+            executable = str(sibling)
+        else:
+            raise TrackioLoggingError("Trackio CLI is unavailable for local readback")
     result = subprocess.run(
         [executable, "get", "run", "--project", project, "--run", name, "--json"],
         capture_output=True,

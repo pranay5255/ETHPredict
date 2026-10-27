@@ -220,7 +220,7 @@ oneOf:
             required: [type]
             properties:
               type:
-                enum: [lstm, linear, tree]
+                enum: [lstm, linear, tree, zero, mean]
               hidden_size:
                 type: integer
                 minimum: 1
@@ -284,6 +284,11 @@ oneOf:
         type: object
         required: [sequence_length, epochs, batch_size, learning_rate]
         properties:
+          target_standardization:
+            enum: [none, standard]
+          gradient_clip_norm:
+            type: number
+            exclusiveMinimum: 0
           ensemble_seeds:
             type: array
             minItems: 1
@@ -329,9 +334,65 @@ oneOf:
             minimum: 0
           loss_weights:
             type: object
+      feature_importance:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+          noise_features:
+            type: integer
+            minimum: 0
+          repeats:
+            type: integer
+            minimum: 1
+          max_folds:
+            type: integer
+            minimum: 1
+          max_base_features:
+            type: integer
+            minimum: 1
+          base_features:
+            type: array
+            items:
+              type: string
+          single_feature:
+            type: boolean
+          ablation_groups:
+            type: array
+            items:
+              type: string
       costs:
         type: object
         properties:
+          mode:
+            enum: [static, stress, dynamic]
+          stress_multiplier:
+            type: number
+            minimum: 0
+          dynamic_funding:
+            type: object
+          dynamic_spread:
+            type: object
+          dynamic_slippage:
+            type: object
+          execution:
+            type: object
+            properties:
+              mode:
+                enum: [taker, maker, hybrid]
+              fill_policy:
+                enum: [expected_haircut, sampled]
+              entry_delay_bars:
+                type: integer
+                minimum: 0
+              maker_fill_probability:
+                type: number
+                minimum: 0
+                maximum: 1
+              missed_fill_probability:
+                type: number
+                minimum: 0
+                maximum: 1
           fee_bps:
             type: number
             minimum: 0
@@ -389,7 +450,10 @@ oneOf:
         required: [mode]
         properties:
           mode:
-            const: grid
+            enum: [grid, shuffled_grid, random, log_uniform]
+          seed:
+            type: integer
+            minimum: 0
           max_trials:
             type: integer
             minimum: 1

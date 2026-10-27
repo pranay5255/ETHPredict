@@ -15,6 +15,7 @@ import math
 import platform
 import subprocess
 import traceback
+import time
 import warnings
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -30,6 +31,9 @@ import yaml
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.config.loader import expand_grid_search
+from src.config.search import build_search_plan
+from src.evaluation.selection import ALIASES, validation_selection_scores, comparison_budget
+from src.simulator.costs import dataset_cost_model, configured_notional
 from src.data.features_all import DEFAULT_GRANULARITY, DataPreprocessor, bars_for_duration
 from src.data.side_data import DataCoverageError, source_paths, validate_split_coverage
 from src.evaluation.backtest_stats import (
@@ -37,6 +41,7 @@ from src.evaluation.backtest_stats import (
     attach_cross_trial_statistics,
     classify_evidence_grade,
     period_pnl_by_timestamp,
+    period_pnl_series,
     summarize_single_path,
 )
 from src.evaluation.forecast_diagnostics import calibration_summary, forecast_diagnostics, map_forecast
@@ -50,7 +55,7 @@ from src.features.sample_weights import (
 )
 from src.validation.splits import exact_validation_splits, purge_training_spans
 from src.training.meta_models import MetaModelBundle, SklearnMetaModel, fit_calibrator
-from src.training.discipline import EarlyStopper, SeedEnsemble, TabularBase, bootstrap_rows, training_holdout
+from src.training.discipline import EarlyStopper, SeedEnsemble, TabularBase, ConstantBase, bootstrap_rows, training_holdout
 from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics
 from src.utils.trackio_logging import enforce_trackio_policy, log_trackio_run
@@ -75,11 +80,13 @@ class MultiHorizonLSTM(nn.Module):
         )
         self.return_head = nn.Linear(hidden_size, n_horizons)
         self.direction_head = nn.Linear(hidden_size, n_horizons)
+        self.register_buffer("return_mean", torch.zeros(n_horizons))
+        self.register_buffer("return_scale", torch.ones(n_horizons))
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         encoded, _ = self.encoder(x)
         last = encoded[:, -1, :]
-        return self.return_head(last), self.direction_head(last)
+        return self.return_head(last) * self.return_scale + self.return_mean, self.direction_head(last)
 
 
 class MetaLabelMLP(nn.Module):
@@ -213,6 +220,8 @@ FEATURE_CODE_FILES = (
     "src/data/side_data.py",
     "src/features/labeling.py",
     "src/features/sample_weights.py",
+    "src/experiments/meta_labeling_mvp.py",
+    "src/simulator/costs.py",
 )
 # Config sections that define a research specification. Naming and storage keys
 # (pipeline.run_name, pipeline.artifact_root, experiment.id/name, tracking) are
@@ -232,6 +241,7 @@ RESEARCH_SPEC_SECTIONS = (
     "costs",
     "alpha_backtest",
     "candidate_mapping",
+    "feature_importance",
 )
 FINAL_TEST_SELECTION_ROLES = ("raw_best", "trade_qualified_best", "classification_best", "calibration_best")
 DEFAULT_FINAL_TEST_ROLES = ("raw_best", "trade_qualified_best")
@@ -287,6 +297,12 @@ def _raw_data_manifest(config: Mapping[str, Any]) -> Dict[str, Any]:
     raw_dir = Path(data_cfg.get("dir", "data")) / "raw"
     files = sorted(raw_dir.glob(f"ETHUSDT-{granularity}-lighter-*.csv"))
     files += [path for _, path in source_paths(data_cfg.get("dir", "data"), data_cfg.get("side_data", {}))]
+    funding_source = config.get("costs", {}).get("dynamic_funding", {})
+    if config.get("costs", {}).get("mode") == "dynamic" and funding_source.get("enabled"):
+        for value in funding_source.get("paths", []):
+            path = Path(value)
+            files.append(path if path.is_absolute() else Path(data_cfg.get("dir", "data")) / path)
+    files = list(dict.fromkeys(files))
     return {
         "raw_dir": raw_dir,
         "granularity": granularity,
@@ -565,6 +581,9 @@ def validate_selection_metric(config: Mapping[str, Any]) -> str:
     """Reject selection metrics that read final-test results."""
 
     metric = str((config.get("pipeline", {}) or {}).get("selection_metric", "metrics.validation.net_pnl"))
+    metric = ALIASES.get(metric, metric)
+    if not metric.startswith("metrics.validation."):
+        raise ValueError("Trial selection requires validation evidence; final-test and non-validation metrics are prohibited")
     parts = metric.split(".")
     if "test" in parts:
         raise ValueError(
@@ -827,13 +846,12 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     max_horizon = max(bars for _, bars in horizons)
     label_cfg = config.get("labels", {}).get("meta_triple_barrier", {})
     max_horizon = max([max_horizon, *map(int, (label_cfg.get("vertical_barriers", {}) or {}).values())])
+    max_horizon += int(config.get("costs", {}).get("execution", {}).get("entry_delay_bars", 0))
     volatility_window = int(label_cfg.get("volatility_window", bars_for_duration(granularity, hours=24)))
 
     bar_cfg = dict(config.get("bars", {}) or data_cfg.get("bars", {}) or {})
     if data_cfg.get("bar_type") is not None:
         bar_cfg["type"] = data_cfg.get("bar_type")
-    if bar_cfg.get("type", "time") != "time" and float(config.get("costs", {}).get("funding_bps_per_hour", 0.)) != 0.:
-        raise ValueError("Activity bars require elapsed-time funding costs (#20); use zero static funding for clock audits")
     preprocessor = DataPreprocessor(
         data_dir=data_cfg.get("dir", "data"),
         granularities=[granularity],
@@ -864,12 +882,31 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
     # Warmup must not depend on volatility observed later in the dataset.
     realized_vol = realized_vol.fillna(0.001).clip(lower=1e-8)
 
+    importance_cfg = config.get("feature_importance", {}) or {}
+    noise_count = int(importance_cfg.get("noise_features", 0)) if importance_cfg.get("enabled", False) else 0
+    if noise_count < 0:
+        raise ValueError("noise_features cannot be negative")
+    if noise_count:
+        features_df = features_df.copy()
+        noise = np.random.default_rng(int(importance_cfg.get("seed", 42))).normal(size=(len(features_df), noise_count))
+        for i in range(noise_count):
+            features_df[f"diagnostic_noise_{i}"] = noise[:, i]
+    feature_manifest = preprocessor.feature_manifest()
+    feature_manifest["columns"] = list(features_df.columns)
+    if noise_count:
+        feature_manifest["families"] = feature_manifest.get("families", []) + ["diagnostic_noise"]
+        feature_manifest["noise_controls"] = {"count": noise_count, "seed": int(importance_cfg.get("seed", 42))}
     raw_features = torch.tensor(features_df.to_numpy(dtype=float), dtype=torch.float32)
     X: List[torch.Tensor] = []
     y_ret: List[List[float]] = []
     y_dir: List[List[float]] = []
     sample_rows: List[Dict[str, Any]] = []
     dense_label_indices = list(range(sequence_length, len(features_df) - max_horizon))
+    if data_cfg.get("sample_start"):
+        sample_start = pd.Timestamp(data_cfg["sample_start"])
+        if sample_start.tz is not None:
+            sample_start = sample_start.tz_convert("UTC").tz_localize(None)
+        dense_label_indices = [index for index in dense_label_indices if features_df.index[index] >= sample_start]
     event_indices, event_metadata, event_diagnostics = _select_event_indices(log_returns, realized_vol, features_df, dense_label_indices, config)
     if not event_indices:
         raise ValueError(f"Sampling mode {event_diagnostics.get('mode')} produced no events")
@@ -896,6 +933,7 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         sample_rows.append(
             {
                 "timestamp": prices.index[label_idx],
+                "bar_close_timestamp": pd.to_datetime(price_row["close_time"], unit="ms"),
                 "sample_index": label_idx,
                 "close": entry,
                 "open": float(price_row["open"]),
@@ -970,9 +1008,9 @@ def build_multi_horizon_lighter_dataset(config: Mapping[str, Any], *, smoke: boo
         "horizon_names": [name for name, _ in horizons],
         "horizon_bars": {name: bars for name, bars in horizons},
         "max_horizon_bars": max_horizon,
-        "feature_columns": preprocessor.get_feature_cols(),
+        "feature_columns": list(features_df.columns),
         "feature_window_bars": preprocessor.feature_window_bars(granularity),
-        "feature_manifest": _feature_manifest_with_identity(preprocessor.feature_manifest()),
+        "feature_manifest": _feature_manifest_with_identity(feature_manifest),
         "bar_manifest": preprocessor.bar_manifest(),
         "event_diagnostics": event_diagnostics,
         "sample_weight_diagnostics": sample_weight_diag,
@@ -1121,13 +1159,13 @@ def fit_outer_meta_model(dataset, training_indices, config, device, prediction_p
                    "realized_t1_purge": realized_audit}
 
 
-def evaluate_meta_fold(predictions, dataset, fold, config, device, prediction_provider=None):
+def evaluate_meta_fold(predictions, dataset, fold, config, device, prediction_provider=None, *, return_model=False):
     candidates = add_meta_labels(candidate_signals(predictions, dataset, config), dataset, config)
     model, audit = fit_outer_meta_model(dataset, fold["train"], config, device, prediction_provider, candidates)
     candidates = add_meta_probabilities(candidates, model)
     candidates["meta_evaluation_status"] = "held_out" if audit["status"] == "completed" else "unavailable"
     candidates["meta_fold"] = int(fold["fold"])
-    return candidates, audit
+    return (candidates, audit, model) if return_model else (candidates, audit)
 
 
 def collapse_scenario_predictions(frame, *, candidates=False):
@@ -1193,6 +1231,15 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
     seed = int(torch.initial_seed())
     draws = bootstrap_rows(dataset["samples"].iloc[indices], str(training.get("bootstrap", "none")), seed)
     kind = str(model_cfg.get("type", "lstm"))
+    if kind in {"zero", "mean"}:
+        model = ConstantBase(torch.zeros(y_ret.shape[1], device=device) if kind == "zero" else y_ret.mean(0),
+                             y_dir.mean(0)).to(device)
+        model.register_buffer("feature_mean", feature_mean.detach().clone())
+        model.register_buffer("feature_std", feature_std.detach().clone())
+        return model, {"model_type": kind, "seed": seed, "fit_indices": indices.tolist(),
+                       "return_unit": "log_fraction", "direction_baseline": "retained_training_prior",
+                       "early_stopping": {"status": "not_applicable"},
+                       "preprocessing": {"fit_scope": "train_indices_only"}}
     if kind in {"linear", "tree"}:
         from sklearn.linear_model import Ridge, LogisticRegression
         from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
@@ -1223,6 +1270,16 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
                        "preprocessing": {"fit_scope": "train_indices_only"}}
     if kind != "lstm":
         raise ValueError(f"Unknown base model type: {kind}")
+    target_mode = training.get("target_standardization", "none")
+    if target_mode not in {"none", "standard"}:
+        raise ValueError("target_standardization must be none or standard")
+    if target_mode == "standard":
+        model.return_mean.copy_(y_ret.mean(0))
+        model.return_scale.copy_(y_ret.std(0, unbiased=False).clamp_min(1e-8))
+    target_audit = {"mode": target_mode, "fit_indices": indices.tolist(),
+                    "fit_scope": "retained_training_rows_after_internal_purge",
+                    "mean": model.return_mean.cpu().tolist(), "scale": model.return_scale.cpu().tolist(),
+                    "model_output_unit": "log_fraction", "loss_unit": "standardized" if target_mode == "standard" else "log_fraction"}
     optimizer = optim.Adam(
         model.parameters(),
         lr=float(training.get("learning_rate", 0.001)),
@@ -1237,15 +1294,19 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
     )
     losses: List[float] = []
     validation_losses = []
+    components = []
+    validation_components = []
     stopper = EarlyStopper(stop_cfg.get("patience", 3), stop_cfg.get("min_delta", 0.))
     for epoch in range(int(training.get("epochs", 1))):
         model.train()
         total = 0.0
         batches = 0
+        sums = np.zeros(4)
         for batch_X, batch_ret, batch_dir, batch_w in loader:
             optimizer.zero_grad()
             pred_ret, pred_dir_logits = model(batch_X)
-            loss_return = ret_loss(pred_ret, batch_ret).mean(dim=1)
+            raw_return_loss = ret_loss(pred_ret, batch_ret).mean(dim=1)
+            loss_return = ret_loss((pred_ret - batch_ret) / model.return_scale, torch.zeros_like(batch_ret)).mean(dim=1)
             loss_direction = dir_loss(pred_dir_logits, batch_dir).mean(dim=1)
             loss = (
                 float(loss_weights.get("return", 1.0)) * loss_return
@@ -1253,17 +1314,28 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
             )
             weighted = (loss * batch_w / (batch_w.mean() + 1e-8)).mean()
             weighted.backward()
+            if training.get("gradient_clip_norm"):
+                nn.utils.clip_grad_norm_(model.parameters(), float(training["gradient_clip_norm"]))
             optimizer.step()
+            normalized_w = batch_w / (batch_w.mean() + 1e-8)
+            sums += np.array([float((value * normalized_w).mean().detach().cpu()) for value in
+                              [raw_return_loss, loss_return, loss_direction, loss]]) * len(batch_X)
             total += float(weighted.detach().cpu())
             batches += 1
         losses.append(total / max(batches, 1))
+        fields = ["return_mse_log_fraction", "return_mse_objective", "direction_cross_entropy", "combined_objective"]
+        components.append(dict(zip(fields, (sums / max(len(draws), 1)).tolist())))
         if len(validation):
             model.eval()
             with torch.no_grad():
                 vx = (dataset["X"][validation].to(device) - feature_mean) / feature_std
                 vr, vd = model(vx)
-                vl = (float(loss_weights.get("return", 1.)) * ret_loss(vr, dataset["y_ret"][validation].to(device)).mean()
-                      + float(loss_weights.get("direction", .25)) * dir_loss(vd, dataset["y_dir"][validation].to(device)).mean())
+                vy = dataset["y_ret"][validation].to(device)
+                raw_mse = ret_loss(vr, vy).mean()
+                objective_mse = ret_loss((vr - vy) / model.return_scale, torch.zeros_like(vy)).mean()
+                ce = dir_loss(vd, dataset["y_dir"][validation].to(device)).mean()
+                vl = float(loss_weights.get("return", 1.)) * objective_mse + float(loss_weights.get("direction", .25)) * ce
+                validation_components.append(dict(zip(fields, [float(v.cpu()) for v in [raw_mse, objective_mse, ce, vl]])))
             validation_losses.append(float(vl.cpu()))
             if stopper.update(validation_losses[-1], epoch + 1, model):
                 break
@@ -1277,6 +1349,10 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
         "sample_weight_fit_scope": "retained_training_rows_only",
         "sample_weight_diagnostics": weight_diagnostics,
         "training_losses": losses,
+        "training_loss_components": components,
+        "validation_loss_components": validation_components,
+        "target_transform": target_audit,
+        "loss_weights": dict(loss_weights),
         "final_loss": losses[(stopper.best_epoch or len(losses)) - 1] if losses else 0.0,
         "preprocessing": {
             "scaler": "standard",
@@ -1451,13 +1527,19 @@ def candidate_signals(predictions: pd.DataFrame, dataset: Mapping[str, Any], con
         signs = [np.sign(float(row[f"{name}_pred_return"])) for name in horizon_names]
         disagreement = float(len(set(signs)) > 1) if len(signs) > 1 else 0.0
         shared = row.to_dict()
+        for column in dataset.get("feature_columns", []):
+            if column.startswith("diagnostic_noise_"):
+                shared[column] = float(dataset["feature_frame"].iloc[max(0, int(row["sample_index"]) - 1)][column])
         for horizon in horizon_names:
             pred_return = float(row[f"{horizon}_pred_return"])
             side = int(np.sign(pred_return))
             direction_prob = float(row[f"{horizon}_direction_prob"])
             confidence = direction_prob if side >= 0 else 1.0 - direction_prob
             horizon_bars = int((label_cfg.get("vertical_barriers", {}) or {}).get(horizon, dataset["horizon_bars"][horizon]))
-            cost_bps = _total_cost_bps(config, horizon_bars, str(dataset["granularity"]))
+            chosen_side = int(np.sign(direction_prob - .5) if config.get("candidate_mapping", {}).get("mode") == "probability_sign" else np.sign(pred_return))
+            cost_quote = dataset_cost_model(dataset, config).quote({**shared, "horizon": horizon, "horizon_bars": horizon_bars,
+                         "side": chosen_side, "position_notional": configured_notional(config)})
+            cost_bps = cost_quote["total_cost_bps"]
             expected_edge_bps = abs(pred_return) * 10_000.0 - cost_bps
             mapping = map_forecast(pred_return, direction_prob, float(row.get("realized_vol", .001)),
                                    disagreement, cost_bps, min_edge_bps, config.get("candidate_mapping", {}))
@@ -1466,9 +1548,10 @@ def candidate_signals(predictions: pd.DataFrame, dataset: Mapping[str, Any], con
             out = dict(shared)
             out.update(
                 {
-                    **mapping,
+                    **mapping, **cost_quote,
                     "horizon": horizon,
                     "horizon_bars": horizon_bars,
+                    "position_notional": float(configured_notional(config)),
                     "pred_return": pred_return,
                     "direction_prob": direction_prob,
                     "direction_confidence": confidence,
@@ -1529,6 +1612,7 @@ def add_meta_labels(candidates: pd.DataFrame, dataset: Mapping[str, Any], config
         config.get("labels", {}).get("meta_triple_barrier", {}),
         config.get("costs", {}),
         granularity=str(dataset["granularity"]),
+        cost_model=dataset_cost_model(dataset, config),
     )
     return _apply_meta_sample_weights(labeled, config)
 
@@ -1548,6 +1632,7 @@ def _meta_feature_columns(frame: pd.DataFrame, horizons: Sequence[str]) -> List[
     ]
     for horizon in horizons:
         columns.extend([f"{horizon}_pred_return", f"{horizon}_direction_prob"])
+    columns.extend(column for column in frame if column.startswith(("diagnostic_noise_", "opportunity_")))
     return [column for column in columns if column in frame.columns]
 
 
@@ -1808,7 +1893,13 @@ def _empty_alpha_metrics(candidate_count: int, total_candidates: int, policy: Ma
     }
 
 
-def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> Tuple[Dict[str, Any], pd.DataFrame]:
+def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any], *, cost_model=None) -> Tuple[Dict[str, Any], pd.DataFrame]:
+    if "cost_config_hash" in candidates:
+        expected_cost_hash = hashlib.sha256(json.dumps(config.get("costs", {}), sort_keys=True).encode()).hexdigest()
+        if not candidates.cost_config_hash.eq(expected_cost_hash).all():
+            raise ValueError("Candidate labels and backtest use different cost configurations; regenerate labels")
+    if cost_model is not None:
+        cost_model.validate_records(candidates)
     alpha = config.get("alpha_backtest", {}) or {}
     initial_capital = float(alpha.get("initial_capital", 100_000.0))
     meta_threshold = float(alpha.get("meta_threshold", 0.5))
@@ -1828,6 +1919,10 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
         "effective_edge_threshold_bps": effective_edge_threshold,
         "max_trades_per_day": alpha.get("max_trades_per_day"),
         "cooldown_bars": int(alpha.get("cooldown_bars", 0) or 0),
+        "cost_model_mode": config.get("costs", {}).get("mode", "static"),
+        "simulation_type": "dynamic_cost_simulation" if config.get("costs", {}).get("mode") == "dynamic" else "static_cost_simulation",
+        "execution_mode": config.get("costs", {}).get("execution", {}).get("mode", "taker"),
+        "execution_diagnostics": {"candidate_rows": len(candidates), "missed_fills": int(candidates.get("filled", pd.Series(True, index=candidates.index)).eq(False).sum())},
     }
 
     eligible = candidates[
@@ -1857,16 +1952,20 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
         if pd.isna(net_value):
             net_value = gross_return - row["total_cost_bps"] / 10_000.0
         net_return = float(net_value)
-        fee_cost = notional * float(row["total_cost_bps"]) / 10_000.0
+        fee_cost = notional * float(row.get("realized_total_cost_bps", row["total_cost_bps"])) * float(row.get("fill_factor", 1.)) / 10_000.0
         gross_pnl = notional * gross_return
         net_pnl = notional * net_return
         trades.append(
             {
                 "timestamp": row["timestamp"],
+                "pnl_timestamp": row["exit_completed_at"] if pd.notna(row.get("exit_completed_at")) else row["timestamp"],
                 "horizon": row["horizon"],
                 "side": int(row["side"]),
-                "notional": notional,
-                "entry_price": float(row["close"]),
+                "notional": notional * float(row.get("fill_factor", 1.)),
+                "requested_notional": notional,
+                "entry_price": float(row.get("entry_price", row["close"])),
+                **{key: row.get(key) for key in ["entry_idx", "entry_timestamp", "t1_idx", "t1_timestamp", "entry_delay_bars", "execution_mode", "fill_probability", "fill_policy", "fill_factor", "cost_model_id", "cost_model_mode", "simulation_type", "spread_source", "funding_source"]},
+                **{name + "_cost": notional * float(row.get("realized_" + name + "_bps", row.get(name + "_bps", 0.))) * float(row.get("fill_factor", 1.)) / 10000. for name in ["fee", "spread", "slippage", "funding"]},
                 "gross_return": gross_return,
                 "net_return": net_return,
                 "gross_pnl": gross_pnl,
@@ -1895,8 +1994,9 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
 
     def _statistics(net_pnl: float, turnover: float) -> Dict[str, Any]:
         holding = trades_df["label_holding_bars"] if "label_holding_bars" in trades_df.columns else []
-        return summarize_single_path(
-            period_pnl_by_timestamp(candidates, trades_df),
+        pnl_series = period_pnl_series(candidates, trades_df)
+        result = summarize_single_path(
+            pnl_series.to_numpy(dtype=float),
             initial_capital=initial_capital,
             net_pnl=net_pnl,
             turnover=turnover,
@@ -1904,6 +2004,12 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
             trades=trades_df,
             granularity=granularity,
         )
+        outflows = sum(float(trades_df[name + "_cost"].clip(lower=0).sum()) for name in ["fee", "spread", "slippage", "funding"] if name + "_cost" in trades_df)
+        result["return_on_execution_costs"] = {"available": outflows > 0, "value": net_pnl / outflows if outflows > 0 else "unavailable",
+                                              "reason": None if outflows > 0 else "no positive execution cost outflows", "cost_outflows": outflows}
+        result["period_timestamps"] = [value.isoformat() for value in pnl_series.index]
+        result["pnl_clock"] = "realized_exit_completed_bar" if "pnl_timestamp" in trades_df else "legacy_signal_timestamp"
+        return result
 
     if trades_df.empty:
         metrics = _empty_alpha_metrics(candidate_count, len(candidates), policy)
@@ -1912,7 +2018,7 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
 
     trades_df["cumulative_net_pnl"] = trades_df["net_pnl"].cumsum()
     equity = initial_capital + trades_df["cumulative_net_pnl"]
-    drawdown = equity - equity.cummax()
+    drawdown = equity - equity.cummax().clip(lower=initial_capital)
     wins = trades_df[trades_df["net_pnl"] > 0]
     losses = trades_df[trades_df["net_pnl"] <= 0]
     returns = trades_df["net_return"].to_numpy(dtype=float)
@@ -1931,6 +2037,9 @@ def run_alpha_backtest(candidates: pd.DataFrame, config: Mapping[str, Any]) -> T
         "trades": float(len(trades_df)),
         "gross_pnl": gross_pnl,
         "net_pnl": float(trades_df["net_pnl"].sum()),
+        "cost_components": {name: float(trades_df[name + "_cost"].sum()) for name in ["fee", "spread", "slippage", "funding"]},
+        "pnl_per_turnover": float(trades_df.net_pnl.sum() / trades_df.notional.sum()) if trades_df.notional.sum() > 0 else None,
+        "break_even_additional_slippage_bps": float(trades_df.net_pnl.sum() / trades_df.notional.sum() * 10000.) if trades_df.notional.sum() > 0 else None,
         "fees": total_fees,
         "gross_pnl_to_fees": float(gross_pnl / total_fees) if abs(total_fees) > 1e-12 else 0.0,
         "turnover": float(trades_df["notional"].sum()),
@@ -2178,7 +2287,10 @@ def _run_one_trial(
     device: torch.device,
     test_contexts: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    trial_started = time.perf_counter()
     config = dict(spec["config"])
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     if smoke:
         config = apply_smoke_overrides(config)
     trial_id = str(spec["trial_id"])
@@ -2198,18 +2310,24 @@ def _run_one_trial(
     meta_frames: List[pd.DataFrame] = []
     fold_manifests: List[Dict[str, Any]] = []
     batch_size = int(config.get("training", {}).get("prediction_batch_size", 512))
+    importance_folds = []
     for fold in splits["folds"]:
+        fold_started = time.perf_counter()
         model, history = train_base_model(dataset, fold["train"], config, device)
         fold_pred = predict_base_model(model, dataset, fold["validation"], device, batch_size=batch_size)
         fold_pred["fold"] = int(fold["fold"])
         fold_pred["prediction_role"] = "base_oof"
         oof_frames.append(fold_pred)
-        meta_candidates, meta_audit = evaluate_meta_fold(fold_pred, dataset, fold, config, device)
+        meta_candidates, meta_audit, fold_meta_model = evaluate_meta_fold(fold_pred, dataset, fold, config, device, return_model=True)
+        if config.get("feature_importance", {}).get("enabled", False) and len(importance_folds) < int(config["feature_importance"].get("max_folds", len(splits["folds"]))):
+            from src.evaluation.feature_importance import fold_importance
+            importance_folds.append(fold_importance(model, fold_meta_model, dataset, fold, meta_candidates, config, device))
         meta_frames.append(meta_candidates)
-        path_metrics, _ = run_alpha_backtest(meta_candidates, config)
+        path_metrics, _ = run_alpha_backtest(meta_candidates, config, cost_model=dataset_cost_model(dataset, config))
         fold_manifests.append(
             {
                 "fold": int(fold["fold"]),
+                "elapsed_seconds": time.perf_counter() - fold_started,
                 "train_samples": int(len(fold["train"])),
                 "validation_samples": int(len(fold["validation"])),
                 "history": history,
@@ -2231,7 +2349,7 @@ def _run_one_trial(
     meta_model, final_meta_audit = fit_outer_meta_model(dataset, splits["development"], config, device)
     oof_candidates = collapse_scenario_predictions(pd.concat(meta_frames, ignore_index=True), candidates=True)
 
-    validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config)
+    validation_metrics, validation_trades = run_alpha_backtest(oof_candidates, config, cost_model=dataset_cost_model(dataset, config))
     diagnostics = {"validation": alpha_diagnostics(oof_candidates, config)}
     from src.experiments.forecast_benchmark import forecast_metrics, zero_return_predictions, momentum_predictions
     validation_metrics["forecast"] = forecast_metrics(oof_predictions, dataset, config)
@@ -2245,6 +2363,7 @@ def _run_one_trial(
 
     validation_metrics["instability"] = validation_metrics["forecast"].get("instability", {"status": "single_seed"})
     validation_metrics["meta_classification"] = diagnostics["validation"]["labels"]["classification"]
+    validation_metrics["selection"] = validation_selection_scores(oof_candidates, validation_metrics, config)
     path_values = [item["simulated_validation"]["net_pnl"] for item in fold_manifests if item["meta_validation"]["status"] == "completed"]
     validation_metrics["path_dispersion"] = {
         "path_type": splits.get("path_type"), "scenario_count": len(fold_manifests), "available_scenario_count": len(path_values),
@@ -2253,10 +2372,18 @@ def _run_one_trial(
         "stitched_cpcv": False,
     }
 
+    from src.evaluation.feature_importance import summarize_importance, write_importance
+    from src.evaluation.cost_stress import cost_stress_report
+    importance = summarize_importance(importance_folds)
+    importance_paths = write_importance(importance, trial_dir, _write_json) if importance_folds else {}
+    cost_stress = cost_stress_report(oof_candidates, config)
+    _write_json(trial_dir / "cost_stress_validation.json", cost_stress)
     model_path = trial_dir / f"base_multi_horizon_{config.get('model', {}).get('base', {}).get('type', 'lstm')}.pt"
     torch.save(final_model.state_dict(), model_path)
     checkpoint_id = _sha256_path(model_path)
     paths = {
+        **importance_paths,
+        "cost_stress": trial_dir / "cost_stress_validation.json",
         "oof_predictions": trial_dir / "predictions_oof.parquet",
         "oof_candidates": trial_dir / "meta_candidates_oof.parquet",
         "validation_trades": trial_dir / "alpha_trades_validation.parquet",
@@ -2302,9 +2429,13 @@ def _run_one_trial(
         "test_evaluation": {"status": "pending_selection", "reason": "final test is scored only after validation-based selection"},
         "folds": fold_manifests,
         "final_training_history": final_history,
+        "feature_importance": importance, "cost_stress": cost_stress,
+        "runtime": {"elapsed_seconds": time.perf_counter() - trial_started,
+                    "device": str(device), "peak_gpu_allocated_bytes": torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None},
         "meta_labeler": meta_model.manifest(),
         "final_meta_training": final_meta_audit,
         "candidate_mapping": config.get("candidate_mapping", {"mode": "expected_edge"}),
+        "cost_model": dataset_cost_model(dataset, config).manifest(),
         "meta_sample_weight_diagnostics": meta_sample_weight_diagnostics,
         "model_path": model_path,
         "checkpoint_id": checkpoint_id,
@@ -2354,6 +2485,14 @@ def _score_trial_on_test(
     dataset = context["dataset"]
     splits = context["splits"]
     trial_id = str(manifest["trial_id"])
+    # Protect the scorer itself as well as its validation-selection caller.
+    from src.evaluation.economic_gate import economic_gate
+    acceptance = economic_gate(manifest.get("metrics", {}).get("validation", {}),
+        [row.get("simulated_validation", {}) for row in manifest.get("folds", [])],
+        manifest.get("cost_stress", {}), manifest.get("feature_importance", {}),
+        config.get("research", {}).get("economic_gate", {}))
+    if not acceptance["passed"]:
+        raise ValueError("Economic acceptance failed before final-test access: " + acceptance["reason"])
     final_test_evaluation = _record_final_test_evaluation(
         config,
         run_dir,
@@ -2377,7 +2516,7 @@ def _score_trial_on_test(
         add_meta_labels(candidate_signals(test_predictions, dataset, config), dataset, config),
         meta_model,
     )
-    test_metrics, test_trades = run_alpha_backtest(test_candidates, config)
+    test_metrics, test_trades = run_alpha_backtest(test_candidates, config, cost_model=dataset_cost_model(dataset, config))
     from src.experiments.forecast_benchmark import forecast_metrics
     test_metrics["forecast"] = forecast_metrics(test_predictions, dataset, config)
     test_metrics["instability"] = test_metrics["forecast"].get("instability", {"status": "single_seed"})
@@ -2433,6 +2572,8 @@ def _apply_selected_test_evaluations(
     """Score only trials chosen by validation roles, and record each one in the ledger."""
 
     roles = set(final_test_selection_roles(config))
+    if selection.get("selection_score_available") is False:
+        roles = set()
     updated: List[Dict[str, Any]] = []
     for trial in trial_manifests:
         current = dict(trial)
@@ -2440,10 +2581,17 @@ def _apply_selected_test_evaluations(
             updated.append(current)
             continue
         trial_roles = _selection_roles_for_trial(current, selection)
-        if not (set(trial_roles) & roles):
+        from src.evaluation.economic_gate import economic_gate
+        gate_settings = config.get("research", {}).get("economic_gate", {})
+        gate = economic_gate(current.get("metrics", {}).get("validation", {}),
+            [row.get("simulated_validation", {}) for row in current.get("folds", [])],
+            current.get("cost_stress", {}), current.get("feature_importance", {}), gate_settings)
+        current["economic_gate"] = gate
+        if not gate["passed"] or not (set(trial_roles) & roles):
             current["test_evaluation"] = {
-                "status": "disabled" if not roles else "not_selected",
-                "reason": "final-test scoring disabled for implementation verification" if not roles else "final test is scored only for trials selected on validation",
+                "status": "economic_rejected" if not gate["passed"] else "disabled" if not roles else "not_selected",
+                "economic_gate": gate,
+                "reason": "economic acceptance failed: " + gate["reason"] if not gate["passed"] else "no validation score available" if selection.get("selection_score_available") is False else "final-test scoring disabled by configuration" if not roles else "final test is scored only for trials selected on validation",
                 "selection_roles": trial_roles,
             }
             current["final_test_evaluation"] = None
@@ -2580,9 +2728,14 @@ def _metric_value(payload: Mapping[str, Any], path: str) -> float:
 
 def _rank_trials(trials: Sequence[Mapping[str, Any]], config: Mapping[str, Any]) -> List[Mapping[str, Any]]:
     pipeline = config.get("pipeline", {}) or {}
-    metric = str(pipeline.get("selection_metric", "metrics.validation.net_pnl"))
+    metric = ALIASES.get(str(pipeline.get("selection_metric", "metrics.validation.net_pnl")), str(pipeline.get("selection_metric", "metrics.validation.net_pnl")))
     mode = str(pipeline.get("selection_mode", "max"))
-    return sorted(trials, key=lambda item: _metric_value(item, metric), reverse=(mode == "max"))
+    if mode not in {"min", "max"}:
+        raise ValueError("selection_mode must be min or max")
+    def key(item):
+        value = _metric_value(item, metric)
+        return (not math.isfinite(value), -value if mode == "max" else value)
+    return sorted(trials, key=key)
 
 
 def _validation_trade_count(trial: Mapping[str, Any]) -> float:
@@ -2606,7 +2759,10 @@ def _mean_validation_direction_accuracy(trial: Mapping[str, Any]) -> float:
 def _trial_calibration_error(trial: Mapping[str, Any]) -> float:
     diagnostics = trial.get("diagnostics", {}) if isinstance(trial.get("diagnostics"), Mapping) else {}
     validation = diagnostics.get("validation", {}) if isinstance(diagnostics, Mapping) else {}
-    if not validation:
+    direct = _metric_value(trial, "metrics.validation.meta_classification.calibration_error")
+    if math.isfinite(direct):
+        return direct
+    if not validation or not sum(row.get("count", 0) for row in validation.get("probability_buckets", [])):
         return math.inf
     return _expected_calibration_error(validation)
 
@@ -2631,7 +2787,7 @@ def select_trials_with_trade_floor(
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Dict[str, Any]]:
     validate_selection_metric(config)
     pipeline = config.get("pipeline", {}) or {}
-    metric = str(pipeline.get("selection_metric", "metrics.validation.net_pnl"))
+    metric = ALIASES.get(str(pipeline.get("selection_metric", "metrics.validation.net_pnl")), str(pipeline.get("selection_metric", "metrics.validation.net_pnl")))
     mode = str(pipeline.get("selection_mode", "max"))
     min_trades = int(pipeline.get("min_validation_trades", pipeline.get("selection_min_trades", 1)) or 0)
     ranked = _rank_trials(trials, config)
@@ -2647,24 +2803,40 @@ def select_trials_with_trade_floor(
         best_trading["selected_by"] = {"metric": metric, "mode": mode, "value": _metric_value(best_trading, metric)}
         best_trading["selection_status"] = "trade_qualified"
 
-    classification_best = max(trials, key=_mean_validation_direction_accuracy)
+    meta_classified = [trial for trial in trials if math.isfinite(_metric_value(trial, "metrics.validation.meta_classification.f1"))]
+    classification_best = max(meta_classified, key=lambda trial: _metric_value(trial, "metrics.validation.meta_classification.f1")) if meta_classified else max(trials, key=_mean_validation_direction_accuracy)
     calibration_candidates = [trial for trial in trials if math.isfinite(_trial_calibration_error(trial))]
     calibration_best = min(calibration_candidates, key=_trial_calibration_error) if calibration_candidates else None
 
     selection = {
         "metric": metric,
         "mode": mode,
+        "selection_score_available": math.isfinite(_metric_value(raw_best, metric)),
         "min_validation_trades": min_trades,
         "raw_best_trial_id": raw_best.get("trial_id"),
         "raw_best_validation_trades": raw_best_trades,
         "raw_best_selection_status": raw_best["selection_status"],
         "best_trading_trial_id": best_trading.get("trial_id") if best_trading else None,
         "classification_best_trial_id": classification_best.get("trial_id") if classification_best else None,
-        "classification_best_score": _mean_validation_direction_accuracy(classification_best) if classification_best else None,
+        "classification_best_score": (_metric_value(classification_best, "metrics.validation.meta_classification.f1") if meta_classified else _mean_validation_direction_accuracy(classification_best)) if classification_best else None,
+        "classification_score_source": "held_out_meta_f1" if meta_classified else "legacy_base_direction_accuracy",
         "calibration_best_trial_id": calibration_best.get("trial_id") if calibration_best else None,
         "calibration_best_ece": _trial_calibration_error(calibration_best) if calibration_best else None,
         "qualified_trial_count": int(len(qualified)),
     }
+    winners = {}
+    for name, path, maximize in [("f1", "metrics.validation.selection.f1", True),
+                                 ("negative_log_loss", "metrics.validation.selection.negative_log_loss", True),
+                                 ("calibration_error", "metrics.validation.selection.calibration_error", False),
+                                 ("edge_rank", "metrics.validation.selection.edge_rank_correlation", True),
+                                 ("net_pnl", "metrics.validation.net_pnl", True),
+                                 ("composite", "metrics.validation.selection.composite", True)]:
+        available = [row for row in trials if math.isfinite(_metric_value(row, path))]
+        winner = (max if maximize else min)(available, key=lambda row: _metric_value(row, path)) if available else None
+        winners[name] = {"trial_id": winner.get("trial_id") if winner else None,
+                         "score": _metric_value(winner, path) if winner else None,
+                         "trade_qualified": _validation_trade_count(winner) >= min_trades if winner else False}
+    selection["validation_metric_winners"] = winners
     return raw_best, best_trading, selection
 
 
@@ -2919,6 +3091,11 @@ def _log_meta_label_trial_trackio(
         "meta_labeler": _trackio_compact(trial.get("meta_labeler")),
         "training_discipline": _trackio_compact(trial.get("final_training_history")),
         "candidate_mapping": trial.get("candidate_mapping"),
+        "cost_model": trial.get("cost_model"),
+        "resolved_base_model": trial.get("config", {}).get("model", {}).get("base", {}),
+        "resolved_training": trial.get("config", {}).get("training", {}),
+        "resolved_labels": trial.get("config", {}).get("labels", {}),
+        "feature_importance": trial.get("feature_importance", {}).get("summary", []),
     }
     split_metrics = trial.get("metrics", {}) or {}
     metrics = {
@@ -2930,6 +3107,9 @@ def _log_meta_label_trial_trackio(
                      for split, payload in split_metrics.items()},
         "forecast_baselines": {split: payload.get("forecast_baselines", {}) for split, payload in split_metrics.items()},
         "model_instability": {split: payload.get("instability", {}) for split, payload in split_metrics.items()},
+        "feature_importance": {f"{row['model']}.{row['feature']}": {"negative_log_loss_drop": row["negative_log_loss_drop"], "fold_std": row["fold_std"], "f1_drop": row["f1_drop"]} for row in trial.get("feature_importance", {}).get("summary", [])},
+        "cost_stress": {str(row["cost_multiple"]): row for row in trial.get("cost_stress", {}).get("rows", [])},
+        "runtime": trial.get("runtime", {}),
         "forecast_oof_by_fold": {
             f"fold_{fold.get('fold')}": _fold_metrics_for_trackio(fold.get("metrics", {}))
             for fold in trial.get("folds", []) or []
@@ -3250,6 +3430,8 @@ def run_meta_labeling_mvp(
     run_dir = Path(pipeline.get("artifact_root", "artifacts/runs")) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     resolved_device = resolve_training_device(device, allow_cpu=allow_cpu)
+    search_plan = build_search_plan(config_for_search)
+    _write_json(run_dir / "search_plan.json", search_plan)
     trial_specs = expand_grid_search(config_for_search)
 
     resolved_config_path = _write_yaml(run_dir / "resolved_config.yml", config_for_search)
@@ -3275,6 +3457,7 @@ def run_meta_labeling_mvp(
         "dependencies": _dependency_manifest(),
         "device": _device_manifest(resolved_device),
         "trial_count": len(trial_specs),
+        "search_plan_hash": _stable_hash(search_plan),
         "environment_path": environment_path,
     }
     _write_json(run_dir / "run_identity.json", run_identity)
@@ -3331,7 +3514,9 @@ def run_meta_labeling_mvp(
         _write_json(best_trading_path, best_trading)
 
     trial_accounting = _trial_accounting(trial_manifests, selection, config_for_search)
-    cross_trial = attach_cross_trial_statistics(trial_manifests, trial_count=len(trial_manifests))
+    research_budget = comparison_budget(trial_manifests)
+    trial_accounting["research_comparison_budget"] = research_budget
+    cross_trial = attach_cross_trial_statistics(trial_manifests, trial_count=research_budget["conservative_comparison_count"])
     test_metrics = (best or {}).get("metrics", {}).get("test", {}) if isinstance(best, Mapping) else {}
     test_dsr = ((test_metrics.get("statistics") or {}).get("dsr") or {})
     final_test_uses = final_test_use_count(trial_manifests)
@@ -3357,6 +3542,8 @@ def run_meta_labeling_mvp(
         "raw_data": run_identity["raw_data"],
         "trial_count": len(trial_specs),
         "stage0": stage0,
+        "search_plan": search_plan, "search_plan_path": run_dir / "search_plan.json",
+        "research_comparison_budget": research_budget,
         "benchmark": benchmark_summary,
         "trials": trial_manifests,
         "best_trial": best,
@@ -3366,7 +3553,7 @@ def run_meta_labeling_mvp(
         "selection": selection,
         "trial_accounting": trial_accounting,
         "trial_accounting_path": trial_accounting_path,
-        "path_type": "single_path",
+        "path_type": "multi_path" if best.get("metrics", {}).get("validation", {}).get("path_dispersion", {}).get("path_type") in {"grouped_scenario", "grouped_scenarios", "purged_kfold"} else "single_path",
         "validation_test_rank_stability": validation_test_rank_stability(trial_manifests),
         "evidence_grade": evidence_grade,
         "pbo": cross_trial["pbo"],
@@ -3375,6 +3562,11 @@ def run_meta_labeling_mvp(
         "report_json_path": report_dir / "report.json",
         "report_markdown_path": report_dir / "report.md",
     }
+    from src.evaluation.evidence import assess_evidence
+    report["final_test_use_count"] = final_test_uses
+    report["evidence_assessment"] = assess_evidence(report, config_for_search)
+    report["legacy_presence_grade"] = report["evidence_grade"]
+    report["evidence_grade"] = report["evidence_assessment"]["grade"]
     _write_json(report["report_json_path"], report)
     Path(report["report_markdown_path"]).write_text(_report_markdown(report), encoding="utf-8")
     _write_json(run_dir / "manifest.json", report)
@@ -3411,6 +3603,9 @@ def run_meta_labeling_mvp(
         _write_json(best_trading_path, best_trading)
         report["best_trading_trial"] = best_trading
     report["trial_accounting"] = trial_accounting
+    if config_for_search.get("reporting", {}).get("dashboard", True):
+        from src.experiments.dashboard import build_dashboard
+        report["dashboard_path"] = build_dashboard(report)
     _write_json(report["report_json_path"], report)
     _write_json(run_dir / "manifest.json", report)
     return _json_ready(report)

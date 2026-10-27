@@ -1,18 +1,19 @@
-# Experiment readiness — 2026-10-17
+# Experiment readiness — 2026-10-27 merge review
 
 Bounded offline research has already run on the PR #51/#53 branches. It produced
-negative or insufficient economic evidence, not a promoted strategy. Merged main
-at review is `d09efad`; those two PRs remain unmerged. See
+negative or insufficient economic evidence, not a promoted strategy. The #51
+merge includes #53, which was merged into the #51 branch. See
 [project status](PROJECT_STATUS.md) for code and result boundaries.
 
 ## What is ready
 
 Causal features, label geometry, exact-span validation, training discipline,
 forecast diagnostics, meta calibration, statistics, mandatory Trackio accounting
-and test-use manifests are merged. Search, purged importance and execution-cost
-controls are implemented in PR #51 (#16/#17/#20), pending merge. PR #53 adds
+and test-use manifests are merged. PR #51 adds search, purged importance and
+execution-cost controls (#16/#17/#20). Its included PR #53 adds
 train-only return transforms, exact checkpoint reload verification and economics
-before test access. Its 238-test result applies to that branch.
+before test access. Its 238-test result applies to that branch. Current combined
+verification is recorded in [the merge audit](context/pr51_merge_review_20261027.md).
 
 The five-market lake is collected and readable: 25 directories, 425 matching
 partition hashes, June 2025–October 2026 coverage. General training ingestion
@@ -22,8 +23,8 @@ and [the lake runbook](context/lighter_data_lake.md).
 
 ## What must precede the next lake-backed study
 
-1. Review and merge the relevant research code. Record the actual clean training
-   commit; a passing branch test suite is not evidence that main has its features.
+1. Use the merged research code and record the actual clean training commit.
+   Follow [the merge audit](context/pr51_merge_review_20261027.md) for code scope.
 2. Recover funding gaps or document direct source unavailability; reject unsupported
    holding periods. Do not zero-fill. Use market-specific UTC bounds and account
    for the later mark-price start and partial final day.
@@ -50,10 +51,11 @@ of profitability or automatic approval for a new study.
 
 ## Which remaining issues block which experiments
 
-GitHub has 21 open issues: 9 implementation/data and 12 experiments.
+After the #51 merge closes #16/#17/#20, 18 issues remain: 6 implementation/data
+and 12 experiments.
 #30–#35 have merged parent controls, but still require individual frozen protocols.
-#36 needs #22 benchmark trading parity; #37 needs merged #17; #38 needs merged #16;
-#39 needs #19 sizing and credible calibration; #40 needs merged #20 and coverage;
+#36 needs #22 benchmark trading parity; #37 and #38 now have their #17/#16 controls;
+#39 needs #19 sizing and credible calibration; #40 has #20 but still needs coverage;
 #41 needs complete budget/selection accounting and a frozen strategy.
 
 #19 is unnecessary for a fixed-notional opportunity test. #43–#45 are unnecessary

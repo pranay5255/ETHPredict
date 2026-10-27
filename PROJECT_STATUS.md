@@ -1,4 +1,4 @@
-# ETHPredict project status — 2026-10-17
+# ETHPredict project status — 2026-10-27 merge review
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, funding has 31 unresolved collection gaps per market, and no
@@ -6,19 +6,20 @@ strategy has qualified for promotion.
 
 ## Code and evidence boundaries
 
-- Merged main at this review: `d09efad` (PR #52). Causal features, label/split
+- Main before the #51 merge: `a97f371` (including PR #52). Causal features, label/split
   controls, weighted training, calibration, side-data gates, statistics, Trackio
   accounting and test-use guards are merged. Issues #8–#15, #18, #21, #23 and #24
   are closed; freeze experiments #25–#29 are closed historical studies.
 - [PR #51](https://github.com/pranay5255/ETHPredict/pull/51), branch
-  `codex/afml-search-importance-execution`, remains open. It implements search
-  #16, purged importance #17 and execution costs #20; its recorded verification
-  is 218 passing tests. Those issues remain open pending merge.
+  `codex/afml-search-importance-execution`, implements search #16, purged importance
+  #17 and execution costs #20. Its merge resolves these three implementation issues;
+  its original recorded verification was 218 passing tests.
 - [PR #53](https://github.com/pranay5255/ETHPredict/pull/53), branch
-  `codex/forecast-opportunity-economics`, is a draft stacked on PR #51. It adds
+  `codex/forecast-opportunity-economics`, was merged into the #51 branch. It adds
   train-only return transforms, checkpoint round trips, one bounded opportunity
   study and an economic gate before final-test access. Recorded verification:
-  238 passing tests. These changes are not on main.
+  238 passing tests. The #51 merge brings these changes to main too. Combined-code
+  verification and closure scope: [merge audit](context/pr51_merge_review_20261027.md).
 - This documentation/EDA/backfill commit series records existing local work.
   Its checks are recorded separately in [project verification](context/project_docs_verification_20261017.md).
 
@@ -62,11 +63,10 @@ The completed lake supplies more research coverage, not a demonstrated edge.
 
 ## Remaining work and order
 
-GitHub snapshot: **21 open issues: 9 implementation/data issues and 12 experiment
-issues**. No existing open issue has acceptance criteria completed by historical
-backfill alone, so none was closed by this documentation update.
+After #51 closes #16/#17/#20: **18 open issues: 6 implementation/data issues and
+12 experiment issues**. Historical backfill alone completes no other open issue.
 
-1. Review/merge PR #51, then review PR #53 and its economic rejection gate.
+1. Use the combined #51/#53 code and preserve its economic rejection gate.
 2. Recover historical funding gaps (#54); implement and verify the explicit lake
    ingestion/export contract before claiming lake-backed experiments.
 3. Specify one new causal hypothesis, fixed budget, held-out development blocks,

@@ -2,10 +2,11 @@
 
 Trackio mirrors local artifacts. Panels should read manifest fields and receipt paths, not recompute selection or failure modes. Publishing a Hugging Face Space is a later decision; this note only defines the fields and panels a local or future Space view would show.
 
-## Current evidence and dashboard boundary — 2026-10-17
+## Current evidence and dashboard boundary — 2026-10-27 merge review
 
 The first bounded PR #51 study and development PR #53 study have recorded reports
-and Trackio readback, but both PRs remain unmerged. The former lost 136.174 net on
+and Trackio readback. PR #53 was merged into #51; merging #51 brings both to main.
+The former lost 136.174 net on
 its single final test; the latter rejected every strategy and used no new final
 test. Do not rank older archived cohorts against these runs as if code, data,
 splits and costs matched. Repeated deterministic seeds are not independent bets.

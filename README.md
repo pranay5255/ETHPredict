@@ -4,7 +4,7 @@ ETHPredict researches directional signals using public Lighter ETH perpetual dat
 
 The current experiment path uses `uv` for dependency management and a CUDA 12.8 PyTorch environment on `cuda:0` for neural training. ARIMA and SARIMAX baselines remain CPU-bound.
 
-## Current status — 2026-10-17
+## Current status — 2026-10-27 merge review
 
 - **History available:** ETH/BTC/SOL/HYPE/NEAR, June 4, 2025 through a partial
   October 16, 2026; 25 readable Parquet datasets, 425 verified partition hashes,
@@ -14,13 +14,14 @@ The current experiment path uses `uv` for dependency management and a CUDA 12.8 
   [#54](https://github.com/pranay5255/ETHPredict/issues/54).
 - **Integration:** training still reads CSVs; the lake does not change old runs.
   See [the data lake runbook and audit](context/lighter_data_lake.md).
-- **Code:** merged main at review is `d09efad`. [PR #51](https://github.com/pranay5255/ETHPredict/pull/51)
-  (#16/#17/#20) and stacked [draft PR #53](https://github.com/pranay5255/ETHPredict/pull/53)
-  (forecast repair/opportunity study/economic gate) are unmerged.
+- **Code:** [PR #51](https://github.com/pranay5255/ETHPredict/pull/51) adds
+  #16/#17/#20 and includes [PR #53](https://github.com/pranay5255/ETHPredict/pull/53),
+  previously merged into its branch (forecast repair/opportunity study/economic gate).
+  See [the merge audit](context/pr51_merge_review_20261027.md).
 - **Economics:** the first bounded final test lost 136.174 net on 103 trades.
   The subsequent development study rejected every configuration and used no new
   final test. No strategy is promoted and no profitability probability is established.
-- **Queue:** 21 open issues (9 implementation/data, 12 experiments); historical
+- **Queue after #51:** 18 open issues (6 implementation/data, 12 experiments); historical
   backfill alone completes none of their acceptance criteria.
 
 Start with [PROJECT_STATUS.md](PROJECT_STATUS.md), [TASKS.md](TASKS.md),
@@ -448,7 +449,7 @@ triple-barrier labels, held-out meta probabilities and directional alpha backtes
 GLFT remains a separate exploratory/passive-execution path. The earlier proposal
 to build these layers is superseded by the merged label/split/training controls.
 
-Review PR #51 and stacked PR #53, recover funding gaps (#54), then add an explicit
+With PR #51 and its included #53 changes merged, recover funding gaps (#54), then add an explicit
 lake reader or immutable export with partition provenance and coverage gates.
 Specify one new mechanism/horizon before fitting: the tested continuation recipe
 failed its economic gate. Keep fixed notional and a small recorded budget; require

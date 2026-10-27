@@ -1,15 +1,13 @@
-# ETHPredict tasks — 2026-10-17
+# ETHPredict tasks — 2026-10-27 merge review
 
-GitHub has **21 open issues: 9 implementation/data and 12 experiments**. The
+After PR #51 closes #16/#17/#20, GitHub has **18 open issues: 6 implementation/data
+and 12 experiments**. The
 historical backfill completes a data deliverable; it does not close snapshot,
-inference or dashboard acceptance criteria. No existing open issue was closed
-in this update. See [project status](PROJECT_STATUS.md).
+inference or dashboard acceptance criteria. See [project status](PROJECT_STATUS.md)
+and [the merge audit](context/pr51_merge_review_20261027.md).
 
 ## Open implementation and data issues
 
-- [ ] [#16](https://github.com/pranay5255/ETHPredict/issues/16) Trial-aware search — implemented in open PR #51; pending merge.
-- [ ] [#17](https://github.com/pranay5255/ETHPredict/issues/17) Purged feature importance — implemented in open PR #51; pending merge.
-- [ ] [#20](https://github.com/pranay5255/ETHPredict/issues/20) Dynamic cost/execution interface — implemented in open PR #51; pending merge.
 - [ ] [#54](https://github.com/pranay5255/ETHPredict/issues/54) Recover the 31 shared funding collection gaps and verify boundaries.
 - [ ] [#19](https://github.com/pranay5255/ETHPredict/issues/19) Probability/edge/concurrency sizing with exposure limits.
 - [ ] [#22](https://github.com/pranay5255/ETHPredict/issues/22) Forecast benchmark trading parity, including TimesFM identity/failures.
@@ -47,6 +45,7 @@ in this update. See [project status](PROJECT_STATUS.md).
 - [x] #8 activity bars/side-data gates; #9 causal feature reproducibility.
 - [x] #10 event sampling; #13 labels; #14 weights; #15 exact-span validation.
 - [x] #12 training discipline; #11 forecast diagnostics; #18 meta calibration.
+- [x] #16 trial-aware search; #17 purged importance; #20 shared cost/execution model (PR #51).
 - [x] #21 statistics; #23 Trackio accounting; #24 artifact/test-use controls.
 - [x] #25–#29 historical freeze studies (preserve their original code/data scope).
 
@@ -54,7 +53,7 @@ in this update. See [project status](PROJECT_STATUS.md).
 
 - [x] PR #51: first bounded fixed-notional study; final test used once, net -136.174.
 - [x] PR #53: bounded development study; all economic gates failed, zero new tests.
-- [ ] Merge/review their code before treating these capabilities as merged main.
+- [x] PR #51 incorporates the already merged #53 branch and reconciles current main.
 
 The lake is not connected to the general training loader. Funding recovery is
 [#54](https://github.com/pranay5255/ETHPredict/issues/54), not schema repair.
