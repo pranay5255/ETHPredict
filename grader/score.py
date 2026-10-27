@@ -78,6 +78,7 @@ class BlockEvidence:
     turnover: float
     trades: int
     daily_sharpe: float | None
+    cashflow_dates: np.ndarray | None = None
 
 
 def daily_sharpe(values):
@@ -105,7 +106,8 @@ def block_evidence(data: ReplayData, targets, *, block: int) -> BlockEvidence:
         raise DataContractError('Missing daily accounting observations')
     return BlockEvidence(block, data.markets, daily, ordinary, float(daily.net_1x_bps.sum()),
         float(daily.net_2x_bps.sum()), float(daily.turnover.sum()), int(daily.trades.sum()),
-        daily_sharpe(daily.net_1x_bps.to_numpy() / (10000.*len(data.markets))))
+        daily_sharpe(daily.net_1x_bps.to_numpy() / (10000.*len(data.markets))),
+        pd.DatetimeIndex(events.date).as_unit('ns').asi8)
 
 
 def component_score(blocks: list[BlockEvidence], *, trial_sharpes, trial_count: int, rubric=None):
