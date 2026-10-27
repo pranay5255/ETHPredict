@@ -67,6 +67,19 @@ def protect_parent_memory():
     _check(_LIBC.prctl(4, 0, 0, 0, 0), 'PR_SET_DUMPABLE')
 
 
+def allow_worker_trace():
+    """The clean child contains no parent data; let its existing tracer decode it.
+
+    Parent/server remain non-dumpable. Landlock still denies this child access
+    to other processes' memory and FDs; seccomp denies ptrace/process_vm APIs.
+    """
+    _check(_LIBC.prctl(4, 1, 0, 0, 0), 'worker PR_SET_DUMPABLE')
+
+
+def kill_with_parent():
+    _check(_LIBC.prctl(1, 9, 0, 0, 0), 'PR_SET_PDEATHSIG')
+
+
 def landlock_abi():
     if platform.machine() not in {'x86_64','aarch64'}:
         raise RuntimeError('Unsupported Linux syscall architecture')
@@ -125,6 +138,7 @@ def restrict_syscalls():
             'semget','semop','semtimedop','semctl',
             'bpf','perf_event_open','keyctl','add_key','request_key',
             'mount','umount2','pivot_root','chroot','unshare','setns',
+            'chdir','fchdir','setsid','setpgid',
             'open_tree','move_mount','fsopen','fsconfig','fsmount','fspick','mount_setattr',
             'name_to_handle_at','open_by_handle_at','io_uring_setup',
             'chmod','fchmod','fchmodat','fchmodat2','chown','lchown','fchown','fchownat',
@@ -135,6 +149,8 @@ def restrict_syscalls():
         for flag in [0x00800000,0x00020000,0x02000000,0x04000000,0x08000000,
                      0x10000000,0x20000000,0x40000000,0x00000080]:
             deny('clone',comparison=ArgCompare(0,7,flag,flag))
+        for option in [1, 4, 0x59616d61]:  # death signal, dumpability, ptracer
+            deny('prctl',comparison=ArgCompare(0,4,option,0))
         _check(_LIBC.prctl(38,1,0,0,0),'PR_SET_NO_NEW_PRIVS')
         result=library.seccomp_load(context)
         if result<0:
