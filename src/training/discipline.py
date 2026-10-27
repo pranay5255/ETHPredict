@@ -83,7 +83,8 @@ def bootstrap_rows(samples, mode, seed):
     """Sequential bootstrap uses marginal uniqueness on inclusive span endpoints.
 
     Endpoint compression avoids an events-by-source-bars matrix. Draws are with
-    replacement; only the supplied fit population participates.
+    replacement; only the supplied fit population participates. Each draw costs
+    one vectorized pass over events: span averages come from prefix sums.
     """
     n = len(samples)
     rng = np.random.default_rng(seed)
@@ -103,15 +104,18 @@ def bootstrap_rows(samples, mode, seed):
     boundaries = np.unique(np.concatenate([starts, ends + 1]))
     left, right = np.searchsorted(boundaries, starts), np.searchsorted(boundaries, ends + 1)
     widths = np.diff(boundaries).astype(float)
+    span_widths = np.cumsum(np.concatenate([[0.], widths]))
+    span_widths = span_widths[right] - span_widths[left]
     concurrency = np.zeros(len(widths))
-    draws = []
-    for _ in range(n):
-        marginal = np.array([np.average(1. / (concurrency[a:b] + 1.), weights=widths[a:b])
-                             for a, b in zip(left, right)])
+    draws = np.empty(n, dtype=int)
+    for draw in range(n):
+        # Width-weighted mean of 1 / (c + 1) over each event's segments.
+        prefix = np.cumsum(np.concatenate([[0.], widths / (concurrency + 1.)]))
+        marginal = (prefix[right] - prefix[left]) / span_widths
         choice = int(rng.choice(n, p=marginal / marginal.sum()))
-        draws.append(choice)
+        draws[draw] = choice
         concurrency[left[choice]:right[choice]] += 1
-    return np.asarray(draws)
+    return draws
 
 
 class SeedEnsemble(torch.nn.Module):
@@ -144,3 +148,14 @@ class TabularBase(torch.nn.Module):
 
     def set_extra_state(self, state):
         self.regressors, self.classifiers = state['regressors'], state['classifiers']
+
+
+class ConstantBase(torch.nn.Module):
+    """Train-only mean/zero return with a training-prior direction probability."""
+    def __init__(self, returns, probabilities):
+        super().__init__()
+        self.register_buffer('returns', torch.as_tensor(returns, dtype=torch.float32).clone())
+        self.register_buffer('probabilities', torch.as_tensor(probabilities, dtype=torch.float32).clamp(1e-7, 1-1e-7))
+
+    def forward(self, x):
+        return self.returns.expand(len(x), -1), torch.logit(self.probabilities).expand(len(x), -1)

@@ -1,8 +1,7 @@
 # #12 / #11 / #18 implementation and verification
 
-Implemented after PR #49, based on `main` at `858f2f3`. This batch is pending
-review/merge. It does not execute performance experiments #33–#35 or promote a
-model. The primary checkout's uncommitted EDA files were preserved.
+Implemented after PR #49, based on `main` at `858f2f3`, and merged in PR #50.
+It does not execute performance experiments #33–#35 or promote a model.
 
 ## Training and validation contract
 
@@ -30,8 +29,10 @@ evaluated trials and is unavailable when too few results exist.
 `training.bootstrap` supports `none`, `bootstrap`, and `sequential_bootstrap`.
 Sequential draws use marginal span uniqueness on retained training events with
 replacement. Uniform and the existing uniqueness/return/combined weight modes
-remain configurable and audited. Sequential bootstrap is quadratic in event
-count and is optional; start with bounded fixtures before large runs.
+remain configurable and audited. Each sequential draw is one vectorized pass
+over events (prefix sums over span segments), so a 16,000-event fold takes about
+3 seconds; a test pins the draws to a brute-force indicator-matrix reference.
+Bootstrap draws are recorded only when resampling is enabled.
 
 `model.base.type` supports `lstm`, `linear`, and `tree`. Tabular heads use the
 latest selected feature vector plus rolling mean/std; regression and binary
@@ -57,7 +58,10 @@ trade results. Constant/insufficient ranks are explicitly unavailable. Zero-retu
 has zero realized exposure/cost; momentum remains an explicit comparison.
 
 `forecast_diagnostics.json` is saved separately from alpha diagnostics and PnL.
-Forecast and backtest namespaces stay separate in Trackio. Benchmark summaries
+Forecast and backtest namespaces stay separate in Trackio (see
+`context/trackio_dashboard.md`). Trackio run configs replace row-level ID lists
+(`*_indices`, `*_keys`, bootstrap `draws`) with counts; local manifests keep the
+full audits. Benchmark summaries
 always include zero return, even if only other models were requested. Linear and
 tree models can be selected alongside LSTM and momentum. TimesFM success records
 include checkpoint/package/backend, context, input transform, effective compile
@@ -121,12 +125,15 @@ and keeps final test and the forecast benchmark disabled. A separate forecast-on
 fixture runs tabular models and fake TimesFM, records its horizon/scaling audit,
 and confirms zero test reads. No optional model downloads are needed for tests.
 
-Final verification: **197 passed, 37 warnings in 101.83 seconds**, using the
-shared project virtual environment and `OMP_NUM_THREADS=1 python -m pytest -q`.
-This includes the existing CUDA smoke checks. `git diff --check` also passed.
-The pre-existing primary-checkout untracked EDA tests are outside this branch/suite.
-The warnings come from scientific-library calculations on constant or nearly
-constant synthetic series.
+Final verification after review fixes: **201 passed, 37 warnings in about 100
+seconds**, using the shared project virtual environment and
+`OMP_NUM_THREADS=1 python -m pytest -q`. This includes the existing CUDA smoke
+checks. The warnings come from scientific-library calculations on constant or
+nearly constant synthetic series. Both smoke configs below also completed on the
+committed Lighter 5m data (2m07s and 45s on the RTX 4090), and the training
+smoke was delivered to a scratch Trackio project and read back with the
+`forecast.*`, `forecast_baselines.*`, `model_instability.*`, and per-seed
+`training_final.*` namespaces present.
 
 Reusable local smoke configs (require an existing raw-data fixture):
 

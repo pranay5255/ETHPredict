@@ -55,7 +55,7 @@ from src.features.sample_weights import (
 )
 from src.validation.splits import exact_validation_splits, purge_training_spans
 from src.training.meta_models import MetaModelBundle, SklearnMetaModel, fit_calibrator
-from src.training.discipline import EarlyStopper, SeedEnsemble, TabularBase, bootstrap_rows, training_holdout
+from src.training.discipline import EarlyStopper, SeedEnsemble, TabularBase, ConstantBase, bootstrap_rows, training_holdout
 from src.training.devices import resolve_training_device
 from src.training.trainer import compute_metrics
 from src.utils.trackio_logging import enforce_trackio_policy, log_trackio_run
@@ -80,11 +80,13 @@ class MultiHorizonLSTM(nn.Module):
         )
         self.return_head = nn.Linear(hidden_size, n_horizons)
         self.direction_head = nn.Linear(hidden_size, n_horizons)
+        self.register_buffer("return_mean", torch.zeros(n_horizons))
+        self.register_buffer("return_scale", torch.ones(n_horizons))
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         encoded, _ = self.encoder(x)
         last = encoded[:, -1, :]
-        return self.return_head(last), self.direction_head(last)
+        return self.return_head(last) * self.return_scale + self.return_mean, self.direction_head(last)
 
 
 class MetaLabelMLP(nn.Module):
@@ -1183,6 +1185,14 @@ def _subset(dataset: Mapping[str, Any], indices: np.ndarray) -> Tuple[torch.Tens
     return dataset["X"][indices], dataset["y_ret"][indices], dataset["y_dir"][indices], dataset["sample_weights"][indices]
 
 
+def _bootstrap_audit(mode: str, draws: np.ndarray) -> Dict[str, Any]:
+    # Without resampling the draws are just the retained rows in order.
+    audit = {"mode": mode, "draw_count": int(len(draws)), "unique_rows": int(len(np.unique(draws)))}
+    if mode != "none":
+        audit["draws"] = draws.tolist()
+    return audit
+
+
 def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: Mapping[str, Any], device: torch.device) -> Tuple[MultiHorizonLSTM, Dict[str, Any]]:
     training = config.get("training", {})
     stop_cfg = training.get("early_stopping", {}) or {}
@@ -1221,6 +1231,15 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
     seed = int(torch.initial_seed())
     draws = bootstrap_rows(dataset["samples"].iloc[indices], str(training.get("bootstrap", "none")), seed)
     kind = str(model_cfg.get("type", "lstm"))
+    if kind in {"zero", "mean"}:
+        model = ConstantBase(torch.zeros(y_ret.shape[1], device=device) if kind == "zero" else y_ret.mean(0),
+                             y_dir.mean(0)).to(device)
+        model.register_buffer("feature_mean", feature_mean.detach().clone())
+        model.register_buffer("feature_std", feature_std.detach().clone())
+        return model, {"model_type": kind, "seed": seed, "fit_indices": indices.tolist(),
+                       "return_unit": "log_fraction", "direction_baseline": "retained_training_prior",
+                       "early_stopping": {"status": "not_applicable"},
+                       "preprocessing": {"fit_scope": "train_indices_only"}}
     if kind in {"linear", "tree"}:
         from sklearn.linear_model import Ridge, LogisticRegression
         from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
@@ -1247,10 +1266,20 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
         return model, {"model_type": kind, "feature_summary": "latest_mean_std", "seed": seed,
                        "early_stopping": {"status": "not_applicable", "reason": "noniterative tabular fit"},
                        "sample_weight_diagnostics": weight_diagnostics,
-                       "bootstrap": {"mode": training.get("bootstrap", "none"), "draws": draws.tolist()},
+                       "bootstrap": _bootstrap_audit(training.get("bootstrap", "none"), draws),
                        "preprocessing": {"fit_scope": "train_indices_only"}}
     if kind != "lstm":
         raise ValueError(f"Unknown base model type: {kind}")
+    target_mode = training.get("target_standardization", "none")
+    if target_mode not in {"none", "standard"}:
+        raise ValueError("target_standardization must be none or standard")
+    if target_mode == "standard":
+        model.return_mean.copy_(y_ret.mean(0))
+        model.return_scale.copy_(y_ret.std(0, unbiased=False).clamp_min(1e-8))
+    target_audit = {"mode": target_mode, "fit_indices": indices.tolist(),
+                    "fit_scope": "retained_training_rows_after_internal_purge",
+                    "mean": model.return_mean.cpu().tolist(), "scale": model.return_scale.cpu().tolist(),
+                    "model_output_unit": "log_fraction", "loss_unit": "standardized" if target_mode == "standard" else "log_fraction"}
     optimizer = optim.Adam(
         model.parameters(),
         lr=float(training.get("learning_rate", 0.001)),
@@ -1265,15 +1294,19 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
     )
     losses: List[float] = []
     validation_losses = []
+    components = []
+    validation_components = []
     stopper = EarlyStopper(stop_cfg.get("patience", 3), stop_cfg.get("min_delta", 0.))
     for epoch in range(int(training.get("epochs", 1))):
         model.train()
         total = 0.0
         batches = 0
+        sums = np.zeros(4)
         for batch_X, batch_ret, batch_dir, batch_w in loader:
             optimizer.zero_grad()
             pred_ret, pred_dir_logits = model(batch_X)
-            loss_return = ret_loss(pred_ret, batch_ret).mean(dim=1)
+            raw_return_loss = ret_loss(pred_ret, batch_ret).mean(dim=1)
+            loss_return = ret_loss((pred_ret - batch_ret) / model.return_scale, torch.zeros_like(batch_ret)).mean(dim=1)
             loss_direction = dir_loss(pred_dir_logits, batch_dir).mean(dim=1)
             loss = (
                 float(loss_weights.get("return", 1.0)) * loss_return
@@ -1281,17 +1314,28 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
             )
             weighted = (loss * batch_w / (batch_w.mean() + 1e-8)).mean()
             weighted.backward()
+            if training.get("gradient_clip_norm"):
+                nn.utils.clip_grad_norm_(model.parameters(), float(training["gradient_clip_norm"]))
             optimizer.step()
+            normalized_w = batch_w / (batch_w.mean() + 1e-8)
+            sums += np.array([float((value * normalized_w).mean().detach().cpu()) for value in
+                              [raw_return_loss, loss_return, loss_direction, loss]]) * len(batch_X)
             total += float(weighted.detach().cpu())
             batches += 1
         losses.append(total / max(batches, 1))
+        fields = ["return_mse_log_fraction", "return_mse_objective", "direction_cross_entropy", "combined_objective"]
+        components.append(dict(zip(fields, (sums / max(len(draws), 1)).tolist())))
         if len(validation):
             model.eval()
             with torch.no_grad():
                 vx = (dataset["X"][validation].to(device) - feature_mean) / feature_std
                 vr, vd = model(vx)
-                vl = (float(loss_weights.get("return", 1.)) * ret_loss(vr, dataset["y_ret"][validation].to(device)).mean()
-                      + float(loss_weights.get("direction", .25)) * dir_loss(vd, dataset["y_dir"][validation].to(device)).mean())
+                vy = dataset["y_ret"][validation].to(device)
+                raw_mse = ret_loss(vr, vy).mean()
+                objective_mse = ret_loss((vr - vy) / model.return_scale, torch.zeros_like(vy)).mean()
+                ce = dir_loss(vd, dataset["y_dir"][validation].to(device)).mean()
+                vl = float(loss_weights.get("return", 1.)) * objective_mse + float(loss_weights.get("direction", .25)) * ce
+                validation_components.append(dict(zip(fields, [float(v.cpu()) for v in [raw_mse, objective_mse, ce, vl]])))
             validation_losses.append(float(vl.cpu()))
             if stopper.update(validation_losses[-1], epoch + 1, model):
                 break
@@ -1301,10 +1345,14 @@ def _train_base_member(dataset: Mapping[str, Any], indices: np.ndarray, config: 
                       best_loss=stopper.best_loss if len(validation) else None)
     return model, {
         "model_type": kind, "seed": seed, "early_stopping": stop_audit,
-        "bootstrap": {"mode": training.get("bootstrap", "none"), "draws": draws.tolist()},
+        "bootstrap": _bootstrap_audit(training.get("bootstrap", "none"), draws),
         "sample_weight_fit_scope": "retained_training_rows_only",
         "sample_weight_diagnostics": weight_diagnostics,
         "training_losses": losses,
+        "training_loss_components": components,
+        "validation_loss_components": validation_components,
+        "target_transform": target_audit,
+        "loss_weights": dict(loss_weights),
         "final_loss": losses[(stopper.best_epoch or len(losses)) - 1] if losses else 0.0,
         "preprocessing": {
             "scaler": "standard",
@@ -1584,7 +1632,7 @@ def _meta_feature_columns(frame: pd.DataFrame, horizons: Sequence[str]) -> List[
     ]
     for horizon in horizons:
         columns.extend([f"{horizon}_pred_return", f"{horizon}_direction_prob"])
-    columns.extend(column for column in frame if column.startswith("diagnostic_noise_"))
+    columns.extend(column for column in frame if column.startswith(("diagnostic_noise_", "opportunity_")))
     return [column for column in columns if column in frame.columns]
 
 
@@ -2437,6 +2485,14 @@ def _score_trial_on_test(
     dataset = context["dataset"]
     splits = context["splits"]
     trial_id = str(manifest["trial_id"])
+    # Protect the scorer itself as well as its validation-selection caller.
+    from src.evaluation.economic_gate import economic_gate
+    acceptance = economic_gate(manifest.get("metrics", {}).get("validation", {}),
+        [row.get("simulated_validation", {}) for row in manifest.get("folds", [])],
+        manifest.get("cost_stress", {}), manifest.get("feature_importance", {}),
+        config.get("research", {}).get("economic_gate", {}))
+    if not acceptance["passed"]:
+        raise ValueError("Economic acceptance failed before final-test access: " + acceptance["reason"])
     final_test_evaluation = _record_final_test_evaluation(
         config,
         run_dir,
@@ -2525,10 +2581,17 @@ def _apply_selected_test_evaluations(
             updated.append(current)
             continue
         trial_roles = _selection_roles_for_trial(current, selection)
-        if not (set(trial_roles) & roles):
+        from src.evaluation.economic_gate import economic_gate
+        gate_settings = config.get("research", {}).get("economic_gate", {})
+        gate = economic_gate(current.get("metrics", {}).get("validation", {}),
+            [row.get("simulated_validation", {}) for row in current.get("folds", [])],
+            current.get("cost_stress", {}), current.get("feature_importance", {}), gate_settings)
+        current["economic_gate"] = gate
+        if not gate["passed"] or not (set(trial_roles) & roles):
             current["test_evaluation"] = {
-                "status": "disabled" if not roles else "not_selected",
-                "reason": "no validation score available" if selection.get("selection_score_available") is False else "final-test scoring disabled by configuration" if not roles else "final test is scored only for trials selected on validation",
+                "status": "economic_rejected" if not gate["passed"] else "disabled" if not roles else "not_selected",
+                "economic_gate": gate,
+                "reason": "economic acceptance failed: " + gate["reason"] if not gate["passed"] else "no validation score available" if selection.get("selection_score_available") is False else "final-test scoring disabled by configuration" if not roles else "final test is scored only for trials selected on validation",
                 "selection_roles": trial_roles,
             }
             current["final_test_evaluation"] = None
@@ -2936,6 +2999,41 @@ def _selection_status_for_trial(
     return "unselected"
 
 
+_ROW_LEVEL_SUFFIXES = ("_indices", "_keys")
+
+
+def _trackio_compact(value: Any) -> Any:
+    """Replace row-level ID lists with counts; the local manifest keeps them."""
+    if isinstance(value, Mapping):
+        compact: Dict[str, Any] = {}
+        for key, item in value.items():
+            if isinstance(item, (list, tuple)) and (str(key).endswith(_ROW_LEVEL_SUFFIXES) or key == "draws"):
+                compact[f"{key}_count"] = len(item)
+            else:
+                compact[key] = _trackio_compact(item)
+        return compact
+    if isinstance(value, (list, tuple)):
+        return [_trackio_compact(item) for item in value]
+    return value
+
+
+def _fold_metrics_for_trackio(metrics: Mapping[str, Any]) -> Dict[str, Any]:
+    # Per-fold seed variance stays; full per-seed metric copies stay in the manifest.
+    metrics = dict(metrics or {})
+    instability = metrics.get("instability")
+    if isinstance(instability, Mapping):
+        metrics["instability"] = {key: value for key, value in instability.items() if key != "per_seed"}
+    return metrics
+
+
+def _training_loss_metrics(history: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    history = history or {}
+    if history.get("members"):
+        return {f"seed_{seed}": _training_loss_metrics(member)
+                for seed, member in zip(history.get("ensemble_seeds", []), history["members"])}
+    return {f"epoch_{index + 1}_loss": loss for index, loss in enumerate(history.get("training_losses", []))}
+
+
 def _log_meta_label_trial_trackio(
     config: Mapping[str, Any],
     *,
@@ -2990,8 +3088,8 @@ def _log_meta_label_trial_trackio(
         "sample_weight_diagnostics": (trial.get("dataset", {}) or {}).get("sample_weight_diagnostics"),
         "bar_clock_diagnostics": (trial.get("dataset", {}) or {}).get("bar_clock_diagnostics"),
         "side_data_manifest": (trial.get("dataset", {}) or {}).get("side_data_manifest"),
-        "meta_labeler": trial.get("meta_labeler"),
-        "training_discipline": trial.get("final_training_history"),
+        "meta_labeler": _trackio_compact(trial.get("meta_labeler")),
+        "training_discipline": _trackio_compact(trial.get("final_training_history")),
         "candidate_mapping": trial.get("candidate_mapping"),
         "cost_model": trial.get("cost_model"),
         "resolved_base_model": trial.get("config", {}).get("model", {}).get("base", {}),
@@ -3004,20 +3102,19 @@ def _log_meta_label_trial_trackio(
         "alpha": {split: {key: value for key, value in payload.items()
                           if key not in {"forecast", "forecast_baselines", "instability"}}
                   for split, payload in split_metrics.items()},
-        "forecast": {split: payload.get("forecast", {}) for split, payload in split_metrics.items()},
+        # Seed instability is logged once, under model_instability.
+        "forecast": {split: {key: value for key, value in (payload.get("forecast", {}) or {}).items() if key != "instability"}
+                     for split, payload in split_metrics.items()},
         "forecast_baselines": {split: payload.get("forecast_baselines", {}) for split, payload in split_metrics.items()},
         "model_instability": {split: payload.get("instability", {}) for split, payload in split_metrics.items()},
         "feature_importance": {f"{row['model']}.{row['feature']}": {"negative_log_loss_drop": row["negative_log_loss_drop"], "fold_std": row["fold_std"], "f1_drop": row["f1_drop"]} for row in trial.get("feature_importance", {}).get("summary", [])},
         "cost_stress": {str(row["cost_multiple"]): row for row in trial.get("cost_stress", {}).get("rows", [])},
         "runtime": trial.get("runtime", {}),
         "forecast_oof_by_fold": {
-            f"fold_{fold.get('fold')}": fold.get("metrics", {})
+            f"fold_{fold.get('fold')}": _fold_metrics_for_trackio(fold.get("metrics", {}))
             for fold in trial.get("folds", []) or []
         },
-        "training_final": {
-            f"epoch_{index + 1}_loss": loss
-            for index, loss in enumerate((trial.get("final_training_history", {}) or {}).get("training_losses", []))
-        },
+        "training_final": _training_loss_metrics(trial.get("final_training_history")),
         "selection": {
             "is_raw_best": is_raw_best,
             "is_best_trade_qualified": is_best_trading,

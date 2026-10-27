@@ -25,7 +25,11 @@ def prepare_batch(template, source_data, output_root, *, funding_fetcher=None):
     config = yaml.safe_load(template.read_text())
     recipe = config.pop('local_batch')
     source = source_data / recipe['source_candles']
-    raw = pd.read_csv(source, header=None).tail(int(recipe.get('rows', 8192))).copy()
+    raw = pd.read_csv(source, header=None)
+    if recipe.get('source_end_exclusive'):
+        cutoff = pd.Timestamp(recipe['source_end_exclusive'])
+        raw = raw[raw[0] < int(cutoff.timestamp() * 1000)]
+    raw = raw.tail(int(recipe.get('rows', 8192))).copy()
     if len(raw) < int(recipe.get('rows', 8192)):
         raise ValueError('Insufficient source candles for the predeclared row budget')
     if not raw[0].is_unique or (raw[0].diff().dropna() != 300000).any():
@@ -55,14 +59,31 @@ def prepare_batch(template, source_data, output_root, *, funding_fetcher=None):
         for timestamp in missing:
             params = dict(market_id=0, resolution='1h', start_timestamp=int((timestamp-pd.Timedelta('1h')).timestamp()*1000),
                           end_timestamp=int((timestamp+pd.Timedelta('1h')).timestamp()*1000), count_back=4)
-            response = fetch(**params).copy()
+            response = None
+            local_source = None
+            for repair_path in recipe.get('funding_repair_paths', []):
+                repair_path = source_data / repair_path
+                archive = pd.read_parquet(repair_path) if repair_path.suffix == '.parquet' else pd.read_csv(repair_path)
+                archive['timestamp'] = pd.to_datetime(archive.timestamp, utc=True)
+                exact = archive[archive.timestamp == timestamp]
+                if len(exact):
+                    if len(exact) != 1:
+                        raise ValueError(f'Ambiguous local funding repair at {timestamp}')
+                    response = exact.copy()
+                    local_source = {'path': str(repair_path.resolve()), 'sha256': sha(repair_path)}
+                    break
+            if response is None:
+                if recipe.get('funding_repair_paths'):
+                    raise ValueError(f'Exact cashflow not found in declared local repair sources: {timestamp}')
+                response = fetch(**params).copy()
             response['timestamp'] = pd.to_datetime(response.timestamp, utc=True)
             response_hash = hashlib.sha256(response.to_json(orient='records', date_format='iso').encode()).hexdigest()
             recovered = response[response.timestamp == timestamp]
             if len(recovered) != 1:
                 raise ValueError(f'Could not recover the exact missing funding cashflow {timestamp}')
             funding = pd.concat([funding, recovered], ignore_index=True)
-            funding_repair.append({'timestamp': timestamp.isoformat(), 'endpoint': '/api/v1/fundings', 'parameters': params,
+            funding_repair.append({'timestamp': timestamp.isoformat(), 'endpoint': 'local_funding_archive' if local_source else '/api/v1/fundings',
+                                   'parameters': None if local_source else params, 'local_source': local_source,
                                    'retrieved_at': datetime.now(timezone.utc).isoformat(), 'response_sha256': response_hash,
                                    'recovered_row': json.loads(recovered.to_json(orient='records', date_format='iso'))[0]})
         funding = funding.sort_values('timestamp')
@@ -80,7 +101,7 @@ def prepare_batch(template, source_data, output_root, *, funding_fetcher=None):
     config.setdefault('research', {}).setdefault('final_test_guard', {})['ledger_path'] = str(output_root / '_final_test_reuse_ledger.json')
     frozen_config = output_root / 'frozen_config.yml'
     frozen_config.write_text(yaml.safe_dump(config, sort_keys=False))
-    manifest = {'protocol': 'first_bounded_fixed_notional_v1', 'template': str(template.resolve()), 'template_sha256': sha(template),
+    manifest = {'protocol': config['experiment']['id'], 'source_end_exclusive': recipe.get('source_end_exclusive'), 'template': str(template.resolve()), 'template_sha256': sha(template),
                 'frozen_config': str(frozen_config), 'frozen_config_sha256': sha(frozen_config), 'sources': sources,
                 'funding_repairs': funding_repair, 'source_start': str(pd.to_datetime(raw.iloc[0, 0], unit='ms', utc=True)),
                 'source_end': str(pd.to_datetime(raw.iloc[-1, 0], unit='ms', utc=True)), 'warmup_bars': warmup,

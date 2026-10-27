@@ -41,3 +41,27 @@ def test_frozen_batch_repairs_only_missing_cashflows_and_detects_mutation(tmp_pa
     Path(manifest['sources'][0]['frozen_path']).write_text('mutated')
     with pytest.raises(ValueError, match='changed'):
         verify_prepared(saved)
+
+
+def test_source_cutoff_and_exact_local_funding_repairs_never_call_network(tmp_path):
+    source=tmp_path/'source';candles=source/'raw'/'ETHUSDT-5m-lighter-fixture.csv'
+    _write_5m_ohlcv(candles,rows=180)
+    raw=pd.read_csv(candles,header=None)
+    cutoff=pd.Timestamp(int(raw.iloc[160,0]),unit='ms',tz='UTC')
+    start=pd.Timestamp(int(raw.iloc[0,0]),unit='ms',tz='UTC').floor('h')-pd.Timedelta('1h')
+    end=cutoff.floor('h')
+    funding=pd.DataFrame({'timestamp':pd.date_range(start,end,freq='h'),'rate':.001,'direction':'long'})
+    (source/'lighter').mkdir()
+    funding.drop(index=5).to_csv(source/'lighter/funding.csv',index=False)
+    funding.to_parquet(source/'lighter/repaired.parquet',index=False)
+    cfg=_v2_config(source,tmp_path/'runs');cfg['costs']['dynamic_funding']={'paths':[]}
+    cfg['local_batch']={'source_candles':str(candles.relative_to(source)),'source_funding':'lighter/funding.csv',
+        'rows':160,'warmup_bars':20,'repair_funding_gaps':True,'source_end_exclusive':cutoff.isoformat(),
+        'funding_repair_paths':['lighter/repaired.parquet']}
+    template=tmp_path/'template.yml';template.write_text(yaml.safe_dump(cfg))
+    def forbidden(**kwargs): raise AssertionError('Local repair must not make a network request')
+    saved=prepare_batch(template,source,tmp_path/'frozen',funding_fetcher=forbidden)
+    manifest=verify_prepared(saved)
+    assert pd.Timestamp(manifest['source_end'])<cutoff
+    repair=manifest['funding_repairs'][0]
+    assert repair['endpoint']=='local_funding_archive' and repair['local_source']['sha256']
