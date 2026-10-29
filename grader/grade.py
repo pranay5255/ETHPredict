@@ -53,6 +53,8 @@ def data_identity(data):
     return {'sha256':hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest(),
             'tier':data.tier,'start_ms':data.start_ms,'end_ms':data.end_ms,
             'resolution':data.resolution,'markets':list(data.datasets),'provenance':identity,
+            'input_provenance':{market:{key:item.provenance for key,item in datasets.items()}
+                                for market,datasets in data.datasets.items()},
             'execution_tail':'final source bar reserved for liquidation before the tier endpoint'}
 
 

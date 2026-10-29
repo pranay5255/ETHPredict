@@ -24,7 +24,7 @@ def test_full_flat_grade_checks_two_seeds_all_blocks_and_records_zero_score(tmp_
     def baseline_provider(declaration,data):
         assert runners[0].process.poll() is not None and runners[0].guard is None
         return {'trial_count':6,'trial_sharpes':[-.2,.1],'best_net_by_seed':{'17':0.,'29':0.},
-            'grading_fingerprint':'synthetic-fixture','data_sha256':data_identity(data)['sha256'],
+            'grading_fingerprint':'a'*64,'data_sha256':data_identity(data)['sha256'],
             'markets':['ETH'],'resolution':'1h','tier':'dev','winner':'flat'}
     source=materialize('flat',tmp_path/'source',markets=['ETH'],resolution='1h')
     result=_evaluate(source,tmp_path/'grade',lambda declaration:fixture_data(),mode='fixture',tier='dev',
@@ -47,6 +47,17 @@ def test_full_flat_grade_checks_two_seeds_all_blocks_and_records_zero_score(tmp_
     assert len(report['resources']['calls'])==225
     assert report['resources']['wall_seconds']<report['resources']['wall_limit_seconds']
     assert any(row['check']=='economic:enough_trades' for row in report['failures'])
+    from copy import deepcopy
+    from grader.report import write_report
+    import pytest
+    for route in [('grader',),('strategy',),('data',),('resources',),('metrics',0),
+                  ('metrics',0,'components'),('metrics',0,'blocks',0),('economics',0),
+                  ('economics',0,'gates'),('resources','calls',0,'audit'),('artifacts','manifest')]:
+        changed=deepcopy(report);node=changed
+        for key in route: node=node[key]
+        node['unrecognized']=True
+        with pytest.raises(jsonschema.ValidationError):
+            write_report(changed,tmp_path/'invalid-nested.json')
     for paths,blocks in zip(report['artifacts']['seed_blocks'],result.seed_blocks):
         for path,expected in zip(paths,blocks):
             actual=load_evidence(path)
@@ -110,3 +121,13 @@ def test_full_engineered_grade_uses_actual_policy_importance_for_both_seeds(tmp_
             assert saved['available'] and saved['permutation_scope'].startswith('within-market')
     assert sum(call['operation']=='predict_features' for call in report['resources']['calls'])==100
     assert all('credible_features' in row['gates'] for row in report['economics'])
+    from copy import deepcopy
+    from grader.report import write_report
+    import pytest
+    for route in [('report',),('report','summary',0),('report','folds',0),
+                  ('report','folds',0,'permutation_rows',0)]:
+        changed=deepcopy(report);node=changed['feature_importance'][0]
+        for key in route: node=node[key]
+        node['claimed_importance']=1.
+        with pytest.raises(jsonschema.ValidationError):
+            write_report(changed,tmp_path/'invalid-importance.json')

@@ -125,9 +125,12 @@ bank snapshot is included in the trial's artifact manifest.
 
 ## Still required before freeze
 
-1. Finish nested report validation and final integration review. Baseline-bank
-   initialization and artifact persistence are wired and have targeted tests;
-   the actual complete baseline run remains below.
+1. Run the full suite against the completed report/cache/feature integration.
+   Closed report schemas now cover scored components, economic gates, feature
+   diagnostics, model metadata and resource receipts; schema fixtures reject
+   unknown nested fields. Complete input provenance is preserved separately
+   from the shared execution-data identity. Targeted report checks:
+   `5 passed in 84.32s (0:01:24)`.
 2. Run all baselines on the full common dev blocks; commit per-block numbers and
    measured runtimes in `grader_v1_baselines.md`. No full real-data bank has run.
 3. Calibrate only pre-gate component maps under the approved interpretation,
