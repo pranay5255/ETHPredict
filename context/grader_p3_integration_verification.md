@@ -1,9 +1,18 @@
-# P3 integration checkpoint — 2026-10-28
+# P3 acceptance verification — 2026-10-29
 
-P3 remains in progress in [draft PR #63](https://github.com/pranay5255/ETHPredict/pull/63).
-Code checkpoints: `f929810` (models, causal views and baseline adapters),
-`a63ce5f` (grade/report CLI, trial accounting, bootstrap and red teams).
-No `grader-v1` tag exists; P3 acceptance is not complete.
+P3 acceptance is verified in [PR #63](https://github.com/pranay5255/ETHPredict/pull/63).
+The pushed `grader-v1` tag pins commit
+`58228cbad987ea59f1d172b461fba823a8de0e64`. The final full suite passed **583 tests**
+with one intentional historical-parity skip. A separate checkout pinned to that
+exact tag completed an actual production dev CLI grade: every integrity check
+passed, and the flat control scored zero under the unchanged economic gates.
+See [the production receipt](grader_v1_production_verification.json),
+[final baseline measurements](grader_v1_baselines.md) and
+[repeated-measurement comparison](grader_baseline_final_validation.json).
+
+Earlier checkpoints below retain the supporting verification history. Their
+pre-freeze status statements describe those checkpoints; the final acceptance
+and production evidence above supersede them.
 
 ## Verified
 
@@ -194,12 +203,27 @@ The pinned SDK, actual P2 PermissionError/Docker probes and TimesFM CUDA
 fixture were enabled. The historical CSV overlap remains the sole intentional
 skip. No grader or strategy code changed during this suite.
 
-1. Push the frozen `grader-v1` tag and verify an actual production CLI grade.
-   The final full suite is green on the same grader and strategy bytes.
-2. Complete and merge PR #63 with all acceptance evidence.
-3. P4 private broker/driver and P5 untuned scaffolds follow P3 acceptance/merge.
-   Private runtime provisioning still requires the human: ethgrader cannot
-   traverse the human's 0750 home.
+The annotated tag is pushed. From the separate pinned checkout, the real
+`uv run --no-sync python -m grader.cli grade --strategy <candidate> --tier dev`
+command used the public lake and the verified final baseline bank. The empty
+smoke ledger counts six baselines plus this control. It completed both seeds,
+all five blocks per seed and 225 audited worker calls. All 200 proper-prefix
+comparisons and repeat fits passed. The report's grader hashes match the tag,
+and its complete artifact manifest verifies. Output:
+
+```text
+score: 0.000000000000
+status: rejected
+```
+
+Only economic/statistical checks reject the flat control; zero trades and
+unavailable Sharpe are reported honestly. Exact report, manifest and grader-file
+hashes, worker runtime and memory peaks are in the production receipt. No
+`grader/` file has changed since the tag.
+
+P4 private broker/driver and P5 untuned scaffolds follow P3's merge. Private
+runtime provisioning requires the human: ethgrader cannot traverse the human's
+0750 home. No home permission change or Docker group membership is proposed.
 
 No real hidden evaluation, holdout evaluation, consumed-test rerun, strategy
 search or edge claim occurred. Red-team tests use synthetic inputs; the baseline

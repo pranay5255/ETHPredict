@@ -1,4 +1,4 @@
-# Experiment readiness — autoresearch P3 in progress, 2026-10-29
+# Experiment readiness — autoresearch P3 verified, 2026-10-29
 
 Bounded offline research has already run on the PR #51/#53 branches. It produced
 negative or insufficient economic evidence, not a promoted strategy. The #51
@@ -58,8 +58,11 @@ of profitability or automatic approval for a new study.
 
 P0 is merged (#60); P1 adds the verified loader. P2 (#56) is merged in #62: human sealing completed, all 259 private opens are denied,
 and a dev-only isolated tool worker excludes legacy files/history; see the
-[runbook](context/grader_tier_sealing.md). P3 (#57) is in progress; P4–P5 (#58–#59) have not started. The secure grader, freeze tag, driver and TimesFM seeds are not
-ready. No open-ended loop or holdout evaluation should be started during construction.
+[runbook](context/grader_tier_sealing.md). P3 (#57) acceptance is verified: `grader-v1` is pushed, the full suite passes
+583 tests with one intentional historical-parity skip, and a production dev grade
+from a separate tagged checkout passes every integrity check. All baseline final
+scores remain zero. P4–P5 (#58–#59), the private driver/service and TimesFM seeds,
+remain incomplete. No open-ended loop or holdout evaluation should be started during construction.
 #30–#35 have merged parent controls, but still require individual frozen protocols.
 #36 needs #22 benchmark trading parity; #37 and #38 now have their #17/#16 controls;
 #39 needs #19 sizing and credible calibration; #40 has #20 but still needs coverage;

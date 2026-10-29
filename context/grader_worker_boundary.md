@@ -1,4 +1,4 @@
-# P3 worker boundary — implementation in progress
+# P3 worker boundary — verified at grader-v1
 
 P2 is merged in #62 (`86a9df0`). The human confirmed `lake_sealed: true` and
 `private_files_moved: 247`; the P2 receipt records 259 real OS denials. Nothing
@@ -11,7 +11,9 @@ Engineered-feature/noise evaluation, baseline measurements, calibration and
 closed report/artifact validation are implemented. The final baseline repeat
 under the hardened causality guard passed without changing any performance
 value or position file. The final full suite passed 583 tests with one
-intentional historical-parity skip. The `grader-v1` freeze remains pending. This is not P3 acceptance.
+intentional historical-parity skip. The pushed `grader-v1` tag and separate
+pinned-checkout production grade are verified in
+[the acceptance evidence](grader_p3_integration_verification.md).
 
 Audit cutoffs use 128-bit entropy generated only in the scoring parent after
 the full reference positions have been submitted. They are independent of the

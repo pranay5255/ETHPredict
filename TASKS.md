@@ -1,4 +1,4 @@
-# ETHPredict tasks — autoresearch P3 in progress, 2026-10-29
+# ETHPredict tasks — autoresearch P3 verified, 2026-10-29
 
 PR #51 and #53 are merged; #16/#17/#20 are closed. Funding repair #54 is
 verified on main and closed. P1–P5 now have explicit implementation issues. The
@@ -15,7 +15,7 @@ before the next phase. See [design and open decisions](context/autoresearch_desi
 - [x] P0 housekeeping/design merged in [#60](https://github.com/pranay5255/ETHPredict/pull/60): fresh 317-test baseline, 25-directory/425-hash audit, #54 closed and P1–P5 issues created.
 - [x] [#55 P1](https://github.com/pranay5255/ETHPredict/issues/55) Merged in [#61](https://github.com/pranay5255/ETHPredict/pull/61): standalone lake loader, provenance and availability contract; 26,496-row exact CSV parity and 355-test full suite.
 - [x] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Merged in [#62](https://github.com/pranay5255/ETHPredict/pull/62): human moved 247 files, 259 real OS denials, code-only agent sandbox with real isolation probes; 428 passed, one historical pre-sealing CSV test skipped. See [runbook](context/grader_tier_sealing.md).
-- [ ] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) In [draft PR #63](https://github.com/pranay5255/ETHPredict/pull/63): grader/replay/CLI, trusted feature checks, comparable baseline caches, closed reports, artifact manifests and all ten red teams. Final full suite: 583 passed, one intentional historical-parity skip. All six full dev baselines were repeated under independent private audit locations; performance and all 60 position files matched. Pre-gate calibration is complete; freeze and production CLI verification remain. See [baseline table](context/grader_v1_baselines.md) and [evidence](context/grader_p3_integration_verification.md).
+- [x] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) Acceptance verified in [PR #63](https://github.com/pranay5255/ETHPredict/pull/63): frozen grader/replay/CLI, trusted feature checks, baseline caches, reports, artifacts and all ten red teams. Full suite: 583 passed, one intentional historical-parity skip. All six full dev baselines and pre-gate calibration are complete; `grader-v1` is pushed at `58228cb`. A separate pinned-checkout production grade passed every integrity check and correctly rejected flat at zero. See [baselines](context/grader_v1_baselines.md) and [acceptance evidence](context/grader_p3_integration_verification.md).
 - [ ] [#58 P4](https://github.com/pranay5255/ETHPredict/issues/58) Driver/program, three-attempt dry run, complete ledger and private shadow results.
 - [ ] [#59 P5](https://github.com/pranay5255/ETHPredict/issues/59) Untuned frozen-head/full-finetune TimesFM seeds with Tier 0 and measured resource reports; GRPO optional.
 

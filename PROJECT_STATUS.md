@@ -1,4 +1,4 @@
-# ETHPredict project status — autoresearch P3 in progress, 2026-10-29
+# ETHPredict project status — autoresearch P3 verified, 2026-10-29
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, all 31 funding gaps per market are recovered on main, and no
@@ -77,21 +77,20 @@ P2 (#56) is merged in PR #62 at `86a9df0`: the human sealed 150 partitions and 9
 ethgrader owns the private root (0700), and the real agent received 259
 PermissionErrors. A tested dev-only Docker tool worker excludes old CSV/Git/
 artifact copies, with fresh code-only history and no external network.
-See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
-grader/environment, driver and untuned seeds, remain incomplete. P3 has grade/report
-orchestration, baseline adapters, all ten integrated synthetic red teams, and
-583 passing tests after the final guard change, with one intentional
-historical-parity skip on the P3 branch.
-Trusted feature/noise checks, baseline-bank initialization, closed report schemas
-and artifact manifests are integrated. The six full dev baseline measurements
-are complete: flat is best by net PnL, all final scores are zero, and the initial
-component anchors meet the approved pre-gate calibration range. The pinned
-checkpoint's publication labels were corrected without changing numerical
-evidence. A final repeat with parent-private causality locations preserved all
-performance values and all 60 position files. The full suite is green; the freeze and production CLI verification remain. See the
-[baseline table](context/grader_v1_baselines.md) and [P3 evidence](context/grader_p3_integration_verification.md).
-P4–P5 have not started. No grader-v1 tag or runnable
-secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.
+See [sealing runbook](context/grader_tier_sealing.md). P3 (#57) acceptance is
+verified in [PR #63](https://github.com/pranay5255/ETHPredict/pull/63): frozen
+execution/scoring, CPU/GPU replay parity, all ten red teams and **583 passing
+tests**, with one intentional historical-parity skip. The pushed `grader-v1`
+tag pins `58228cb`; a separate checkout at that tag completed a real production
+dev grade with every integrity check passing. The flat control scored zero.
+All six full dev baselines were repeated under private causality audit locations;
+performance values and all 60 position files matched. Flat is best by net PnL,
+all final scores are zero, and the original component anchors satisfy the
+approved pre-gate calibration range. See [baselines](context/grader_v1_baselines.md)
+and [P3 acceptance](context/grader_p3_integration_verification.md).
+P4–P5 (#58–#59), the private broker/driver and untuned TimesFM seeds, remain
+incomplete. No runnable secure loop or strategy edge is claimed. See
+[design](context/autoresearch_design.md) and TASKS.md.
 Historical backfill alone completes no experiment acceptance criterion.
 
 1. Use the combined #51/#53 code and preserve its economic rejection gate.
