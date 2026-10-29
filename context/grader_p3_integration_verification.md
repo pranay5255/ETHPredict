@@ -100,7 +100,8 @@ interpreted in the scorer. Artifact/qualitative report fields reject unknown
 keys, and JSON nonfinite values (including numeric overflow) fail at any depth.
 Registered model provenance now separates each block's visible fitting window
 from its actual next-open execution window, with release labels for each.
-The full report schema and baseline-cache integration still need final review.
+At that checkpoint the full report schema and baseline-cache integration still
+needed final review; the later completion evidence follows below.
 
 Baseline initialization is now wired to the production CLI. Its cache key
 covers the grading fingerprint, execution-data identity, declared market set,
@@ -110,7 +111,8 @@ index. Existing corrupt indexes/banks fail closed. The reader rederives the
 winning baseline, per-seed thresholds and Sharpe history from all six reports,
 and verifies their artifact manifests. Initialization runs after the candidate
 worker releases its GPU reservation. Shadow bank/cache paths must stay under
-the private service. No full real-data bank has been run yet.
+the private service. The full real-data bank was still pending at that checkpoint;
+its completed measurements are recorded below.
 
 ```text
 pytest tests/test_grader_baseline_bank.py tests/test_grader_baseline_cache.py \
@@ -123,23 +125,56 @@ in for the full real-data baseline acceptance table. The grade tests use real
 audited workers and verify that the provider runs after worker shutdown and its
 bank snapshot is included in the trial's artifact manifest.
 
+## Full measurements and pre-freeze audit — October 29
+
+Closed report schemas cover scored components, economic gates, feature
+diagnostics, model metadata and resource receipts. Unknown nested fields are
+rejected, while complete input provenance is separate from the common execution
+identity. Targeted report checks: `5 passed in 84.32s (0:01:24)`.
+
+The integrated full suite, including the pinned SDK, actual P2 denial/Docker
+probes and pinned TimesFM CUDA fixture, passed:
+
+```text
+567 passed, 1 skipped, 23 warnings in 725.87s (0:12:05)
+```
+
+All six baselines then completed both seeds and all five full public ETH dev
+blocks at 1h. See [per-block measurements](grader_v1_baselines.md). Flat is best
+by net PnL. Its pre-gate score is 0.100; all pre-gate scores lie in 0.100–0.174.
+Initial anchors, weights and every gate are retained, with calibration marked
+complete. Every final baseline score is zero. All non-tag integrity checks pass;
+the expected pre-freeze tag failure remains explicit.
+
+Primary-source review found that the pinned TimesFM snapshot was published in
+October after the September family announcement. The registry now uses an
+October 3 UTC evidence boundary. The [provenance review](grader_checkpoint_provenance.md)
+and [correction receipt](grader_baseline_metadata_correction.json) verify that
+this metadata correction retained strategy sources, all numeric-score/resource
+digests and every covered artifact. The corrected bank passes full hash checks
+and a cache-hit probe with training deliberately disabled.
+
+Trial-ledger validation also rejects malformed UTC timestamps, numeric overflow,
+invalid scores/hashes, decisions before results and invalid keep decisions.
+Qualitative ratings cannot override the strict numeric comparison. Crashes and
+interrupted attempts remain counted without inventing missing Sharpe values.
+
+```text
+pytest tests/test_grader_history.py tests/test_grader_models.py \
+  tests/test_grader_score.py tests/test_grader_baseline_bank.py \
+  tests/test_grader_baseline_cache.py -xq
+46 passed in 3.58s
+```
+
 ## Still required before freeze
 
-1. Run the full suite against the completed report/cache/feature integration.
-   Closed report schemas now cover scored components, economic gates, feature
-   diagnostics, model metadata and resource receipts; schema fixtures reject
-   unknown nested fields. Complete input provenance is preserved separately
-   from the shared execution-data identity. Targeted report checks:
-   `5 passed in 84.32s (0:01:24)`.
-2. Run all baselines on the full common dev blocks; commit per-block numbers and
-   measured runtimes in `grader_v1_baselines.md`. No full real-data bank has run.
-3. Calibrate only pre-gate component maps under the approved interpretation,
-   preserve every gate and rejected score zero, run the final full suite, then
-   push `grader-v1` and complete PR #63.
-4. P4 private broker/driver and P5 untuned scaffolds follow P3 acceptance/merge.
+1. Run the final full suite after the publication/ledger audit, then push the
+   frozen `grader-v1` tag and verify an actual production CLI grade.
+2. Complete and merge PR #63 with all acceptance evidence.
+3. P4 private broker/driver and P5 untuned scaffolds follow P3 acceptance/merge.
    Private runtime provisioning still requires the human: ethgrader cannot
    traverse the human's 0750 home.
 
 No real hidden evaluation, holdout evaluation, consumed-test rerun, strategy
-search or edge claim occurred. Numerical model/grade tests here use synthetic
-market inputs and the existing pinned public model cache.
+search or edge claim occurred. Red-team tests use synthetic inputs; the baseline
+measurements use the public dev lake and the existing pinned public model cache.

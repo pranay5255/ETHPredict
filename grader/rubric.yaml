@@ -1,6 +1,6 @@
 version: 1
 frozen_tag: grader-v1
-calibration: pending_baseline_runs
+calibration: complete
 seeds: [17, 29]
 integrity:
   causality_cutoffs_per_block: 20

@@ -26,9 +26,9 @@ def test_registered_checkpoint_has_license_and_conservative_release_labels():
     before=models.contamination(['timesfm-2.5'],start_ms=utc_ms('2025-06-04'),
         end_ms=utc_ms('2026-05-01'),holdout_start_ms=utc_ms('2026-08-01'))[0]
     assert before['period_label']=='possibly in pretraining' and before['holdout_release_eligible']
-    assert before['release_safe_after_ms']==utc_ms('2025-09-16')
-    after=models.contamination(['timesfm-2.5'],start_ms=utc_ms('2025-09-16'),
-        end_ms=utc_ms('2026-05-01'),holdout_start_ms=utc_ms('2025-09-15'))[0]
+    assert before['release_safe_after_ms']==utc_ms('2025-10-03')
+    after=models.contamination(['timesfm-2.5'],start_ms=utc_ms('2025-10-03'),
+        end_ms=utc_ms('2026-05-01'),holdout_start_ms=utc_ms('2025-10-02'))[0]
     assert after['possibly_pretraining_window'] is None and not after['holdout_release_eligible']
 
 
@@ -36,7 +36,7 @@ def test_model_labels_separate_pre_release_training_from_each_execution_block():
     from types import SimpleNamespace
     import numpy as np
     import pandas as pd
-    clock=pd.date_range('2025-09-14',periods=96,freq='h',tz='UTC').as_unit('ms').asi8
+    clock=pd.date_range('2025-10-01',periods=96,freq='h',tz='UTC').as_unit('ms').asi8
     blocks=[SimpleNamespace(block=0,train=np.arange(10),evaluation=np.arange(12,30)),
             SimpleNamespace(block=1,train=np.arange(24),evaluation=np.arange(50,70))]
     report=models.block_contamination(['timesfm-2.5'],blocks,clock,resolution='1h',max_horizon_bars=1,

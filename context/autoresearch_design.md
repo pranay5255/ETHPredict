@@ -124,12 +124,15 @@ same eligible clock, without silently dropping a difficult market or block.
 The only v1 foundation checkpoint is
 `google/timesfm-2.5-200m-pytorch`, Apache-2.0. The upstream
 [release announcement](https://github.com/google-research/timesfm#update---sept-15-2025)
-dates public release to **2025-09-15**. The
+dates the family release to **2025-09-15**. The
 [model API](https://huggingface.co/api/models/google/timesfm-2.5-200m-pytorch)
 records repository creation September 2, 2025; creation alone does not prove a
-public weight-release date. Use the later announcement conservatively, and pin
-the actual checkpoint revision/hash (observed revision
-`1d952420fba87f3c6dee4f240de0f1a0fbc790e3`) in the model registry before grading.
+public weight-release date. The actual pinned snapshot,
+`1d952420fba87f3c6dee4f240de0f1a0fbc790e3`, includes an October weight-layout
+refresh and an **October 2, 2025** publication update. The registry therefore
+uses that later snapshot date and a conservative **October 3 UTC** boundary;
+see [checkpoint provenance](grader_checkpoint_provenance.md). This corrects the
+earlier family-date annotation without changing any model bytes or predictions.
 Report any pre-release evidence as **possibly in pretraining**. Release timing
 does not prove that every training source is known or that no contamination exists.
 

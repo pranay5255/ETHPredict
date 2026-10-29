@@ -1,4 +1,4 @@
-# ETHPredict project status — autoresearch P3 in progress, 2026-10-28
+# ETHPredict project status — autoresearch P3 in progress, 2026-10-29
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, all 31 funding gaps per market are recovered on main, and no
@@ -79,16 +79,22 @@ PermissionErrors. A tested dev-only Docker tool worker excludes old CSV/Git/
 artifact copies, with fresh code-only history and no external network.
 See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
 grader/environment, driver and untuned seeds, remain incomplete. P3 has grade/report
-orchestration, baseline adapters, all ten integrated synthetic red teams, and a
-519-test full suite; feature/noise integration, full baseline runs and freezing
-remain. See [P3 evidence](context/grader_p3_integration_verification.md).
+orchestration, baseline adapters, all ten integrated synthetic red teams, and
+567 passing tests with one intentional historical-parity skip on the P3 branch.
+Trusted feature/noise checks, baseline-bank initialization, closed report schemas
+and artifact manifests are integrated. The six full dev baseline measurements
+are complete: flat is best by net PnL, all final scores are zero, and the initial
+component anchors meet the approved pre-gate calibration range. The pinned
+checkpoint's publication labels were corrected without changing numerical
+evidence. The final suite and freeze remain. See the
+[baseline table](context/grader_v1_baselines.md) and [P3 evidence](context/grader_p3_integration_verification.md).
 P4–P5 have not started. No grader-v1 tag or runnable
 secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.
 Historical backfill alone completes no experiment acceptance criterion.
 
 1. Use the combined #51/#53 code and preserve its economic rejection gate.
-2. Preserve the merged funding fix (#54) and verified P1 lake contract. Complete
-   human sealing and later harness gates before claiming secure lake-backed grading.
+2. Preserve the merged funding fix (#54), verified P1 lake contract and human-sealed
+   P2 tiers. Complete the later harness gates before claiming secure private grading.
 3. Specify one new causal hypothesis, fixed budget, held-out development blocks,
    units, coverage and costs. Retire the tested one-hour continuation recipe.
 4. #19 probability/concurrency sizing and #22 benchmark trading parity remain

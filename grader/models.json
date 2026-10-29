@@ -5,8 +5,8 @@
       "repository": "google/timesfm-2.5-200m-pytorch",
       "revision": "1d952420fba87f3c6dee4f240de0f1a0fbc790e3",
       "license": "Apache-2.0",
-      "release_date": "2025-09-15",
-      "release_evidence": "https://github.com/google-research/timesfm#update---sept-15-2025",
+      "release_date": "2025-10-02",
+      "release_evidence": "https://huggingface.co/google/timesfm-2.5-200m-pytorch/commit/1d952420fba87f3c6dee4f240de0f1a0fbc790e3",
       "license_evidence": "https://huggingface.co/google/timesfm-2.5-200m-pytorch",
       "files": {
         "config.json": "cd3315b760d5cc7e278d7afdf41b897031ced888fc6c115bd9b3ac0ea2c47408",
