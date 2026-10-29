@@ -40,6 +40,46 @@ def test_future_close_strategy_fails_actual_causality_check(tmp_path):
         assert not check.passed and check.details['mismatch_at_ms']
 
 
+def test_policy_cannot_anticipate_audit_locations_from_its_visible_seed(tmp_path,monkeypatch):
+    import grader.checks as checks
+    code='''
+import numpy as np
+import pandas as pd
+class Strategy:
+    name='adaptive-next-close-fixture'
+    markets=['ETH']
+    resolution='1h'
+    max_horizon_bars=1
+    lookback_bars=2
+    budget_tier='fast'
+    uses_dev_lake=False
+    def fit(self, train, ctx):
+        self.seed=ctx.seed
+    def predict(self, history, decision_times):
+        source=history.datasets['ETH'].frame
+        future=np.sign(source.close.shift(-1)-source.close).fillna(0.)
+        values=pd.Series(future.to_numpy(),index=pd.to_datetime(source.available_at_ms,unit='ms',utc=True))
+        targets=values.reindex(decision_times).to_numpy(dtype=float,copy=True)
+        rng=np.random.default_rng(np.random.SeedSequence([self.seed,1,104729]))
+        anticipated=rng.choice(53,size=20,replace=False)
+        targets[np.isin(np.arange(len(targets)),anticipated)]=0.
+        return pd.DataFrame({'timestamp':decision_times,'market':'ETH','target_position':targets})
+'''
+    data=market_data(56)
+    times=pd.DatetimeIndex(pd.to_datetime(data.frame.available_at_ms.iloc[2:],unit='ms',utc=True))
+    with StrategyRunner(candidate(tmp_path,code),tmp_path/'run',seed=17) as runner:
+        declaration=runner.declare();state=runner.fit(data)
+        reference=runner.predict(state,data,times,declaration)
+        # Reproduce the old seed-derived locations to demonstrate the bypass.
+        public_nonce=17+(1<<32)+(104729<<64)
+        monkeypatch.setattr(checks.secrets,'randbits',lambda bits:public_nonce)
+        assert causality_check(runner,state,data,times,declaration,reference,block=1,seed=17).passed
+        # Independent parent entropy is unknown when full predictions are made.
+        monkeypatch.setattr(checks.secrets,'randbits',lambda bits:0)
+        result=causality_check(runner,state,data,times,declaration,reference,block=1,seed=17)
+        assert not result.passed and result.details['cutoff_randomization'].startswith('parent-only')
+
+
 def test_wall_clock_seed_fails_repeat_fit_and_predict(tmp_path):
     code=CAUSAL.replace('self.mean=float(train.frame.close.mean())',
         'import time;self.offset=np.random.default_rng(time.time_ns()).uniform(-.9,.9);self.mean=float(train.frame.close.mean())')

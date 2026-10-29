@@ -1,5 +1,10 @@
 # Grader v1 baseline measurements
 
+This initial measurement is retained pending a final repeat after audit-probe
+hardening. The final audit found that policy-visible seeds made the old probe
+locations predictable. The corrected parent uses independent entropy after the
+full reference prediction is committed; the same six adapters are being rerun.
+
 All six predeclared adapters ran on the full public ETH dev population at the common 1h clock, with five purged growing-window evaluation blocks and both grader seeds. No parameters were selected for profitability. Shadow and holdout were not evaluated.
 
 Execution-data SHA-256: `d452fdadad26d073b2a9618e00a56d087645e456918aaef79db8170aacae930f`. Grading fingerprint: `1b016f28c72ad25282d02439abba11e1c2ce86221c62eeac7457e7ffbe6a9f4a`.

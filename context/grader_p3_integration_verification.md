@@ -168,6 +168,18 @@ pytest tests/test_grader_history.py tests/test_grader_models.py \
 
 ## Still required before freeze
 
+The first final suite passed `582 passed, 1 skipped, 23 warnings in 742.90s`.
+A subsequent adaptive fixture reproduced a real causality bypass: a look-ahead
+policy could anticipate the policy-seeded probe locations and mask just those
+rows. Audit locations now use 128-bit parent-only entropy, drawn only after the
+reference positions are committed. Policy seeds, the 20-check count, tolerance,
+scoring and every gate are unchanged. The nonce is never sent to a worker.
+The regression reproduces the old bypass with controlled public locations and
+rejects the same policy with independent audit locations. Checks and complete
+grade integration: `11 passed in 119.38s (0:01:59)`.
+All six adapters are being repeated under the corrected guard before freezing;
+the final table will replace the initial measurement.
+
 1. Run the final full suite after the publication/ledger audit, then push the
    frozen `grader-v1` tag and verify an actual production CLI grade.
 2. Complete and merge PR #63 with all acceptance evidence.

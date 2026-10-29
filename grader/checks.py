@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import secrets
 import subprocess
 
 import numpy as np
@@ -55,7 +56,10 @@ def causality_check(runner, state, history, decision_times, declaration, referen
     times = pd.DatetimeIndex(decision_times)
     if type(cutoffs) is not int or cutoffs < 20 or len(times) <= cutoffs:
         raise DataContractError('Causality requires at least 20 distinct proper-prefix cutoffs per block')
-    rng = np.random.default_rng(np.random.SeedSequence([seed, block, 104729]))
+    # Draw only after the full reference prediction is committed. Policy RNG
+    # seeds are deliberately visible to the strategy; audit locations must not
+    # be derivable from them. This nonce remains solely in the scoring parent.
+    rng = np.random.default_rng(secrets.randbits(128))
     indices = sorted(rng.choice(len(times)-1, size=cutoffs, replace=False).tolist())
     checked = []
     for index in indices:
@@ -67,10 +71,13 @@ def causality_check(runner, state, history, decision_times, declaration, referen
         checked.append(end)
         features_agree = same_packet(reference_features,runner.last_features,cutoff=clock[-1],tolerance=tolerance)
         if not _same_positions(positions, expected, tolerance) or not features_agree:
-            return CheckResult('causality', False, {'block': block, 'cutoffs_ms': checked,
+            return CheckResult('causality', False, {'block': block, 'policy_seed':seed,
+                'cutoff_randomization':'parent-only entropy after reference prediction','cutoffs_ms': checked,
                 'requested_cutoffs': cutoffs, 'mismatch_at_ms': end, 'tolerance': tolerance,
                 'feature_inputs_agree':bool(features_agree)})
-    return CheckResult('causality', True, {'block': block, 'cutoffs_ms': checked, 'tolerance': tolerance})
+    return CheckResult('causality', True, {'block': block, 'policy_seed':seed,
+        'cutoff_randomization':'parent-only entropy after reference prediction',
+        'cutoffs_ms': checked, 'tolerance': tolerance})
 
 
 def determinism_check(runner, train, history, decision_times, declaration, reference,
