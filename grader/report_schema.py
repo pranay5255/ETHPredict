@@ -82,7 +82,8 @@ AUDIT = obj({'opened':INTEGER,'violations':STRINGS,'complete':BOOLEAN})
 CALL = obj({'operation':{'enum':['declare','fit','predict','predict_features']},
     'status':{'enum':['completed','rejected','timeout','nondeterministic']},
     'duration_seconds':{'type':'number','minimum':0},'peak_rss_bytes':INTEGER,'peak_vram_bytes':INTEGER,'audit':AUDIT})
-RESOURCES = obj({'wall_seconds':{'type':'number','minimum':0},'wall_limit_seconds':{'enum':[600.,3600.]},
+RESOURCES = obj({'wall_seconds':{'type':'number','minimum':0},
+    'wall_limit_seconds':{'type':'number','exclusiveMinimum':0,'maximum':3600.},
     'device':{'enum':['cpu','cuda']},'vram_reservation':{'oneOf':[{'type':'null'},obj({
         'pid':{'type':'integer','minimum':1},'total_bytes':INTEGER,'reserved_bytes':INTEGER,
         'cap_bytes':{'const':22*1000**3}})]},'peak_rss_bytes':INTEGER,'peak_vram_bytes':INTEGER,
@@ -115,3 +116,14 @@ SCHEMA = obj({'version':{'const':1},'trial_id':{'type':'string','minLength':1},
     'artifacts':obj({'seed_blocks':array(array(STRING,maxItems=5),maxItems=2),
         'manifest':{'oneOf':[{'type':'null'},MANIFEST]}}),
     'qualitative':obj({'status':{'const':'not_run'},'tie_breaker_only':{'const':True}})})
+
+# Synthetic sleeper fixtures use a short internal deadline. Production and
+# calibration reports must still use exactly their predeclared tier budget.
+SCHEMA['allOf'] = [
+    {'if':{'properties':{'mode':{'enum':['production','baseline_calibration']},
+        'strategy':{'required':['declaration'],'properties':{'declaration':{
+            'required':['budget_tier'],'properties':{'budget_tier':{'const':tier}}}}}}},
+     'then':{'properties':{'resources':{'required':['wall_limit_seconds'],
+        'properties':{'wall_limit_seconds':{'const':seconds}}}}}}
+    for tier,seconds in [('fast',600.),('long',3600.)]
+]

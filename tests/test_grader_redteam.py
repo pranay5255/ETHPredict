@@ -107,6 +107,13 @@ def test_07_budget_sleeper_is_killed_and_reports_timeout(tmp_path,monkeypatch):
     report=grade(candidate(tmp_path,code),tmp_path/'grade',fixture_data())
     assert report['status']=='timeout' and any(row['check']=='budget' for row in report['failures'])
     assert report['resources']['calls'][-1]['status']=='timeout'
+    # The shortened deadline is valid only for synthetic fixtures. It cannot
+    # be represented as an official grade or baseline-calibration budget.
+    import jsonschema
+    from grader.report import write_report
+    for mode in ['production','baseline_calibration']:
+        with pytest.raises(jsonschema.ValidationError):
+            write_report({**report,'mode':mode},tmp_path/f'invalid-{mode}.json')
 
 
 def test_08_profit_at_1x_only_fails_the_2x_gate_with_real_cashflows(tmp_path):
