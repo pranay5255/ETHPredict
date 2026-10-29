@@ -1,0 +1,6 @@
+from grader.baselines.common import MomentumBaseline
+
+
+class Strategy(MomentumBaseline):
+    name = 'momentum-1h'
+    hours = 1

@@ -1,0 +1,248 @@
+"""Worker-only wrapper of the existing LSTM/nested-OOF meta-label recipe.
+
+Time-valued 5m recipe parameters retain their duration on the declared clock.
+The lake frame replaces only the legacy CSV reader. Training, normalization,
+early stopping, OOF meta labels, calibration and forecast mapping are reused.
+No future inference label is synthesized; diagnostic truth columns remain NaN
+and are never model inputs. Grader accounting executes the resulting targets.
+"""
+from copy import deepcopy
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+import yaml
+
+from grader.data import LakeLoader, RESOLUTIONS
+from grader.feature_contract import FEATURE_FAMILY_COLUMNS
+from grader.feature_packets import FeaturePacket, NOISE_NAMES, feature_noise
+from src.data.features_all import DataPreprocessor, bar_coverage_report
+from src.experiments import meta_labeling_mvp as recipe
+from src.simulator.costs import dataset_cost_model, configured_notional
+
+
+class StoredCausalQuotes:
+    """Serve original CostModel quotes without reopening raw evaluation history."""
+    def __init__(self, frame):
+        self.frame = frame
+
+    def quote(self, signal):
+        side = int(signal['side'])
+        return {'total_cost_bps':float(self.frame.iloc[int(signal['sample_index'])-1][f'execution.side_{side}'])}
+
+
+class SlicePreprocessor(DataPreprocessor):
+    def __init__(self, frame, **kwargs):
+        super().__init__(**kwargs)
+        self.source = frame
+
+    def load_price_data(self):
+        resolution = self.granularities[0]
+        interval = RESOLUTIONS[resolution]
+        frame = self.source.copy().reset_index(drop=True)
+        if not np.isfinite(frame[['open', 'high', 'low', 'close', 'volume', 'quote_asset_volume']]).all().all() or (
+                frame.timestamp_ms.diff().dropna() != interval).any():
+            raise ValueError('Recipe input requires complete finite source candles')
+        frame['open_time'] = frame.timestamp_ms
+        frame['close_time'] = frame.timestamp_ms + interval - 1
+        frame['timestamp'] = pd.to_datetime(frame.timestamp_ms, unit='ms', utc=True).dt.tz_localize(None)
+        self._price_frames = {resolution: frame}
+        self._source_timestamps = {resolution: pd.DatetimeIndex(frame.timestamp)}
+        self._last_bar_reports[resolution] = bar_coverage_report(frame, granularity=resolution,
+                                                               bar_type='time', source_rows=len(frame))
+        return self._price_frames
+
+
+class Strategy:
+    name = 'existing-lstm-meta-recipe'
+    markets = ['ETH']
+    resolution = '1h'
+    budget_tier = 'long'
+    engineered_features = ['ohlcv', 'returns', 'realized_volatility', 'volume', 'execution_costs']
+
+    def __init__(self):
+        interval = RESOLUTIONS[self.resolution]
+        self.sequence = 4 * 3_600_000 // interval
+        self.warmup = 7 * 24 * 3_600_000 // interval
+        self.max_horizon_bars = 3_600_000 // interval
+        self.lookback_bars = self.warmup + self.sequence + 1
+
+    def _configuration(self, seed, directory, funding):
+        config = yaml.safe_load(Path(__file__).with_name('recipe.yaml').read_text())
+        interval = RESOLUTIONS[self.resolution]
+        hour = 3_600_000 // interval
+        config['experiment']['seed'] = seed
+        config['training'].update(sequence_length=self.sequence, ensemble_seeds=[seed])
+        config['data'].update(dir=str(directory), granularity=self.resolution)
+        config['bars'].update(time_interval=self.resolution, max_missing_fraction=0.)
+        config['targets']['horizons']['next_hour']['bars'] = hour
+        config['labels']['meta_triple_barrier'].update(vertical_barriers={'next_hour': hour}, volatility_window=24*hour)
+        config['validation'].update(purge_bars=hour, embargo_bars=hour)
+        config['alpha_backtest']['cooldown_bars'] = hour
+        config['costs']['dynamic_funding']['paths'] = [str(funding)]
+        config['costs']['execution']['seed'] = seed
+        config['feature_importance']['seed'] = seed
+        return config
+
+    def _funding(self, market, frame, directory):
+        first = pd.Timestamp(int(frame.timestamp_ms.iloc[0]), unit='ms', tz='UTC').floor('h')
+        end = pd.Timestamp(int(frame.available_at_ms.iloc[-1])+1, unit='ms', tz='UTC')
+        source = LakeLoader(self.lake).load(market, 'fundings_1h', '1h', first, end, require_complete=False)
+        if any(gap['kind'] != 'before_source_start' for gap in source.provenance['gaps']):
+            raise ValueError('Missing recipe funding history')
+        path = directory / f'{market}-recipe-funding.csv'
+        source.frame[['timestamp_ms', 'rate', 'direction']].assign(
+            timestamp=pd.to_datetime(source.frame.timestamp_ms, unit='ms', utc=True)
+        )[['timestamp', 'rate', 'direction']].to_csv(path, index=False)
+        return path, source.frame
+
+    def fit(self, train, ctx):
+        if ctx.dev_lake is None:
+            raise ValueError('Recipe requires a causal lake view')
+        self.lake, self.seed, self.device = ctx.dev_lake, ctx.seed, ctx.device
+        self.models = {}
+        for market in self.markets:
+            frame = train.datasets[market].frame
+            directory = ctx.scratch_dir / market
+            directory.mkdir(exist_ok=True)
+            funding_path, funding = self._funding(market, frame, directory)
+            # The raw opening candle has no observed preceding funding payment.
+            # Exclude it from this cost-dependent recipe rather than fabricate one.
+            frame = frame[frame.available_at_ms-1 >= funding.timestamp_ms.iloc[0]].reset_index(drop=True)
+            config = self._configuration(ctx.seed, directory, funding_path)
+            original = recipe.DataPreprocessor
+            try:
+                recipe.DataPreprocessor = lambda **kwargs: SlicePreprocessor(frame, **kwargs)
+                dataset = recipe.build_multi_horizon_lighter_dataset(config)
+            finally:
+                recipe.DataPreprocessor = original
+            # Keep both Gaussian controls in base and meta training, keyed to
+            # absolute availability time so truncated histories use the same
+            # controls. No observed feature or label is replaced.
+            feature_clock = pd.DatetimeIndex(pd.to_datetime(dataset['feature_frame'].index,utc=True)).as_unit('ms').asi8
+            noise = ctx.noise(feature_clock+RESOLUTIONS[self.resolution],market=market)
+            anchors = dataset['samples'].sample_index.to_numpy(dtype=int)
+            for channel,name in enumerate(NOISE_NAMES):
+                dataset['feature_frame'][name] = noise[:,channel].astype(float)
+                column = dataset['feature_columns'].index(name)
+                locations = anchors[:,None]-self.sequence+np.arange(self.sequence)[None,:]
+                dataset['X'][:,:,column] = torch.from_numpy(noise[locations,channel])
+            samples = dataset['samples']
+            indices = np.flatnonzero(samples.sample_index.to_numpy() >= self.warmup+self.sequence)
+            if ctx.train_anchor_end_ms is not None:
+                clock = pd.to_datetime(samples.timestamp, utc=True).dt.as_unit('ms').astype('int64')
+                indices = indices[clock.iloc[indices].to_numpy() <= ctx.train_anchor_end_ms]
+            if len(indices) < 8:
+                raise ValueError('Insufficient fully observed recipe training contexts')
+            model, history = recipe.train_base_model(dataset, indices, config, torch.device(ctx.device))
+            meta, audit = recipe.fit_outer_meta_model(dataset, indices, config, torch.device(ctx.device))
+            self.models[market] = {'model': model, 'meta': meta, 'columns': dataset['feature_columns'],
+                                   'config': config, 'training_history': history, 'meta_audit': audit}
+            torch.save(model.state_dict(), directory / 'base.pt')
+
+    def feature_packet(self, history, decision_times):
+        output, families = [], {name:[] for name in self.engineered_features}
+        noise_groups, noise_lags = {name:[] for name in NOISE_NAMES}, {}
+        for market in self.markets:
+            fitted = self.models[market]
+            source = history.datasets[market].frame
+            directory = Path.cwd() / market
+            directory.mkdir(exist_ok=True)
+            funding, _ = self._funding(market, source, directory)
+            config = deepcopy(fitted['config'])
+            config['costs']['dynamic_funding']['paths'] = [str(funding)]
+            preprocessor = SlicePreprocessor(source, data_dir=str(directory), granularities=[self.resolution],
+                feature_config=config['features'], bar_config=config['bars'], side_data_config={})
+            features, _ = preprocessor.get_base_dataset(self.resolution)
+            noise = feature_noise(source.available_at_ms.to_numpy(),seed=self.seed,market=market)
+            for channel,name in enumerate(NOISE_NAMES):
+                features[name] = noise[:,channel].astype(float)
+            if list(features) != fitted['columns']:
+                raise ValueError('Recipe feature contract changed')
+            clock = pd.DatetimeIndex(pd.to_datetime(source.available_at_ms, unit='ms', utc=True))
+            locations = clock.get_indexer(decision_times)
+            if (locations < self.warmup+self.sequence).any():
+                raise ValueError('Recipe needs a full causal feature/sequence warmup')
+            values = features.to_numpy(dtype=np.float32)
+            X = np.stack([values[i-self.sequence:i] for i in locations])
+            if not np.isfinite(X).all():
+                raise ValueError('Nonfinite recipe inference features')
+            raw = preprocessor.price_frame(self.resolution)
+            volatility = np.log(raw.close).diff().rolling(24*self.max_horizon_bars, min_periods=2).std()
+            samples = raw.iloc[locations][['timestamp', 'open', 'high', 'low', 'close', 'volume']].reset_index(drop=True)
+            samples['sample_index'] = locations
+            samples['realized_vol'] = volatility.iloc[locations].to_numpy()
+            samples['vol_regime'] = 0.  # original selected feature set excludes regime
+            if not np.isfinite(samples.realized_vol).all():
+                raise ValueError('Unavailable recipe volatility')
+            inputs = {'timestamp':decision_times,'market':market,'policy.realized_vol':samples.realized_vol.to_numpy()}
+            families['realized_volatility'] = ['policy.realized_vol']
+            for column,name in enumerate(fitted['columns']):
+                for offset in range(self.sequence):
+                    lag = self.sequence-offset
+                    key = f'base.{name}.lag{lag}'
+                    inputs[key] = X[:,offset,column].astype(float)
+                    if name in NOISE_NAMES:
+                        if key not in noise_groups[name]: noise_groups[name].append(key)
+                        noise_lags[key] = lag
+                    else:
+                        family = next(f for f,columns in FEATURE_FAMILY_COLUMNS.items() if name in columns)
+                        if key not in families[family]: families[family].append(key)
+            cost_model = dataset_cost_model({'price_path':raw,'feature_frame':features,'granularity':self.resolution},config)
+            for side in [-1,0,1]:
+                key = f'execution.side_{side}'
+                inputs[key] = np.array([cost_model.quote({**row.to_dict(),'side':side,
+                    'horizon_bars':self.max_horizon_bars,'position_notional':configured_notional(config)})['total_cost_bps']
+                    for _,row in samples.iterrows()])
+                if key not in families['execution_costs']: families['execution_costs'].append(key)
+            output.append(pd.DataFrame(inputs))
+        return FeaturePacket(pd.concat(output,ignore_index=True),families,noise_groups,noise_lags)
+
+    def predict_features(self, packet):
+        output = []
+        for market in self.markets:
+            fitted = self.models[market]
+            config = fitted['config']
+            frame = packet.frame[packet.frame.market.eq(market)].reset_index(drop=True)
+            times = pd.DatetimeIndex(frame.timestamp)
+            X = np.stack([frame[[f'base.{name}.lag{lag}' for name in fitted['columns']]].to_numpy(dtype=np.float32)
+                          for lag in range(self.sequence,0,-1)],axis=1)
+            samples = pd.DataFrame({'timestamp':times,'sample_index':np.arange(len(frame))+1,
+                                    'realized_vol':frame['policy.realized_vol'].to_numpy(),'vol_regime':0.})
+            noise = pd.DataFrame({name:X[:,-1,fitted['columns'].index(name)] for name in NOISE_NAMES})
+            dataset = {'X':torch.from_numpy(X),'samples':samples,
+                'y_ret':torch.full((len(X),1),float('nan')),'y_dir':torch.full((len(X),1),float('nan')),
+                'input_size':len(fitted['columns']),'horizon_names':['next_hour'],
+                'horizon_bars':{'next_hour':self.max_horizon_bars},'feature_columns':fitted['columns'],
+                'feature_frame':noise,'cost_model':StoredCausalQuotes(frame)}
+            # Constant inference batch shapes keep CUDA roundoff independent of
+            # the length of a history prefix. Padding duplicates a known context
+            # and is discarded; it never invents a missing observation.
+            predictions = []
+            for start in range(0,len(X),128):
+                indices = np.arange(start,min(start+128,len(X)))
+                padded = np.r_[indices,np.repeat(indices[0],128-len(indices))]
+                part = recipe.predict_base_model(fitted['model'],dataset,padded,torch.device(self.device),batch_size=128)
+                predictions.append(part.iloc[:len(indices)])
+            predictions = pd.concat(predictions,ignore_index=True)
+            candidates = recipe.candidate_signals(predictions, dataset, config)
+            meta = fitted['meta']
+            if meta.feature_columns and not np.isfinite(candidates[meta.feature_columns].to_numpy(dtype=float)).all():
+                raise ValueError('Unknown meta-model input')
+            candidates = recipe.add_meta_probabilities(candidates, meta)
+            threshold = getattr(meta, 'decision_threshold', None)
+            threshold = config['alpha_backtest']['meta_threshold'] if threshold is None else threshold
+            eligible = candidates.is_candidate & candidates.meta_prob.ge(threshold) & candidates.expected_edge_bps.gt(config['alpha_backtest']['edge_threshold_bps'])
+            targets = np.zeros(len(candidates), dtype=float)
+            next_entry = 0
+            for index, row in candidates.iterrows():
+                if index >= next_entry and bool(eligible.iloc[index]):
+                    end = min(len(targets), index+self.max_horizon_bars)
+                    targets[index:end] = row.side
+                    next_entry = index+self.max_horizon_bars
+            output.append(pd.DataFrame({'timestamp':times,'market':market,'target_position':targets}))
+        return pd.concat(output, ignore_index=True)
+
+    def predict(self, history, decision_times):
+        return self.predict_features(self.feature_packet(history,decision_times))

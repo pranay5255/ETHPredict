@@ -1,0 +1,8 @@
+from grader.baselines.common import Baseline
+
+
+class Strategy(Baseline):
+    name = 'flat'
+
+    def predict(self, history, decision_times):
+        return self.positions(history, decision_times, lambda data: data.close.to_numpy() * 0.)

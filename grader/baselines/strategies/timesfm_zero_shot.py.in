@@ -1,0 +1,49 @@
+"""Worker-only adapter around the existing TimesFM compatibility wrapper."""
+import numpy as np
+import pandas as pd
+
+from src.experiments.forecast_benchmark import TimesFMZeroShotAdapter
+
+
+class Strategy:
+    name = 'timesfm-2.5-median-sign'
+    markets = ['ETH']
+    resolution = '1h'
+    max_horizon_bars = 1
+    lookback_bars = 128
+    budget_tier = 'long'
+    pretrained_models = ['timesfm-2.5']
+    uses_dev_lake = False
+
+    def fit(self, train, ctx):
+        self.adapter = TimesFMZeroShotAdapter(context_length=self.lookback_bars,
+            horizon_length=1, checkpoint=str(ctx.models['timesfm-2.5']), input_series='log_close',
+            batch_size=64, compile_kwargs={'per_core_batch_size': 64})
+        self.adapter.model  # load only the registered local checkpoint in fit
+        self.adapter._model = None  # identical registered backbone reloads; avoid duplicating 925 MB per fit
+
+    def predict(self, history, decision_times):
+        frames = []
+        for market in self.markets:
+            data = history.datasets[market].frame
+            index = pd.DatetimeIndex(pd.to_datetime(data.available_at_ms, unit='ms', utc=True))
+            locations = index.get_indexer(decision_times)
+            close = data.close.to_numpy(dtype=float)
+            if (locations < self.lookback_bars-1).any() or not np.isfinite(close).all() or (close <= 0).any():
+                raise ValueError('TimesFM baseline needs full finite causal contexts')
+            contexts = [np.log(close[i-self.lookback_bars+1:i+1]) for i in locations]
+            predictions = []
+            for start in range(0, len(contexts), 64):
+                batch = contexts[start:start+64]
+                count = len(batch)
+                # Keep the computation shape identical in proper-prefix runs.
+                # Padding duplicates a known context; no price observation is filled.
+                batch = batch + [batch[0]] * (64-count)
+                _, quantiles = self.adapter._forecast_batch(batch)
+                if quantiles is None or quantiles.shape != (64, 1, 10):
+                    raise ValueError('Registered model did not return the documented median channel')
+                predictions.extend(quantiles[:count, 0, 5])
+            targets = np.sign(np.asarray(predictions)-np.log(close[locations]))
+            frames.append(pd.DataFrame({'timestamp': decision_times, 'market': market,
+                                        'target_position': targets.astype(float)}))
+        return pd.concat(frames, ignore_index=True)

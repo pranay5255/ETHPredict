@@ -1,0 +1,36 @@
+version: 1
+frozen_tag: grader-v1
+calibration: complete
+seeds: [17, 29]
+integrity:
+  causality_cutoffs_per_block: 20
+  position_tolerance: 1.0e-9
+  fast_seconds: 600
+  long_seconds: 3600
+  vram_bytes: 22000000000
+  rss_bytes: 48000000000
+economic:
+  min_blocks: 5
+  min_block_trades: 25
+  min_trades: 150
+  min_positive_blocks: 3
+  stress_multiple: 2.0
+  beat_best_baseline: true
+components:
+  mean_sharpe: {weight: 0.30, zero: 0.0, one: 3.0}
+  worst_sharpe: {weight: 0.20, zero: -1.0, one: 2.0}
+  deflated_sharpe: {weight: 0.20, zero: 0.0, one: 1.0}
+  cost_robustness: {weight: 0.15, zero: 0.0, one: 1.0}
+  drawdown: {weight: 0.10, zero: 0.25, one: 0.0}
+  pnl_per_turnover: {weight: 0.05, zero: 0.0, one: 10.0}
+annualization_days: 365.25
+bootstrap:
+  resamples: 1000
+  expected_block_days: 7.0
+  seed: 104729
+execution:
+  mode: dynamic
+  fee_bps: 4.0
+  spread_bps: 2.0
+  slippage_bps: 1.0
+  execution: {mode: taker, entry_delay_bars: 0}

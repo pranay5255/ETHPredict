@@ -1,4 +1,4 @@
-# ETHPredict tasks — autoresearch P0, 2026-10-27
+# ETHPredict tasks — autoresearch P3 verified, 2026-10-29
 
 PR #51 and #53 are merged; #16/#17/#20 are closed. Funding repair #54 is
 verified on main and closed. P1–P5 now have explicit implementation issues. The
@@ -14,15 +14,17 @@ before the next phase. See [design and open decisions](context/autoresearch_desi
 
 - [x] P0 housekeeping/design merged in [#60](https://github.com/pranay5255/ETHPredict/pull/60): fresh 317-test baseline, 25-directory/425-hash audit, #54 closed and P1–P5 issues created.
 - [x] [#55 P1](https://github.com/pranay5255/ETHPredict/issues/55) Merged in [#61](https://github.com/pranay5255/ETHPredict/pull/61): standalone lake loader, provenance and availability contract; 26,496-row exact CSV parity and 355-test full suite.
-- [ ] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Tiers/splits and sealing verified: human moved 247 files, 259 real OS denials, code-only agent sandbox with real isolation probes; PR #62 ready to merge. See [runbook](context/grader_tier_sealing.md).
-- [ ] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) Frozen grader, inner environment, five baselines, all ten red-team fixtures and pushed grader-v1 tag.
+- [x] [#56 P2](https://github.com/pranay5255/ETHPredict/issues/56) Merged in [#62](https://github.com/pranay5255/ETHPredict/pull/62): human moved 247 files, 259 real OS denials, code-only agent sandbox with real isolation probes; 428 passed, one historical pre-sealing CSV test skipped. See [runbook](context/grader_tier_sealing.md).
+- [x] [#57 P3](https://github.com/pranay5255/ETHPredict/issues/57) Acceptance verified in [PR #63](https://github.com/pranay5255/ETHPredict/pull/63): frozen grader/replay/CLI, trusted feature checks, baseline caches, reports, artifacts and all ten red teams. Full suite: 583 passed, one intentional historical-parity skip. All six full dev baselines and pre-gate calibration are complete; `grader-v1` is pushed at `58228cb`. A separate pinned-checkout production grade passed every integrity check and correctly rejected flat at zero. See [baselines](context/grader_v1_baselines.md) and [acceptance evidence](context/grader_p3_integration_verification.md).
 - [ ] [#58 P4](https://github.com/pranay5255/ETHPredict/issues/58) Driver/program, three-attempt dry run, complete ledger and private shadow results.
 - [ ] [#59 P5](https://github.com/pranay5255/ETHPredict/issues/59) Untuned frozen-head/full-finetune TimesFM seeds with Tier 0 and measured resource reports; GRPO optional.
 
 #30–#35 and #37–#39 are labeled `autoresearch-agenda`. #22/#36/#40 remain
 open; grader v1 will take over their parity/cost-stress portions. #19 sizing,
-#41 promotion and #43–#45 are outside this construction task. P2 sealing is verified; P3 hidden strategy execution and P4 private grading
-service remain unimplemented. No secure hidden grading or strategy edge is claimed.
+#41 promotion and #43–#45 are outside this construction task. P2 sealing is verified;
+P3 strategy-process isolation is implemented and tested with public/synthetic
+inputs. The P4 private grading service is not provisioned, and hidden evaluation
+is not enabled. No strategy edge is claimed.
 
 ## Open implementation and data issues
 

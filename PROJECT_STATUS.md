@@ -1,4 +1,4 @@
-# ETHPredict project status — autoresearch P2 verified, 2026-10-28
+# ETHPredict project status — autoresearch P3 verified, 2026-10-29
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, all 31 funding gaps per market are recovered on main, and no
@@ -73,18 +73,29 @@ The completed lake supplies more research coverage, not a demonstrated edge.
 
 The active construction task is the frozen autoresearch harness. P0 merged in
 [#60](https://github.com/pranay5255/ETHPredict/pull/60); P1 supplies data contracts.
-P2 (#56) is verified: the human sealed 150 partitions and 97 recovery files;
+P2 (#56) is merged in PR #62 at `86a9df0`: the human sealed 150 partitions and 97 recovery files;
 ethgrader owns the private root (0700), and the real agent received 259
 PermissionErrors. A tested dev-only Docker tool worker excludes old CSV/Git/
 artifact copies, with fresh code-only history and no external network.
-See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
-grader/environment, driver and untuned seeds, have not started. No grader-v1 tag or runnable
-secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.
+See [sealing runbook](context/grader_tier_sealing.md). P3 (#57) acceptance is
+verified in [PR #63](https://github.com/pranay5255/ETHPredict/pull/63): frozen
+execution/scoring, CPU/GPU replay parity, all ten red teams and **583 passing
+tests**, with one intentional historical-parity skip. The pushed `grader-v1`
+tag pins `58228cb`; a separate checkout at that tag completed a real production
+dev grade with every integrity check passing. The flat control scored zero.
+All six full dev baselines were repeated under private causality audit locations;
+performance values and all 60 position files matched. Flat is best by net PnL,
+all final scores are zero, and the original component anchors satisfy the
+approved pre-gate calibration range. See [baselines](context/grader_v1_baselines.md)
+and [P3 acceptance](context/grader_p3_integration_verification.md).
+P4–P5 (#58–#59), the private broker/driver and untuned TimesFM seeds, remain
+incomplete. No runnable secure loop or strategy edge is claimed. See
+[design](context/autoresearch_design.md) and TASKS.md.
 Historical backfill alone completes no experiment acceptance criterion.
 
 1. Use the combined #51/#53 code and preserve its economic rejection gate.
-2. Preserve the merged funding fix (#54) and verified P1 lake contract. Complete
-   human sealing and later harness gates before claiming secure lake-backed grading.
+2. Preserve the merged funding fix (#54), verified P1 lake contract and human-sealed
+   P2 tiers. Complete the later harness gates before claiming secure private grading.
 3. Specify one new causal hypothesis, fixed budget, held-out development blocks,
    units, coverage and costs. Retire the tested one-hour continuation recipe.
 4. #19 probability/concurrency sizing and #22 benchmark trading parity remain
