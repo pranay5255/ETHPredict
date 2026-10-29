@@ -10,8 +10,8 @@ see [the integration checkpoint](grader_p3_integration_verification.md).
 Engineered-feature/noise evaluation, baseline measurements, calibration and
 closed report/artifact validation are implemented. The final baseline repeat
 under the hardened causality guard passed without changing any performance
-value or position file. The final full suite and `grader-v1` freeze remain
-pending. This is not P3 acceptance.
+value or position file. The final full suite passed 583 tests with one
+intentional historical-parity skip. The `grader-v1` freeze remains pending. This is not P3 acceptance.
 
 Audit cutoffs use 128-bit entropy generated only in the scoring parent after
 the full reference positions have been submitted. They are independent of the

@@ -166,7 +166,7 @@ pytest tests/test_grader_history.py tests/test_grader_models.py \
 46 passed in 3.58s
 ```
 
-## Still required before freeze
+## Final causality audit and freeze verification
 
 The first final suite passed `582 passed, 1 skipped, 23 warnings in 742.90s`.
 A subsequent adaptive fixture reproduced a real causality bypass: a look-ahead
@@ -184,10 +184,18 @@ measurement. Every block passed its 20 independently drawn prefix probes. The
 [baseline table](grader_v1_baselines.md) now contains the final measured runtimes:
 77.891s flat, 78.276s buy-and-hold, 114.509s momentum 1h, 114.167s momentum 24h,
 494.895s TimesFM and 1165.877s LSTM. No strategy parameter, rubric number or gate
-changed. The final full suite after this guard is running before the freeze.
+changed. The final full suite after this guard passed:
 
-1. Run the final full suite after the publication/ledger audit, then push the
-   frozen `grader-v1` tag and verify an actual production CLI grade.
+```text
+583 passed, 1 skipped, 23 warnings in 765.36s (0:12:45)
+```
+
+The pinned SDK, actual P2 PermissionError/Docker probes and TimesFM CUDA
+fixture were enabled. The historical CSV overlap remains the sole intentional
+skip. No grader or strategy code changed during this suite.
+
+1. Push the frozen `grader-v1` tag and verify an actual production CLI grade.
+   The final full suite is green on the same grader and strategy bytes.
 2. Complete and merge PR #63 with all acceptance evidence.
 3. P4 private broker/driver and P5 untuned scaffolds follow P3 acceptance/merge.
    Private runtime provisioning still requires the human: ethgrader cannot
