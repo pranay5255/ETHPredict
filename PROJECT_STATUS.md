@@ -80,13 +80,16 @@ artifact copies, with fresh code-only history and no external network.
 See [sealing runbook](context/grader_tier_sealing.md). P3–P5 (#57–#59), the frozen
 grader/environment, driver and untuned seeds, remain incomplete. P3 has grade/report
 orchestration, baseline adapters, all ten integrated synthetic red teams, and
-567 passing tests with one intentional historical-parity skip on the P3 branch.
+582 passing tests before the last guard change, with one intentional
+historical-parity skip on the P3 branch. The final full suite is running.
 Trusted feature/noise checks, baseline-bank initialization, closed report schemas
 and artifact manifests are integrated. The six full dev baseline measurements
 are complete: flat is best by net PnL, all final scores are zero, and the initial
 component anchors meet the approved pre-gate calibration range. The pinned
 checkpoint's publication labels were corrected without changing numerical
-evidence. The final suite and freeze remain. See the
+evidence. A final repeat with parent-private causality locations preserved all
+performance values and all 60 position files. The freeze remains pending the
+full-suite result. See the
 [baseline table](context/grader_v1_baselines.md) and [P3 evidence](context/grader_p3_integration_verification.md).
 P4–P5 have not started. No grader-v1 tag or runnable
 secure loop exists yet. See [design](context/autoresearch_design.md) and TASKS.md.

@@ -7,8 +7,19 @@ in P3 changes private ownership, invokes sudo, or evaluates holdout.
 The worker boundary has actual subprocess tests. Grade/report orchestration,
 baseline adapters and all ten integrated synthetic red teams are now verified;
 see [the integration checkpoint](grader_p3_integration_verification.md).
-Engineered-feature/noise evaluation, the full real-data baseline bank,
-calibration and `grader-v1` freeze remain pending. This is not P3 acceptance.
+Engineered-feature/noise evaluation, baseline measurements, calibration and
+closed report/artifact validation are implemented. The final baseline repeat
+under the hardened causality guard passed without changing any performance
+value or position file. The final full suite and `grader-v1` freeze remain
+pending. This is not P3 acceptance.
+
+Audit cutoffs use 128-bit entropy generated only in the scoring parent after
+the full reference positions have been submitted. They are independent of the
+policy-visible RNG seed and are never included in worker requests. Reports
+record the actual tested cutoffs afterward. A regression demonstrates that a
+look-ahead strategy which masks the old predictable probe rows is rejected by
+independent audit locations. The count remains 20 proper prefixes per block;
+policy training still uses the fixed grader seeds.
 
 ## Controller and worker memory
 

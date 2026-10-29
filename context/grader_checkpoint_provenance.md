@@ -29,7 +29,10 @@ training, forecasts, positions and accounting. Their report/cache metadata was
 corrected after the measurement process finished. The
 [correction receipt](grader_baseline_metadata_correction.json) verifies identical
 numeric-score/resource digests, strategy-source hashes and artifact manifests.
-The [baseline table](grader_v1_baselines.md) uses the corrected labels. All
+A second full measurement under the final independent causality guard used the
+corrected registry from the outset. Its [validation receipt](grader_baseline_final_validation.json)
+confirms identical performance and all 60 position files. The
+[baseline table](grader_v1_baselines.md) contains this final repeat and its runtimes. All
 rubric numbers, anchors, weights, costs and gates were retained; only the
 calibration state changed to complete. The best net baseline is flat with a
 pre-gate score of 0.100, and all six pre-gate scores lie between 0.100 and 0.174.

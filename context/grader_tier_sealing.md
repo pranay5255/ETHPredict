@@ -11,7 +11,9 @@ private partitions and 97 recovery files were moved into protected storage.
 The evidence receipt is [grader_p2_isolation_receipt.json](grader_p2_isolation_receipt.json).
 No strategy, holdout or previously consumed test evaluation was performed. P0
 and P1 are merged; P2 acceptance is verified and PR #62 is merged at `86a9df0`.
-P3–P5 have not started. No grader-v1 freeze or working research loop is claimed.
+This records P2 acceptance; later P3 evidence is in
+[the integration receipt](grader_p3_integration_verification.md). A working research
+loop is not claimed by the P2 checks.
 
 ## Tier and block contract
 
@@ -126,7 +128,13 @@ python -m scripts.agent_sandbox probe --workspace <new-isolated-directory>
 python -m scripts.agent_sandbox run --workspace <new-isolated-directory> -- /bin/bash
 ```
 
-The current tested workspace is `/tmp/ethpredict-agent-p2-isolated`. All loop-agent
+The durable tested workspace is
+`/home/pranay5255/.codex/worktrees/autoresearch-agent-p2-isolated`. The reviewed
+metadata copy is at
+`/home/pranay5255/.codex/worktrees/autoresearch-p3/ETHPredict/artifacts/p3-verification/seal-plan.json`.
+After the temporary workspace was cleared, fresh permission and Docker probes
+again verified all 259 denials and the isolated mounts. The commands above retain
+the original P2 acceptance paths as historical evidence. All loop-agent
 file/shell tools must execute inside this worker; do not grant that agent a second
 host shell, Docker API, original checkout or arbitrary filesystem connector.
 The trusted grading coordinator stays outside and will expose a narrow grading

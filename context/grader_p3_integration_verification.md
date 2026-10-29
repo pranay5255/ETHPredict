@@ -177,8 +177,14 @@ scoring and every gate are unchanged. The nonce is never sent to a worker.
 The regression reproduces the old bypass with controlled public locations and
 rejects the same policy with independent audit locations. Checks and complete
 grade integration: `11 passed in 119.38s (0:01:59)`.
-All six adapters are being repeated under the corrected guard before freezing;
-the final table will replace the initial measurement.
+All six adapters have now completed the repeat under the corrected guard. The
+[final receipt](grader_baseline_final_validation.json) verifies identical strategy
+code, performance values and all 60 position files against the first fixed-adapter
+measurement. Every block passed its 20 independently drawn prefix probes. The
+[baseline table](grader_v1_baselines.md) now contains the final measured runtimes:
+77.891s flat, 78.276s buy-and-hold, 114.509s momentum 1h, 114.167s momentum 24h,
+494.895s TimesFM and 1165.877s LSTM. No strategy parameter, rubric number or gate
+changed. The final full suite after this guard is running before the freeze.
 
 1. Run the final full suite after the publication/ledger audit, then push the
    frozen `grader-v1` tag and verify an actual production CLI grade.
