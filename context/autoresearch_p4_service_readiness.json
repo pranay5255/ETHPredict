@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "observed_at_utc": "2026-10-31T14:13:52.979718+00:00",
+  "installation_observed": {
+    "socket": "active",
+    "service": "active",
+    "service_user": "ethgrader",
+    "service_group": "ethgrader"
+  },
+  "initial_broker_info": {
+    "status": "ready",
+    "grader_tag": "grader-v1",
+    "grader_commit": "58228cbad987ea59f1d172b461fba823a8de0e64",
+    "trial_count": 0,
+    "human_alert": false,
+    "busy": false
+  },
+  "local_grader_hashes_match_tag": true,
+  "broker_grader_hashes_checked_by_confined_client": true,
+  "agent_executed_privileged_operations": false,
+  "private_runtime_contents_opened_by_agent": false,
+  "post_install_unix_denial": {
+    "private_path_denial": "passed",
+    "permission_errors": 259,
+    "agent_uid": 1000,
+    "public_lake_private_copies": 0,
+    "overall_agent_isolation": "not proven: legacy CSV/Git/artifact copies and worker sandbox require separate checks"
+  },
+  "attached_fresh_sandbox_probe": {
+    "capabilities": 0,
+    "dev_lake": "readable; pre-May partition verified",
+    "editable_paths": [
+      "src",
+      "strategy"
+    ],
+    "historical_objects_absent": 2,
+    "host_paths_denied": 10,
+    "network": "loopback only",
+    "no_new_privileges": true,
+    "pandas": "3.0.4",
+    "protected_code": "read_only",
+    "seccomp": true,
+    "torch": "2.11.0+cu128",
+    "uid": 1000
+  },
+  "public_ledger_write_denied": true,
+  "bounded_run": {
+    "requested_trials": 3,
+    "request_id": "d468398a03f7437b8e1d10720ae7394c",
+    "state": "running",
+    "loop_workspace": "/home/pranay5255/.codex/worktrees/autoresearch-agent-p4-final-isolated"
+  }
+}
