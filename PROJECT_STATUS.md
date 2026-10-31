@@ -89,7 +89,10 @@ all final scores are zero, and the original component anchors satisfy the
 approved pre-gate calibration range. See [baselines](context/grader_v1_baselines.md)
 and [P3 acceptance](context/grader_p3_integration_verification.md).
 P4–P5 (#58–#59), the private broker/driver and untuned TimesFM seeds, remain
-incomplete. No runnable secure loop or strategy edge is claimed. See
+incomplete. P4 code and focused tests are in progress on `autoresearch/p4-loop`;
+the [private service runbook](context/autoresearch_private_service.md) separates
+tested controller fixtures from the still-required human installation and real
+three-trial private acceptance run. No runnable secure loop or strategy edge is claimed. See
 [design](context/autoresearch_design.md) and TASKS.md.
 Historical backfill alone completes no experiment acceptance criterion.
 
