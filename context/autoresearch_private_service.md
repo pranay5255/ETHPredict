@@ -140,5 +140,42 @@ and 232 passes; it is not a green result. A subsequent collection attempt found
 an intentionally inaccessible generated red-team symlink under `artifacts/`.
 The full command now includes `--ignore=artifacts`, excluding generated runtime
 packages and fixtures from discovery. Collection proves **562 repository tests
-plus all 62 pinned SDK tests**, 624 total, with no other test roots. The final
-run with real P2 permission/Docker checks and pinned CUDA model is in progress.
+plus all 62 pinned SDK tests**, 624 total, with no other test roots. The full run with real P2 permission/Docker checks and pinned CUDA model passed:
+
+```text
+623 passed, 1 skipped, 23 warnings in 729.24s (0:12:09)
+```
+
+A final startup-recovery audit then added Trackio delivery for interrupted
+attempts and the documented generic human-review pause. The recovery, journal,
+keeper and resumable-client checks passed `23 passed in 5.02s`. The final runtime
+was rebuilt from `03005779079a557a2de95fbfa13892b5ff0fe13f`; all copied control code
+matches that source, and its complete manifest was verified again. The prior
+uninstalled construction bundle was removed; its historical receipt remains in
+Git. A final full-suite repeat after this isolated recovery change is live.
+
+The fresh sparse clone materialized only code/project metadata, linked the
+verified public lake and prepared a fresh code-only tool workspace. Its real
+Docker probe again verified ten denied host paths, two absent historical Git
+identities, zero capabilities, seccomp/no-new-privileges, read-only protected
+code and loopback-only networking. No private experiment was launched. The
+fresh workspace will be refreshed for the final recovery commit before the
+actual fresh-clone dry run.
+
+## Current reviewed human command
+
+The final bundle is identified by
+`d66a32b3b7dc45d81c77c409426a20f69a640ca56387b1e2482fc8e7658b6136`.
+Run from a normal terminal, as the human:
+
+```bash
+cd /home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict
+sudo /usr/bin/python3 -m autoresearch.provision install --bundle /home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict/artifacts/p4-provision-0300577 --manifest-sha256 d66a32b3b7dc45d81c77c409426a20f69a640ca56387b1e2482fc8e7658b6136
+```
+
+Only the human performs this operation: section 9 says to stop and ask for
+anything that needs sudo. The expected summary has `private_runtime_installed`
+and `socket_enabled` both true. Share only that summary or an installation
+error; do not share any private financial report. Enabling the socket launches
+no research experiment. The real three-trial jobs remain bounded acceptance
+work after installation and completion of the current GPU test.
