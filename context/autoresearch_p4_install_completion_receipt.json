@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "script": "scripts/complete_autoresearch_install.py",
+  "script_sha256": "7f45bd6b0c70aab2f20231df3bf1f7f5f854d43526fbefa5b3ab99a50386ef81",
+  "bundle_manifest_sha256": "d66a32b3b7dc45d81c77c409426a20f69a640ca56387b1e2482fc8e7658b6136",
+  "focused_tests": "10 passed in 0.04s",
+  "actual_staged_payload_verified": true,
+  "payload_preflight": {
+    "missing_entries_copied": 0,
+    "partial_or_metadata_entries_completed": 0
+  },
+  "agent_performed_privileged_operations": false,
+  "private_runtime_contents_inspected_by_agent": false
+}

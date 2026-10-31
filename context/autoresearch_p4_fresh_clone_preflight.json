@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "source_commit": "acae6e911a0d5a464a590006de461c1a5f11dfcb",
+  "source_clone": "/home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict/artifacts/p4-fresh-clone",
+  "workspace": "/home/pranay5255/.codex/worktrees/autoresearch-agent-p4-final-fresh-isolated",
+  "code_files": 117,
+  "dev_files": 280,
+  "protected_tree_matches_reviewed_service": true,
+  "verified_editable_files": 53,
+  "initial_candidate_commit": "0d5e667ebb09bd65fc4007327d3802deb59ce275",
+  "docker_probe": {
+    "capabilities": 0,
+    "dev_lake": "readable; pre-May partition verified",
+    "editable_paths": [
+      "src",
+      "strategy"
+    ],
+    "historical_objects_absent": 2,
+    "host_paths_denied": 10,
+    "network": "loopback only",
+    "no_new_privileges": true,
+    "pandas": "3.0.4",
+    "protected_code": "read_only",
+    "seccomp": true,
+    "torch": "2.11.0+cu128",
+    "uid": 1000
+  },
+  "real_dry_run": "pending human-only installation"
+}

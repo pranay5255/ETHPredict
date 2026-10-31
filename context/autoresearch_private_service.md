@@ -152,25 +152,43 @@ keeper and resumable-client checks passed `23 passed in 5.02s`. The final runtim
 was rebuilt from `03005779079a557a2de95fbfa13892b5ff0fe13f`; all copied control code
 matches that source, and its complete manifest was verified again. The prior
 uninstalled construction bundle was removed; its historical receipt remains in
-Git. A final full-suite repeat after this isolated recovery change is live.
+Git. The final full-suite repeat after this isolated recovery change passed:
+
+```text
+623 passed, 1 skipped, 23 warnings in 810.37s (0:13:30)
+```
 
 The fresh sparse clone materialized only code/project metadata, linked the
 verified public lake and prepared a fresh code-only tool workspace. Its real
 Docker probe again verified ten denied host paths, two absent historical Git
 identities, zero capabilities, seccomp/no-new-privileges, read-only protected
-code and loopback-only networking. No private experiment was launched. The
-fresh workspace will be refreshed for the final recovery commit before the
-actual fresh-clone dry run.
+code and loopback-only networking. No private experiment was launched. The [final fresh-clone preflight](autoresearch_p4_fresh_clone_preflight.json)
+records the refreshed workspace: all 117 code files and 280 dev files are
+present, and its source proof matches the reviewed service protected tree.
+The actual fresh-clone dry run awaits installation.
 
 ## Current reviewed human command
 
 The final bundle is identified by
 `d66a32b3b7dc45d81c77c409426a20f69a640ca56387b1e2482fc8e7658b6136`.
-Run from a normal terminal, as the human:
+The first human installation command found an existing runtime directory and
+stopped at its protective guard. Read-only checks confirmed no installer was
+still running, and the configuration, socket, GPU lock and public output path
+were absent. A dedicated human-only completion helper now validates every
+existing runtime file before mutation. It fills missing entries, completes only
+byte-for-byte matching truncated prefixes and restores reviewed copy metadata.
+Unexpected files, changed complete files, hard links, escaping links and active
+deployments are rejected. Existing sealed data and trial histories are untouched.
+
+Its ten focused tests passed, including real filesystem fixtures for partial
+copies, conflicts, links and empty Git directories. The helper also validated all
+99,654 entries of the actual staged payload without changing its reviewed hash.
+It lives under `scripts/`, outside the immutable agent/control tree, so this
+operational recovery requires no new payload or model copy. Run from a normal
+terminal, as the human:
 
 ```bash
-cd /home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict
-sudo /usr/bin/python3 -m autoresearch.provision install --bundle /home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict/artifacts/p4-provision-0300577 --manifest-sha256 d66a32b3b7dc45d81c77c409426a20f69a640ca56387b1e2482fc8e7658b6136
+sudo /usr/bin/python3 /home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict/scripts/complete_autoresearch_install.py --bundle /home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict/artifacts/p4-provision-0300577 --manifest-sha256 d66a32b3b7dc45d81c77c409426a20f69a640ca56387b1e2482fc8e7658b6136
 ```
 
 Only the human performs this operation: section 9 says to stop and ask for
