@@ -124,3 +124,21 @@ synthetic reports; they do not claim a real private evaluation. Local installed
 Trackio delivery/readback is exercised in an isolated temporary directory.
 After the last provisioning-copy assertion, its four focused tests passed again.
 The full P4 suite and real private deployment/dry run remain required.
+
+The [runtime review receipt](autoresearch_p4_runtime_receipt.json) records the
+completed 17.33 GB staging bundle, 99,654 files, internal symlinks, exact frozen
+commit and reviewed manifest hash. Its standalone interpreter imported the
+existing NumPy/pandas/Torch/TimesFM environment successfully. A selected-source
+archive was checked against all 51 frozen source files byte for byte. Git emits
+a warning for the omitted unrelated `.claude/settings.json` blob; the selected
+archive is complete and identical. No unrelated historical data blob is copied.
+
+The first full-suite run exposed an overlong temporary Unix-socket name; the
+fixture now uses a Linux abstract socket and its real peer-credential test
+passes with the durable artifact base. The interrupted run recorded one failure
+and 232 passes; it is not a green result. A subsequent collection attempt found
+an intentionally inaccessible generated red-team symlink under `artifacts/`.
+The full command now includes `--ignore=artifacts`, excluding generated runtime
+packages and fixtures from discovery. Collection proves **562 repository tests
+plus all 62 pinned SDK tests**, 624 total, with no other test roots. The final
+run with real P2 permission/Docker checks and pinned CUDA model is in progress.

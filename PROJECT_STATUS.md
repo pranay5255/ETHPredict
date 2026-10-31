@@ -1,4 +1,4 @@
-# ETHPredict project status — autoresearch P3 verified, 2026-10-29
+# ETHPredict project status — autoresearch P4 in progress, 2026-10-31
 
 The five-market mainnet history lake is collected and readable. It is not yet the
 training source, all 31 funding gaps per market are recovered on main, and no

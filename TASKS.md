@@ -1,4 +1,4 @@
-# ETHPredict tasks — autoresearch P3 verified, 2026-10-29
+# ETHPredict tasks — autoresearch P4 in progress, 2026-10-31
 
 PR #51 and #53 are merged; #16/#17/#20 are closed. Funding repair #54 is
 verified on main and closed. P1–P5 now have explicit implementation issues. The

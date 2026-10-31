@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source_commit": "5282c0be774b933334890679690f672201f156c5",
+  "bundle": "/home/pranay5255/.codex/worktrees/autoresearch-p4/ETHPredict/artifacts/p4-provision-5282c0b",
+  "manifest_sha256": "fb321bc72f64ecd4ef49916a357a859d5cd520d302020529580381a6c778a77f",
+  "runtime_files": 99654,
+  "runtime_bytes": 17333813101,
+  "internal_symlinks": {
+    "runtime/venv/bin/python": "../../python/bin/python3",
+    "runtime/venv/bin/python3": "../../python/bin/python3",
+    "runtime/venv/bin/python3.13": "../../python/bin/python3"
+  },
+  "standalone_dependency_imports_passed": true,
+  "control_code_matches_current_checkout": true,
+  "frozen_tag_commit": "58228cbad987ea59f1d172b461fba823a8de0e64",
+  "frozen_grader_hashes_match": true,
+  "source_archive_files": 51,
+  "source_archive_matches_all_source_bytes": true,
+  "source_archive_files_sha256": "4bc979cc674d1fa68d57b3c488faccffdca6e2066267638d581b5adde3923ff0",
+  "unrelated_blob_warning": "error: invalid object 100644 e42cd888a12ffd4fd92779dbce6ec2cf0ba5e400 for '.claude/settings.json'",
+  "private_installation": "not performed; reserved for the human",
+  "real_private_dry_run": "not performed"
+}
