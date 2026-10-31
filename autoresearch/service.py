@@ -139,14 +139,20 @@ class Controller:
             if trial.get('decision', {}).get('decision') in {'initialize', 'keep'}:
                 self.incumbent = {'trial_id': identity, 'commit': trial['attempt']['commit']}
             if 'result' not in trial:
+                try:
+                    run_id = self._telemetry(identity, None, 'crash')
+                except Exception:
+                    run_id = None
                 self.journal.append('result', trial_id=identity, status='crash', score=0.,
                     pre_gate_score=None, sharpe_per_period=None, report_sha256=None,
-                    report_path=None, trackio_run_id=None)
+                    report_path=None, trackio_run_id=run_id)
+                self.alert()
             if 'decision' not in trial:
                 self.journal.append('decision', trial_id=identity, decision='discard',
                     incumbent_commit=self.incumbent['commit'] if self.incumbent else None,
                     incumbent_rescored_score=None, candidate_score=trial.get('result', {}).get('score', 0.),
                     delta=None, qualitative=None)
+                self.alert()
         self.journal.publish()
         for identity in self.journal.read()['trials']:
             directory = self._path(identity)

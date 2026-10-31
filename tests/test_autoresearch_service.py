@@ -200,6 +200,9 @@ def test_restart_records_interrupted_attempt_without_relaunching_it(setup):
         assert controller.journal.read()['count'] == 1
         assert controller.hidden_journal.read()['count'] == 1
         assert controller.active is None
+        assert controller.info()['human_alert']
+        assert controller.journal.read()['trials'][identity]['result']['trackio_run_id'] == 'fixture-' + identity
+        assert PRIVATE_CANARY not in (Path(config['public_root'])/'HUMAN_ALERT').read_text()
     finally:
         controller.close()
 
