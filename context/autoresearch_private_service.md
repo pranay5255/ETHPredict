@@ -197,3 +197,23 @@ and `socket_enabled` both true. Share only that summary or an installation
 error; do not share any private financial report. Enabling the socket launches
 no research experiment. The real three-trial jobs remain bounded acceptance
 work after installation and completion of the current GPU test.
+
+## Deployment observed and bounded acceptance started
+
+The completion step has brought up the socket and service. The
+[readiness receipt](autoresearch_p4_service_readiness.json) records actual
+`User=ethgrader`/`Group=ethgrader`, an authenticated call from inside the isolated
+workspace, `grader-v1` at `58228cb`, zero initial trials and no initial alert.
+The confined client matched every grader hash before returning ready. The
+construction agent performed no sudo operation and opened no private runtime
+contents or hidden reports.
+
+With the broker attached, the fresh tool workspace again passed the real Docker
+probe. The public ledger rejects writes from the loop user. A fresh post-install
+sealing check still reports 259 PermissionErrors and zero public private copies.
+
+The first bounded dry run is active, with one recorded attempt and its original
+request identity retained. It runs exactly the control/crash/discard sequence.
+Initial comparable-baseline construction can occur within this request. The
+original three-trial job is being observed rather than replaced. Its final
+acceptance result and the subsequent fresh-clone run remain pending.

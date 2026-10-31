@@ -18,6 +18,6 @@
   "source_archive_matches_all_source_bytes": true,
   "source_archive_files_sha256": "4bc979cc674d1fa68d57b3c488faccffdca6e2066267638d581b5adde3923ff0",
   "unrelated_blob_warning": "error: invalid object 100644 e42cd888a12ffd4fd92779dbce6ec2cf0ba5e400 for '.claude/settings.json'",
-  "private_installation": "not performed; reserved for the human",
-  "real_private_dry_run": "not performed"
+  "private_installation": "observed active service via authenticated confined client; private payload verification remains with the human-only installer",
+  "real_private_dry_run": "running; first bounded three-trial acceptance request recorded"
 }
