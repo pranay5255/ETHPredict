@@ -12,6 +12,7 @@ from pathlib import Path
 import socket
 import threading
 import time
+import uuid
 
 import numpy as np
 import pytest
@@ -219,8 +220,10 @@ def test_real_unix_peer_credentials_reject_wrong_uid_without_dispatch(tmp_path):
         config = {'agent_uid': os.getuid() + 1}
     controller = NeverDispatch()
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    path = tmp_path/'control.sock'
-    listener.bind(str(path))
+    # Linux abstract sockets avoid sun_path's 108-byte limit when pytest's
+    # durable --basetemp path is deeply nested. SO_PEERCRED is still real.
+    path = '\0ethpredict-peer-' + uuid.uuid4().hex
+    listener.bind(path)
     listener.listen(2)
     thread = threading.Thread(target=serve, args=(listener, controller), daemon=True)
     thread.start()
