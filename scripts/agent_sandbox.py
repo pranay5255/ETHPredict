@@ -14,8 +14,10 @@ import io
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 
@@ -25,7 +27,7 @@ else:
     from seal_grader_tiers import DATASETS, MARKETS, encoded, read_plan, require_regular
 
 
-CODE_PREFIXES = ('src/', 'grader/', 'strategy/')
+CODE_PREFIXES = ('src/', 'grader/', 'strategy/', 'autoresearch/')
 CODE_ROOTS = {'.python-version', '.gitignore', 'pyproject.toml', 'uv.lock',
               'autoresearch/program.md', 'autoresearch/run_experiment.py'}
 METADATA = '.agent-sandbox.json'
@@ -177,7 +179,9 @@ def load_workspace(workspace: Path) -> dict:
     expected = {'version', 'workspace', 'source_repo', 'source_commit', 'historical_blob',
                 'image', 'venv', 'python_runtime', 'tools', 'dev_lake', 'plan_path',
                 'code_hashes', 'dev_hashes', 'uid', 'gid'}
-    if set(metadata) != expected or metadata['version'] != 1 or metadata['workspace'] != str(workspace):
+    optional = {'broker_socket', 'public_results'}
+    if (set(metadata)-optional != expected or bool(set(metadata)&optional) != optional.issubset(metadata)
+            or metadata['version'] != 1 or metadata['workspace'] != str(workspace)):
         raise ValueError('Unknown sandbox metadata')
     if metadata['uid'] != os.getuid() or metadata['gid'] != os.getgid() or os.getuid() == 0:
         raise ValueError('Run as the unprivileged workspace owner')
@@ -190,6 +194,38 @@ def load_workspace(workspace: Path) -> dict:
         require_regular(workspace / name)
         if hashlib.sha256((workspace / name).read_bytes()).hexdigest() != digest:
             raise ValueError('Protected sandbox code changed')
+    return metadata
+
+
+def broker_bindings(metadata):
+    if 'broker_socket' not in metadata:
+        return []
+    sock, public = Path(metadata['broker_socket']), Path(metadata['public_results'])
+    if str(sock) != '/run/ethpredict-grader/control.sock' or str(public) != '/var/lib/ethpredict-autoresearch/public':
+        raise ValueError('Use only the human-provisioned broker and dev export')
+    uid = pwd.getpwnam('ethgrader').pw_uid
+    if (sock.is_symlink() or not stat.S_ISSOCK(sock.stat().st_mode) or sock.stat().st_uid != uid
+            or public.is_symlink() or not public.is_dir() or public.stat().st_uid != uid
+            or public.stat().st_mode & 0o022):
+        raise ValueError('Broker/export ownership or permissions changed')
+    return [(sock, '/broker/control.sock', True), (public, '/results', True)]
+
+
+def attach_broker(workspace):
+    metadata = load_workspace(workspace)
+    if 'broker_socket' in metadata:
+        broker_bindings(metadata)
+        return metadata
+    metadata.update(broker_socket='/run/ethpredict-grader/control.sock',
+                    public_results='/var/lib/ethpredict-autoresearch/public')
+    broker_bindings(metadata)
+    for name in ['results.tsv', 'ledger.jsonl', 'HUMAN_ALERT']:
+        destination = Path(metadata['workspace'])/'autoresearch'/name
+        if destination.exists() or destination.is_symlink():
+            raise ValueError('Use a fresh workspace without local trial-state files')
+    for name in ['results.tsv', 'ledger.jsonl', 'HUMAN_ALERT']:
+        (Path(metadata['workspace'])/'autoresearch'/name).symlink_to('/results/'+name)
+    (Path(metadata['workspace'])/METADATA).write_bytes(encoded(metadata))
     return metadata
 
 
@@ -208,6 +244,7 @@ def docker_command(metadata: dict, command: list[str]) -> list[str]:
                 (Path(metadata['dev_lake']), '/workspace/data/lake/lighter', True)]
     bindings += [(workspace / name, f'/workspace/{name}', False) for name in ['src', 'strategy', '.git']]
     bindings += [(Path(path), '/tools/' + name, True) for name, path in metadata['tools'].items()]
+    bindings += broker_bindings(metadata)
     for source, target, readonly in bindings:
         if ',' in str(source) or ',' in target:
             raise ValueError('Unsupported comma in mount path')
@@ -295,6 +332,8 @@ def main():
     check = sub.add_parser('probe')
     check.add_argument('--workspace', type=Path, required=True)
     check.add_argument('--output', type=Path)
+    attach = sub.add_parser('attach-broker')
+    attach.add_argument('--workspace', type=Path, required=True)
     execute = sub.add_parser('run')
     execute.add_argument('--workspace', type=Path, required=True)
     execute.add_argument('command', nargs=argparse.REMAINDER)
@@ -310,6 +349,9 @@ def main():
         if args.output:
             args.output.write_bytes(encoded(result))
         print(json.dumps(result, indent=2))
+    elif args.mode == 'attach-broker':
+        metadata = attach_broker(args.workspace)
+        print(json.dumps({'broker_attached': True, 'workspace': metadata['workspace']}))
     else:
         command = args.command[1:] if args.command[:1] == ['--'] else args.command
         metadata = load_workspace(args.workspace)

@@ -15,5 +15,10 @@ data/processed_features/
 logs/
 results/
 
+# Service-owned autoresearch state is never a candidate commit.
+autoresearch/results.tsv
+autoresearch/ledger.jsonl
+autoresearch/HUMAN_ALERT
+
 # Local parquet lake for backfilled market data (scripts/lighter_backfill_lake.py)
 data/lake/
